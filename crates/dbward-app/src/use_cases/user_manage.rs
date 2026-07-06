@@ -131,8 +131,15 @@ impl UserManage {
             updated_at: now,
         };
 
-        // Token ceiling = direct roles only. Group-derived roles are resolved at auth time.
-        let effective_roles = input.roles.clone();
+        // Token ceiling = direct roles + group-derived roles (from config).
+        let mut effective_roles = input.roles.clone();
+        for group in &input.groups {
+            for role in self.role_resolver.roles_for_group(group) {
+                if !effective_roles.contains(&role) {
+                    effective_roles.push(role);
+                }
+            }
+        }
 
         let ceiling = dbward_domain::entities::ScopeCeiling {
             roles: effective_roles.clone(),

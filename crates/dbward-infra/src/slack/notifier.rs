@@ -78,6 +78,12 @@ impl SlackNotifier {
             event.requester = Some(mention);
         }
 
+        // Replace actor with mention format for Block Kit display
+        if let Some(ref a) = event.actor {
+            let mention = self.user_resolver.mention_for(a).await;
+            event.actor = Some(mention);
+        }
+
         if event.approvers.is_none()
             && let Some(ref req_id) = event.request_id
             && let Ok(Some(req)) = self.request_reader.get(req_id)
@@ -216,12 +222,21 @@ impl SlackNotifier {
         }
 
         // SECONDARY: Thread reply (always attempt, best-effort)
+        let mut event_resolved = event.clone();
+        if let Some(ref a) = event_resolved.actor {
+            let mention = self.user_resolver.mention_for(a).await;
+            event_resolved.actor = Some(mention);
+        }
+        if let Some(ref r) = event_resolved.requester {
+            let mention = self.user_resolver.mention_for(r).await;
+            event_resolved.requester = Some(mention);
+        }
         let mention_suffix = self.resolve_reply_mentions(event, &approvals).await;
-        let reply_blocks = block_kit::build_thread_reply(event, &mention_suffix);
+        let reply_blocks = block_kit::build_thread_reply(&event_resolved, &mention_suffix);
         let reply_text = if mention_suffix.is_empty() {
-            block_kit::fallback_text(event)
+            block_kit::fallback_text(&event_resolved)
         } else {
-            format!("{} — {}", block_kit::fallback_text(event), mention_suffix)
+            format!("{} — {}", block_kit::fallback_text(&event_resolved), mention_suffix)
         };
         if let Err(e) = self
             .client

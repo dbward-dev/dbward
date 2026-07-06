@@ -49,6 +49,11 @@ pub trait RoleResolver: Send + Sync {
         vec![]
     }
 
+    /// Get roles granted by a group (from config definition).
+    fn roles_for_group(&self, _group_name: &str) -> Vec<String> {
+        vec![]
+    }
+
     /// Reverse lookup: selector string → subject_ids.
     fn subjects_for_selector(&self, _selector: &str) -> Vec<String> {
         vec![]

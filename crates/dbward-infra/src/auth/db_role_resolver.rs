@@ -313,6 +313,14 @@ impl RoleResolver for DbRoleResolver {
         let _ = subject_id;
         None
     }
+
+    fn roles_for_group(&self, group_name: &str) -> Vec<String> {
+        self.group_roles
+            .load()
+            .get(group_name)
+            .cloned()
+            .unwrap_or_default()
+    }
 }
 
 fn builtin_roles() -> Vec<(String, ResolvedRole)> {

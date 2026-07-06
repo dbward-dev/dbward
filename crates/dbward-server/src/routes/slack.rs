@@ -149,9 +149,7 @@ async fn handle_block_actions(
     if action_id != "dbward_review"
         && action_id != "dbward_resume"
         && action_id != "dbward_view_result"
-        && action_id != "dbward_onboarding_approve"
-        && action_id != "dbward_onboarding_reject"
-        && action_id != "dbward_onboarding_modify"
+        && action_id != "dbward_onboarding_review"
     {
         return StatusCode::OK;
     }
@@ -159,22 +157,18 @@ async fn handle_block_actions(
         return StatusCode::OK;
     }
 
-    // Onboarding approve/reject/modify
-    if action_id == "dbward_onboarding_approve"
-        || action_id == "dbward_onboarding_reject"
-        || action_id == "dbward_onboarding_modify"
+    // Onboarding: open review modal
+    if action_id == "dbward_onboarding_review"
     {
         let state_clone = state.clone();
         let slack_config_clone = slack_config.clone();
         let payload_clone = payload.clone();
-        let action_id_clone = action_id.to_string();
         let request_id_clone = request_id.clone();
         tokio::spawn(async move {
-            handle_onboarding_action(
+            handle_onboarding_review_button(
                 &state_clone,
                 &slack_config_clone,
                 &payload_clone,
-                &action_id_clone,
                 &request_id_clone,
             )
             .await;
@@ -612,8 +606,8 @@ async fn handle_view_submission(
         Some("dbward_onboarding") => {
             return handle_onboarding_submission(state, _slack_config, payload).await
         }
-        Some("dbward_onboarding_modify_submit") => {
-            return handle_modify_approval_submission(state, _slack_config, payload).await
+        Some("dbward_onboarding_review_submit") => {
+            return handle_onboarding_review_submit(state, _slack_config, payload).await
         }
         _ => return StatusCode::OK.into_response(),
     }
@@ -1256,51 +1250,56 @@ async fn handle_onboarding_submission(
                 "elements": [
                     {
                         "type": "button",
-                        "text": { "type": "plain_text", "text": "✅ Approve" },
+                        "text": { "type": "plain_text", "text": "Review Request" },
                         "style": "primary",
-                        "action_id": "dbward_onboarding_approve",
-                        "value": request_id
-                    },
-                    {
-                        "type": "button",
-                        "text": { "type": "plain_text", "text": "✏️ Modify & Approve" },
-                        "action_id": "dbward_onboarding_modify",
-                        "value": request_id
-                    },
-                    {
-                        "type": "button",
-                        "text": { "type": "plain_text", "text": "❌ Reject" },
-                        "style": "danger",
-                        "action_id": "dbward_onboarding_reject",
+                        "action_id": "dbward_onboarding_review",
                         "value": request_id
                     }
                 ]
             }
         ]);
 
-        let _ = sc
+        match sc
             .post_message(
                 &channel,
                 blocks.as_array().unwrap(),
                 &format!("Onboarding request from <@{slack_user_id}>"),
             )
-            .await;
+            .await
+        {
+            Ok(ts) => {
+                let conn = state.db_conn().lock();
+                if let Err(e) = conn.execute(
+                    "UPDATE onboarding_requests SET message_ts = ?1 WHERE id = ?2",
+                    dbward_infra::rusqlite::params![ts, request_id],
+                ) {
+                    tracing::warn!(error = %e, "onboarding: failed to save message_ts");
+                }
+            }
+            Err(e) => {
+                tracing::warn!(error = %e, "onboarding: failed to post approval channel message");
+            }
+        }
     }
 
     // Acknowledge modal submission (close it)
     StatusCode::OK.into_response()
 }
 
-/// Handle onboarding approve/reject button click.
-async fn handle_onboarding_action(
+/// Handle "Review Request" button click — open review modal.
+async fn handle_onboarding_review_button(
     state: &AppState,
-    slack_config: &dbward_infra::slack::SlackConfig,
+    _slack_config: &dbward_infra::slack::SlackConfig,
     payload: &serde_json::Value,
-    action_id: &str,
     request_id: &str,
 ) {
     let approver_slack_id = payload["user"]["id"].as_str().unwrap_or("").to_string();
     let channel_id = payload["channel"]["id"].as_str().unwrap_or("").to_string();
+    let trigger_id = payload["trigger_id"].as_str().unwrap_or("");
+
+    if trigger_id.is_empty() {
+        return;
+    }
 
     // Verify approver is admin
     let auth_user = match resolve_slack_auth_user(state, &approver_slack_id).await {
@@ -1311,7 +1310,7 @@ async fn handle_onboarding_action(
                     .post_ephemeral(
                         &channel_id,
                         &approver_slack_id,
-                        "⚠️ You must be a linked dbward user to approve requests.",
+                        "⚠️ You must be a linked dbward user to review requests.",
                     )
                     .await;
             }
@@ -1326,7 +1325,7 @@ async fn handle_onboarding_action(
                 .post_ephemeral(
                     &channel_id,
                     &approver_slack_id,
-                    "⚠️ Only admins can approve onboarding requests.",
+                    "⚠️ Only admins can review onboarding requests.",
                 )
                 .await;
         }
@@ -1334,10 +1333,10 @@ async fn handle_onboarding_action(
     }
 
     // Load onboarding request
-    let req_data: Option<(String, String, String, String)> = {
+    let req_data: Option<(String, String, String, String, String)> = {
         let conn = state.db_conn().lock();
         conn.prepare(
-            "SELECT slack_user_id, display_name, requested_roles_json, requested_groups_json \
+            "SELECT slack_user_id, display_name, requested_roles_json, requested_groups_json, reason \
              FROM onboarding_requests WHERE id = ?1 AND status = 'pending'",
         )
         .and_then(|mut s| {
@@ -1347,13 +1346,14 @@ async fn handle_onboarding_action(
                     r.get::<_, Option<String>>(1)?.unwrap_or_default(),
                     r.get::<_, String>(2)?,
                     r.get::<_, String>(3)?,
+                    r.get::<_, Option<String>>(4)?.unwrap_or_default(),
                 ))
             })
         })
         .ok()
     };
 
-    let (target_slack_id, display_name, roles_json, groups_json) = match req_data {
+    let (target_slack_id, display_name, roles_json, groups_json, reason) = match req_data {
         Some(d) => d,
         None => {
             if let Some(ref sc) = state.slack_client {
@@ -1371,178 +1371,32 @@ async fn handle_onboarding_action(
 
     let roles: Vec<String> = serde_json::from_str(&roles_json).unwrap_or_default();
     let groups: Vec<String> = serde_json::from_str(&groups_json).unwrap_or_default();
-    let now = chrono::Utc::now();
 
-    if action_id == "dbward_onboarding_modify" {
-        // Open modify modal with pre-filled roles/groups
-        let trigger_id = payload["trigger_id"].as_str().unwrap_or("");
-        if trigger_id.is_empty() {
-            return;
-        }
-        let onboarding_cfg = state.slack_onboarding.as_ref();
-        let view = build_modify_approval_modal(
-            onboarding_cfg,
-            request_id,
-            &target_slack_id,
-            &roles,
-            &groups,
-        );
-        if let Some(ref sc) = state.slack_client {
-            let _ = sc.open_modal(trigger_id, &view).await;
-        }
-        return;
+    // Build and open review modal
+    let view = build_review_modal(
+        state.slack_onboarding.as_ref(),
+        request_id,
+        &target_slack_id,
+        &display_name,
+        &roles,
+        &groups,
+        &reason,
+    );
+    if let Some(ref sc) = state.slack_client {
+        let _ = sc.open_modal(trigger_id, &view).await;
     }
-
-    if action_id == "dbward_onboarding_approve" {
-        // Claim the pending row FIRST to prevent race conditions
-        let claimed = {
-            let conn = state.db_conn().lock();
-            let affected = conn.execute(
-                "UPDATE onboarding_requests SET status = 'approved', decided_by = ?1, decided_at = ?2 WHERE id = ?3 AND status = 'pending'",
-                dbward_infra::rusqlite::params![auth_user.subject_id, now.to_rfc3339(), request_id],
-            ).unwrap_or(0);
-            affected > 0
-        };
-        if !claimed {
-            if let Some(ref sc) = state.slack_client {
-                let _ = sc.post_ephemeral(&channel_id, &approver_slack_id, "⚠️ Request already processed.").await;
-            }
-            return;
-        }
-
-        // Create user via UserManage
-        let user_id = if display_name.is_empty() {
-            format!("slack-{target_slack_id}")
-        } else {
-            display_name.clone()
-        };
-
-        let add_input = dbward_app::use_cases::user_manage::UserAddInput {
-            id: user_id.clone(),
-            roles: roles.clone(),
-            groups: groups.clone(),
-        };
-
-        let result = state.users().manage().add(
-            add_input,
-            &auth_user,
-            &dbward_domain::entities::AuditContext::System,
-        );
-
-        match result {
-            Ok(output) => {
-                // Link slack_user_id
-                {
-                    let conn = state.db_conn().lock();
-                    if let Err(e) = conn.execute(
-                        "UPDATE users SET slack_user_id = ?1 WHERE id = ?2",
-                        dbward_infra::rusqlite::params![target_slack_id, user_id],
-                    ) {
-                        tracing::error!(error = %e, "onboarding: failed to link slack_user_id");
-                    }
-                }
-
-                // DM token to user
-                if let Some(ref sc) = state.slack_client {
-                    let dm_text = format!(
-                        "🎉 Your dbward access has been approved!\n\n\
-                         Your API token (save it securely — it won't be shown again):\n\
-                         ```{}```\n\n\
-                         Configure it:\n\
-                         ```export DBWARD_API_TOKEN={}```",
-                        output.token, output.token
-                    );
-                    let _ = sc
-                        .post_message(
-                            &target_slack_id,
-                            &[serde_json::json!({
-                                "type": "section",
-                                "text": { "type": "mrkdwn", "text": dm_text }
-                            })],
-                            "Your dbward access has been approved!",
-                        )
-                        .await;
-                }
-
-                // Update approval channel message
-                if let Some(ref sc) = state.slack_client {
-                    let _ = sc
-                        .post_ephemeral(
-                            &channel_id,
-                            &approver_slack_id,
-                            &format!("✅ Approved <@{target_slack_id}> — user `{user_id}` created."),
-                        )
-                        .await;
-                }
-            }
-            Err(e) => {
-                tracing::error!(error = %e, "onboarding: user creation failed");
-                // Roll back claim: revert request to pending so it can be retried
-                {
-                    let conn = state.db_conn().lock();
-                    if let Err(e) = conn.execute(
-                        "UPDATE onboarding_requests SET status = 'pending', decided_by = NULL, decided_at = NULL WHERE id = ?1",
-                        dbward_infra::rusqlite::params![request_id],
-                    ) {
-                        tracing::warn!(error = %e, "onboarding: failed to rollback request to pending");
-                    }
-                }
-                if let Some(ref sc) = state.slack_client {
-                    let _ = sc
-                        .post_ephemeral(
-                            &channel_id,
-                            &approver_slack_id,
-                            &format!("⚠️ Failed to create user: {e}"),
-                        )
-                        .await;
-                }
-            }
-        }
-    } else {
-        // Reject
-        {
-            let conn = state.db_conn().lock();
-            let _ = conn.execute(
-                "UPDATE onboarding_requests SET status = 'rejected', decided_by = ?1, decided_at = ?2 WHERE id = ?3 AND status = 'pending'",
-                dbward_infra::rusqlite::params![auth_user.subject_id, now.to_rfc3339(), request_id],
-            );
-        }
-
-        // DM rejection to user
-        if let Some(ref sc) = state.slack_client {
-            let _ = sc
-                .post_message(
-                    &target_slack_id,
-                    &[serde_json::json!({
-                        "type": "section",
-                        "text": { "type": "mrkdwn", "text": "❌ Your dbward access request was rejected. Contact an admin for details." }
-                    })],
-                    "Your dbward access request was rejected.",
-                )
-                .await;
-        }
-
-        if let Some(ref sc) = state.slack_client {
-            let _ = sc
-                .post_ephemeral(
-                    &channel_id,
-                    &approver_slack_id,
-                    &format!("❌ Rejected <@{target_slack_id}>'s request."),
-                )
-                .await;
-        }
-    }
-    let _ = slack_config;
 }
 
-// ─── Modify & Approve modal ──────────────────────────────────────────────
+// ─── Onboarding Review Modal ─────────────────────────────────────────────
 
-fn build_modify_approval_modal(
+fn build_review_modal(
     onboarding_cfg: Option<&dbward_config::server::SlackOnboardingConfig>,
     request_id: &str,
     target_slack_id: &str,
+    display_name: &str,
     initial_roles: &[String],
     initial_groups: &[String],
+    reason: &str,
 ) -> serde_json::Value {
     let (assignable_roles, assignable_groups, restricted_roles) = match onboarding_cfg {
         Some(cfg) => (cfg.assignable_roles.clone(), cfg.assignable_groups.clone(), cfg.restricted_roles.clone()),
@@ -1570,17 +1424,37 @@ fn build_modify_approval_modal(
         .map(|g| serde_json::json!({"text": {"type": "plain_text", "text": g}, "value": g}))
         .collect();
 
+    let reason_display = if reason.is_empty() { "_(no reason provided)_" } else { reason };
+
     let mut blocks = vec![
         serde_json::json!({
             "type": "section",
-            "text": {"type": "mrkdwn", "text": format!("Modifying approval for <@{target_slack_id}>")}
+            "text": {"type": "mrkdwn", "text": format!(
+                "*Applicant:* <@{target_slack_id}> (`{display_name}`)\n*Requested Roles:* {}\n*Requested Groups:* {}\n*Reason:* {reason_display}",
+                if initial_roles.is_empty() { "_(none)_".to_string() } else { initial_roles.join(", ") },
+                if initial_groups.is_empty() { "_(none)_".to_string() } else { initial_groups.join(", ") },
+            )}
+        }),
+        serde_json::json!({"type": "divider"}),
+        serde_json::json!({
+            "type": "input",
+            "block_id": "decision_block",
+            "element": {
+                "type": "radio_buttons",
+                "action_id": "decision_input",
+                "options": [
+                    {"text": {"type": "plain_text", "text": "Approve"}, "value": "approve"},
+                    {"text": {"type": "plain_text", "text": "Reject"}, "value": "reject"}
+                ]
+            },
+            "label": {"type": "plain_text", "text": "Decision"}
         }),
     ];
 
     if !role_options.is_empty() {
         let mut element = serde_json::json!({
             "type": "multi_static_select",
-            "action_id": "modify_roles_select",
+            "action_id": "roles_select",
             "placeholder": {"type": "plain_text", "text": "Select roles"},
             "options": role_options
         });
@@ -1589,17 +1463,17 @@ fn build_modify_approval_modal(
         }
         blocks.push(serde_json::json!({
             "type": "input",
-            "block_id": "modify_roles_block",
+            "block_id": "roles_block",
             "optional": true,
             "element": element,
-            "label": {"type": "plain_text", "text": "Roles"}
+            "label": {"type": "plain_text", "text": "Roles (editable for Approve)"}
         }));
     }
 
     if !group_options.is_empty() {
         let mut element = serde_json::json!({
             "type": "multi_static_select",
-            "action_id": "modify_groups_select",
+            "action_id": "groups_select",
             "placeholder": {"type": "plain_text", "text": "Select groups"},
             "options": group_options
         });
@@ -1608,27 +1482,39 @@ fn build_modify_approval_modal(
         }
         blocks.push(serde_json::json!({
             "type": "input",
-            "block_id": "modify_groups_block",
+            "block_id": "groups_block",
             "optional": true,
             "element": element,
-            "label": {"type": "plain_text", "text": "Groups"}
+            "label": {"type": "plain_text", "text": "Groups (editable for Approve)"}
         }));
     }
 
-    // private_metadata: request_id
+    blocks.push(serde_json::json!({
+        "type": "input",
+        "block_id": "comment_block",
+        "optional": true,
+        "element": {
+            "type": "plain_text_input",
+            "action_id": "comment_input",
+            "multiline": true,
+            "placeholder": {"type": "plain_text", "text": "Optional comment"}
+        },
+        "label": {"type": "plain_text", "text": "Comment"}
+    }));
+
     serde_json::json!({
         "type": "modal",
-        "callback_id": "dbward_onboarding_modify_submit",
+        "callback_id": "dbward_onboarding_review_submit",
         "private_metadata": request_id,
-        "title": {"type": "plain_text", "text": "Modify & Approve"},
-        "submit": {"type": "plain_text", "text": "Approve"},
+        "title": {"type": "plain_text", "text": "Review Request"},
+        "submit": {"type": "plain_text", "text": "Submit"},
         "close": {"type": "plain_text", "text": "Cancel"},
         "blocks": blocks
     })
 }
 
-/// Handle "Modify & Approve" modal submission.
-async fn handle_modify_approval_submission(
+/// Handle onboarding review modal submission (approve or reject).
+async fn handle_onboarding_review_submit(
     state: &AppState,
     _slack_config: &dbward_infra::slack::SlackConfig,
     payload: &serde_json::Value,
@@ -1637,14 +1523,22 @@ async fn handle_modify_approval_submission(
     let approver_slack_id = payload["user"]["id"].as_str().unwrap_or("").to_string();
     let values = &payload["view"]["state"]["values"];
 
-    let roles: Vec<String> = values["modify_roles_block"]["modify_roles_select"]["selected_options"]
+    let decision = values["decision_block"]["decision_input"]["selected_option"]["value"]
+        .as_str()
+        .unwrap_or("");
+
+    let roles: Vec<String> = values["roles_block"]["roles_select"]["selected_options"]
         .as_array()
         .map(|arr| arr.iter().filter_map(|v| v["value"].as_str().map(String::from)).collect())
         .unwrap_or_default();
-    let groups: Vec<String> = values["modify_groups_block"]["modify_groups_select"]["selected_options"]
+    let groups: Vec<String> = values["groups_block"]["groups_select"]["selected_options"]
         .as_array()
         .map(|arr| arr.iter().filter_map(|v| v["value"].as_str().map(String::from)).collect())
         .unwrap_or_default();
+    let comment = values["comment_block"]["comment_input"]["value"]
+        .as_str()
+        .unwrap_or("")
+        .to_string();
 
     // Verify admin
     let auth_user = match resolve_slack_auth_user(state, &approver_slack_id).await {
@@ -1656,94 +1550,204 @@ async fn handle_modify_approval_submission(
     }
 
     // Load onboarding request
-    let req_data: Option<(String, String)> = {
+    let req_data: Option<(String, String, Option<String>)> = {
         let conn = state.db_conn().lock();
-        conn.prepare("SELECT slack_user_id, display_name FROM onboarding_requests WHERE id = ?1 AND status = 'pending'")
+        conn.prepare("SELECT slack_user_id, display_name, message_ts FROM onboarding_requests WHERE id = ?1 AND status = 'pending'")
             .and_then(|mut s| s.query_row(dbward_infra::rusqlite::params![request_id], |r| {
-                Ok((r.get::<_, String>(0)?, r.get::<_, Option<String>>(1)?.unwrap_or_default()))
+                Ok((r.get::<_, String>(0)?, r.get::<_, Option<String>>(1)?.unwrap_or_default(), r.get::<_, Option<String>>(2)?))
             }))
             .ok()
     };
 
-    let (target_slack_id, display_name) = match req_data {
+    let (target_slack_id, display_name, message_ts) = match req_data {
         Some(d) => d,
         None => return StatusCode::OK.into_response(),
     };
 
-    // Claim the pending row FIRST to prevent race conditions
     let now = chrono::Utc::now();
-    {
-        let conn = state.db_conn().lock();
-        let affected = conn.execute(
-            "UPDATE onboarding_requests SET status = 'approved', decided_by = ?1, decided_at = ?2 WHERE id = ?3 AND status = 'pending'",
-            dbward_infra::rusqlite::params![auth_user.subject_id, now.to_rfc3339(), request_id],
-        ).unwrap_or(0);
-        if affected == 0 {
-            return axum::Json(serde_json::json!({"response_action": "clear"})).into_response();
+    let channel_id = state.slack_config.as_ref().map(|c| c.default_channel.clone()).unwrap_or_default();
+    let comment_opt: Option<&str> = if comment.is_empty() { None } else { Some(&comment) };
+
+    if decision == "approve" {
+        // Claim the pending row
+        let roles_record = serde_json::to_string(&roles).unwrap_or_else(|_| "[]".into());
+        let groups_record = serde_json::to_string(&groups).unwrap_or_else(|_| "[]".into());
+        let claimed = {
+            let conn = state.db_conn().lock();
+            let affected = conn.execute(
+                "UPDATE onboarding_requests SET status = 'approved', decided_by = ?1, decided_at = ?2, \
+                 approved_roles_json = ?3, approved_groups_json = ?4, decision_comment = ?5 WHERE id = ?6 AND status = 'pending'",
+                dbward_infra::rusqlite::params![auth_user.subject_id, now.to_rfc3339(), roles_record, groups_record, comment_opt, request_id],
+            ).unwrap_or(0);
+            affected > 0
+        };
+        if !claimed {
+            return StatusCode::OK.into_response();
         }
-    }
 
-    // Create user with modified roles/groups
-    let user_id = if display_name.is_empty() {
-        format!("slack-{target_slack_id}")
-    } else {
-        display_name.clone()
-    };
+        // Create user
+        let user_id = if display_name.is_empty() {
+            format!("slack-{target_slack_id}")
+        } else {
+            display_name.clone()
+        };
 
-    let add_input = dbward_app::use_cases::user_manage::UserAddInput {
-        id: user_id.clone(),
-        roles: roles.clone(),
-        groups: groups.clone(),
-    };
+        let add_input = dbward_app::use_cases::user_manage::UserAddInput {
+            id: user_id.clone(),
+            roles: roles.clone(),
+            groups: groups.clone(),
+        };
 
-    let result = state.users().manage().add(
-        add_input,
-        &auth_user,
-        &dbward_domain::entities::AuditContext::System,
-    );
+        let result = state.users().manage().add(
+            add_input,
+            &auth_user,
+            &dbward_domain::entities::AuditContext::System,
+        );
 
-    match result {
-        Ok(output) => {
-            // Link slack_user_id
-            let (approved_roles, approved_groups) = {
+        match result {
+            Ok(output) => {
+                // Link slack_user_id + set source
+                let link_ok = {
+                    let conn = state.db_conn().lock();
+                    conn.execute(
+                        "UPDATE users SET slack_user_id = ?1, source = 'slack' WHERE id = ?2",
+                        dbward_infra::rusqlite::params![target_slack_id, user_id],
+                    ).is_ok()
+                };
+
+                if link_ok {
+                    // DM token to user
+                    if let Some(ref sc) = state.slack_client {
+                        let dm_text = format!(
+                            "🎉 Your dbward access has been approved!\n\n\
+                             Your API token (save it securely — it won't be shown again):\n\
+                             ```{}```\n\n\
+                             Configure it:\n\
+                             ```export DBWARD_API_TOKEN={}```",
+                            output.token, output.token
+                        );
+                        if let Err(e) = sc
+                            .post_message(
+                                &target_slack_id,
+                                &[serde_json::json!({
+                                    "type": "section",
+                                    "text": { "type": "mrkdwn", "text": dm_text }
+                                })],
+                                "Your dbward access has been approved!",
+                            )
+                            .await
+                        {
+                            tracing::warn!(error = %e, "onboarding: DM delivery failed");
+                            if let Some(ref sc2) = state.slack_client {
+                                let _ = sc2.post_ephemeral(
+                                    &channel_id,
+                                    &approver_slack_id,
+                                    &format!("⚠️ DM delivery to <@{target_slack_id}> failed. Use `dbward token create --subject {user_id}` to issue a new token."),
+                                ).await;
+                            }
+                        }
+                    }
+                } else {
+                    tracing::error!("onboarding: failed to link slack_user_id, skipping DM");
+                    if let Some(ref sc) = state.slack_client {
+                        let _ = sc.post_ephemeral(
+                            &channel_id,
+                            &approver_slack_id,
+                            &format!("⚠️ User `{user_id}` created but Slack link failed. Use `dbward token create --subject {user_id}` to issue a new token."),
+                        ).await;
+                    }
+                }
+
+                // Update approval channel message
+                if let (Some(sc), Some(ts)) = (state.slack_client.as_ref(), message_ts.as_ref()) {
+                    let comment_line = comment_opt.map(|c| format!("\n• Comment: {c}")).unwrap_or_default();
+                    let updated_blocks = serde_json::json!([{
+                        "type": "section",
+                        "text": {
+                            "type": "mrkdwn",
+                            "text": format!(
+                                "✅ *Approved* — <@{target_slack_id}> → user `{user_id}`\n\
+                                 • Roles: {}\n• Groups: {}\n• Approved by: <@{approver_slack_id}>{comment_line}",
+                                if roles.is_empty() { "_(none)_".to_string() } else { roles.join(", ") },
+                                if groups.is_empty() { "_(none)_".to_string() } else { groups.join(", ") },
+                            )
+                        }
+                    }]);
+                    if let Err(e) = sc.update_message(
+                        &channel_id,
+                        ts,
+                        updated_blocks.as_array().unwrap(),
+                        &format!("Approved: {user_id}"),
+                    ).await {
+                        tracing::warn!(error = %e, "onboarding: chat.update failed");
+                    }
+                }
+            }
+            Err(e) => {
+                tracing::error!(error = %e, "onboarding: user creation failed");
+                // Rollback
                 let conn = state.db_conn().lock();
                 if let Err(e) = conn.execute(
-                    "UPDATE users SET slack_user_id = ?1 WHERE id = ?2",
-                    dbward_infra::rusqlite::params![target_slack_id, user_id],
+                    "UPDATE onboarding_requests SET status = 'pending', decided_by = NULL, decided_at = NULL, \
+                     approved_roles_json = NULL, approved_groups_json = NULL, decision_comment = NULL WHERE id = ?1",
+                    dbward_infra::rusqlite::params![request_id],
                 ) {
-                    tracing::error!(error = %e, "onboarding modify: failed to link slack_user_id");
+                    tracing::warn!(error = %e, "onboarding: failed to rollback request to pending");
                 }
-                let ar = serde_json::to_string(&roles).unwrap_or_default();
-                let ag = serde_json::to_string(&groups).unwrap_or_default();
-                (ar, ag)
-            };
-
-            // DM token
-            if let Some(ref sc) = state.slack_client {
-                let dm_text = format!(
-                    "🎉 Your dbward access has been approved (modified by admin)!\n\
-                     • Roles: {}\n• Groups: {}\n\n\
-                     Your API token:\n```{}```",
-                    if roles.is_empty() { "_(none)_" } else { &approved_roles },
-                    if groups.is_empty() { "_(none)_" } else { &approved_groups },
-                    output.token
-                );
-                let _ = sc.post_message(
-                    &target_slack_id,
-                    &[serde_json::json!({"type": "section", "text": {"type": "mrkdwn", "text": dm_text}})],
-                    "Your dbward access has been approved!",
-                ).await;
             }
         }
-        Err(e) => {
-            tracing::error!(error = %e, "onboarding modify: user creation failed");
-            // Roll back claim: revert request to pending so it can be retried
+    } else {
+        // Reject — claim with affected rows check
+        let claimed = {
             let conn = state.db_conn().lock();
-            if let Err(e) = conn.execute(
-                "UPDATE onboarding_requests SET status = 'pending', decided_by = NULL, decided_at = NULL WHERE id = ?1",
-                dbward_infra::rusqlite::params![request_id],
-            ) {
-                tracing::warn!(error = %e, "onboarding modify: failed to rollback request to pending");
+            let affected = conn.execute(
+                "UPDATE onboarding_requests SET status = 'rejected', decided_by = ?1, decided_at = ?2, decision_comment = ?3 WHERE id = ?4 AND status = 'pending'",
+                dbward_infra::rusqlite::params![auth_user.subject_id, now.to_rfc3339(), comment_opt, request_id],
+            ).unwrap_or(0);
+            affected > 0
+        };
+        if !claimed {
+            return StatusCode::OK.into_response();
+        }
+
+        // DM rejection
+        if let Some(ref sc) = state.slack_client {
+            let reject_msg = if comment.is_empty() {
+                "❌ Your dbward access request was rejected. Contact an admin for details.".to_string()
+            } else {
+                format!("❌ Your dbward access request was rejected.\n• Reason: {comment}")
+            };
+            let _ = sc
+                .post_message(
+                    &target_slack_id,
+                    &[serde_json::json!({
+                        "type": "section",
+                        "text": { "type": "mrkdwn", "text": reject_msg }
+                    })],
+                    "Your dbward access request was rejected.",
+                )
+                .await;
+        }
+
+        // Update approval channel message
+        if let (Some(sc), Some(ts)) = (state.slack_client.as_ref(), message_ts.as_ref()) {
+            let comment_line = comment_opt.map(|c| format!("\n• Comment: {c}")).unwrap_or_default();
+            let updated_blocks = serde_json::json!([{
+                "type": "section",
+                "text": {
+                    "type": "mrkdwn",
+                    "text": format!(
+                        "❌ *Rejected* — <@{target_slack_id}>'s request\n• Rejected by: <@{approver_slack_id}>{comment_line}",
+                    )
+                }
+            }]);
+            if let Err(e) = sc.update_message(
+                &channel_id,
+                ts,
+                updated_blocks.as_array().unwrap(),
+                &format!("Rejected: <@{target_slack_id}>"),
+            ).await {
+                tracing::warn!(error = %e, "onboarding: chat.update failed");
             }
         }
     }
