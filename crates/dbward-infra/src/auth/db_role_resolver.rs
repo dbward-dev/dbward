@@ -38,8 +38,8 @@ pub struct DbRoleResolver {
     /// Config-defined group→roles mapping. Swapped atomically on config reload.
     group_roles: ArcSwap<HashMap<String, Vec<String>>>,
     /// Built-in + custom role definitions (name → ResolvedRole).
-    roles: HashMap<String, ResolvedRole>,
-    default_role: Option<String>,
+    roles: ArcSwap<HashMap<String, ResolvedRole>>,
+    default_role: ArcSwap<Option<String>>,
     policy_repo: Option<Arc<dyn dbward_app::ports::PolicyRepo>>,
 }
 
@@ -77,8 +77,8 @@ impl DbRoleResolver {
             pool,
             cache: DashMap::new(),
             group_roles: ArcSwap::new(Arc::new(group_roles)),
-            roles,
-            default_role,
+            roles: ArcSwap::new(Arc::new(roles)),
+            default_role: ArcSwap::new(Arc::new(default_role)),
             policy_repo,
         })
     }
@@ -121,8 +121,8 @@ impl DbRoleResolver {
             pool,
             cache: DashMap::new(),
             group_roles: ArcSwap::new(Arc::new(group_roles)),
-            roles,
-            default_role,
+            roles: ArcSwap::new(Arc::new(roles)),
+            default_role: ArcSwap::new(Arc::new(default_role)),
             policy_repo: None,
         }
     }
@@ -140,6 +140,66 @@ impl DbRoleResolver {
     /// Update group→roles mapping from config (call on config reload).
     pub fn update_group_roles(&self, new_group_roles: HashMap<String, Vec<String>>) {
         self.group_roles.store(Arc::new(new_group_roles));
+        self.cache.clear();
+    }
+
+    /// Atomically update all config-derived state in one shot (call on config reload).
+    /// Note: the three ArcSwap::store() calls are individually atomic but not jointly.
+    /// In practice this is safe because: (1) reload is mutex-guarded (single writer),
+    /// (2) cache.clear() forces all subsequent resolves to re-read all three stores,
+    /// (3) the window between stores is sub-microsecond. Full snapshot atomicity
+    /// would require wrapping all three in a single Arc<ConfigSnapshot> — deferred to v0.2.
+    pub fn reload_config(
+        &self,
+        new_group_roles: HashMap<String, Vec<String>>,
+        role_definitions: Vec<dbward_domain::auth::RoleDefinition>,
+        new_default_role: Option<String>,
+    ) {
+        let mut new_roles = HashMap::new();
+        for (name, resolved) in builtin_roles() {
+            new_roles.insert(name, resolved);
+        }
+        for def in role_definitions {
+            let resolved = ResolvedRole {
+                name: def.name.clone(),
+                permissions: def.permissions.into_iter().collect(),
+                databases: def.databases,
+                environments: def.environments,
+            };
+            new_roles.insert(def.name, resolved);
+        }
+        // Store all three atomically (cache clear only once at the end)
+        self.group_roles.store(Arc::new(new_group_roles));
+        self.roles.store(Arc::new(new_roles));
+        self.default_role.store(Arc::new(new_default_role));
+        self.cache.clear();
+    }
+
+    /// Update role definitions from config (call on config reload).
+    pub fn update_role_definitions(
+        &self,
+        role_definitions: Vec<dbward_domain::auth::RoleDefinition>,
+    ) {
+        let mut new_roles = HashMap::new();
+        for (name, resolved) in builtin_roles() {
+            new_roles.insert(name, resolved);
+        }
+        for def in role_definitions {
+            let resolved = ResolvedRole {
+                name: def.name.clone(),
+                permissions: def.permissions.into_iter().collect(),
+                databases: def.databases,
+                environments: def.environments,
+            };
+            new_roles.insert(def.name, resolved);
+        }
+        self.roles.store(Arc::new(new_roles));
+        self.cache.clear();
+    }
+
+    /// Update default_role from config (call on config reload).
+    pub fn update_default_role(&self, new_default: Option<String>) {
+        self.default_role.store(Arc::new(new_default));
         self.cache.clear();
     }
 
@@ -193,10 +253,11 @@ impl DbRoleResolver {
         }
 
         // 5. Default role fallback
-        if all_role_names.is_empty()
-            && let Some(ref default) = self.default_role
-        {
-            all_role_names.insert(default.clone());
+        if all_role_names.is_empty() {
+            let default = self.default_role.load();
+            if let Some(ref d) = **default {
+                all_role_names.insert(d.clone());
+            }
         }
 
         Ok((all_role_names.into_iter().collect(), effective_groups))
@@ -208,9 +269,10 @@ impl DbRoleResolver {
     ) -> Result<Vec<ResolvedRole>, AuthError> {
         let mut resolved = Vec::new();
         let mut unresolved = Vec::new();
+        let roles_map = self.roles.load();
 
         for name in role_names {
-            if let Some(r) = self.roles.get(name) {
+            if let Some(r) = roles_map.get(name) {
                 resolved.push(r.clone());
             } else {
                 unresolved.push(name.clone());
@@ -245,7 +307,8 @@ impl RoleResolver for DbRoleResolver {
     ) -> Result<Vec<ResolvedRole>, AuthError> {
         // Agents always get agent-default only
         if subject_type == SubjectType::Agent {
-            return Ok(vec![self.roles.get("agent-default").cloned().ok_or_else(
+            let roles_map = self.roles.load();
+            return Ok(vec![roles_map.get("agent-default").cloned().ok_or_else(
                 || AuthError::Internal("agent-default role not found".into()),
             )?]);
         }

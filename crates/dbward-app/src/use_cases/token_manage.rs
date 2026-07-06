@@ -209,11 +209,7 @@ impl TokenManage {
 
         // Generate token
         let raw = self.token_gen.generate_token_value();
-        let prefix = if raw.len() >= 12 {
-            raw[4..12].to_string()
-        } else {
-            raw.chars().take(8).collect()
-        };
+        let prefix = dbward_domain::entities::Token::extract_prefix(&raw);
         let hash = hex::encode(Sha256::digest(raw.as_bytes()));
 
         let now = self.clock.now();
@@ -422,6 +418,19 @@ mod tests {
         }
         fn ensure_exists(&self, _: &str) -> Result<(), AppError> {
             Ok(())
+        }
+
+        fn count_active(&self) -> Result<u32, AppError> {
+            Ok(1)
+        }
+        fn get_roles(&self, _: &str) -> Result<Vec<String>, AppError> {
+            Ok(vec![])
+        }
+        fn is_deleted(&self, _: &str) -> Result<bool, AppError> {
+            Ok(false)
+        }
+        fn count_admins(&self) -> Result<u32, AppError> {
+            Ok(1)
         }
     }
     struct FakePolicyRepo {

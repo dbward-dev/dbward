@@ -1350,6 +1350,19 @@ impl UserRepo for FakeUserRepoForAgent {
     fn ensure_exists(&self, _: &str) -> Result<(), AppError> {
         Ok(())
     }
+
+            fn count_active(&self) -> Result<u32, AppError> {
+                Ok(1)
+            }
+            fn get_roles(&self, _: &str) -> Result<Vec<String>, AppError> {
+                Ok(vec![])
+            }
+            fn is_deleted(&self, _: &str) -> Result<bool, AppError> {
+                Ok(false)
+            }
+            fn count_admins(&self) -> Result<u32, AppError> {
+                Ok(1)
+            }
 }
 
 struct FakeRoleResolverForAgent;
@@ -1552,6 +1565,19 @@ fn token_prefix_is_raw_4_to_12() {
         }
         fn ensure_exists(&self, _: &str) -> Result<(), AppError> {
             Ok(())
+        }
+
+        fn count_active(&self) -> Result<u32, AppError> {
+            Ok(1)
+        }
+        fn get_roles(&self, _: &str) -> Result<Vec<String>, AppError> {
+            Ok(vec![])
+        }
+        fn is_deleted(&self, _: &str) -> Result<bool, AppError> {
+            Ok(false)
+        }
+        fn count_admins(&self) -> Result<u32, AppError> {
+            Ok(1)
         }
     }
 

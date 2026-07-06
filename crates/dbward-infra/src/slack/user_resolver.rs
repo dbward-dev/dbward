@@ -243,6 +243,19 @@ mod tests {
         fn update_slack_user_id(&self, _: &str, _: Option<&str>) -> Result<(), AppError> {
             Ok(())
         }
+
+        fn count_active(&self) -> Result<u32, AppError> {
+            Ok(1)
+        }
+        fn get_roles(&self, _: &str) -> Result<Vec<String>, AppError> {
+            Ok(vec![])
+        }
+        fn is_deleted(&self, _: &str) -> Result<bool, AppError> {
+            Ok(false)
+        }
+        fn count_admins(&self) -> Result<u32, AppError> {
+            Ok(1)
+        }
     }
 
     fn make_user(id: &str, email: Option<&str>) -> User {

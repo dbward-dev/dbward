@@ -18,7 +18,6 @@ pub struct UserManage {
     pub policy_repo: Arc<dyn PolicyRepo>,
     pub id_gen: Arc<dyn IdGenerator>,
     pub token_gen: Arc<dyn TokenValueGenerator>,
-    pub audit_logger: Arc<dyn crate::ports::AuditLogger>,
     pub notifier: Arc<dyn crate::ports::Notifier>,
 }
 
@@ -159,7 +158,7 @@ impl UserManage {
                 "token generator produced value shorter than 12 chars".into(),
             ));
         }
-        let prefix = raw_token[4..12].to_string();
+        let prefix = dbward_domain::entities::Token::extract_prefix(&raw_token);
         let hash = {
             use sha2::{Digest, Sha256};
             hex::encode(Sha256::digest(raw_token.as_bytes()))
@@ -187,6 +186,8 @@ impl UserManage {
         let max_users = self.license.max_users();
         let slack_user_id_clone = input.slack_user_id.clone();
         let source_clone = input.source.clone();
+        let actor_id_clone = user.subject_id.clone();
+        let audit_ctx_clone = _ctx.clone();
         self.uow.execute(Box::new(move |tx| {
             // Existence check inside tx to prevent TOCTOU
             if tx.user_exists_tx(&id_clone)? {
@@ -208,30 +209,29 @@ impl UserManage {
                 tx.add_group_member_tx(group, &id_clone, now)?;
             }
             tx.create_token_tx(&token_clone)?;
+            // Audit inside tx for fail-closed guarantee
+            for _group in &groups_clone {
+                let audit = dbward_domain::entities::AuditEvent::simple(
+                    "group.member_added",
+                    "identity",
+                    &actor_id_clone,
+                    Some(&id_clone),
+                    now,
+                    &audit_ctx_clone,
+                );
+                tx.record(&audit)?;
+            }
+            let audit = dbward_domain::entities::AuditEvent::simple(
+                "user.created",
+                "identity",
+                &actor_id_clone,
+                Some(&id_clone),
+                now,
+                &audit_ctx_clone,
+            );
+            tx.record(&audit)?;
             Ok(())
         }))?;
-
-        // Audit (group membership)
-        for _group in &input.groups {
-            let audit = dbward_domain::entities::AuditEvent::simple(
-                "group.member_added",
-                "identity",
-                &user.subject_id,
-                Some(&input.id),
-                now,
-                _ctx,
-            );
-            let _ = self.audit_logger.record(&audit);
-        }
-        let audit = dbward_domain::entities::AuditEvent::simple(
-            "user.created",
-            "identity",
-            &user.subject_id,
-            Some(&input.id),
-            now,
-            _ctx,
-        );
-        let _ = self.audit_logger.record(&audit);
 
         // Webhook
         self.notifier.dispatch(crate::ports::WebhookEvent {
@@ -308,6 +308,15 @@ impl UserManage {
             return Err(AppError::Gone("user has been deleted".into()));
         }
 
+        // Reject conflicting add/remove of the same group
+        for g in &input.add_groups {
+            if input.rm_groups.contains(g) {
+                return Err(AppError::Validation(format!(
+                    "group '{g}' cannot be in both add_groups and rm_groups"
+                )));
+            }
+        }
+
         // Compute new roles
         let mut current_roles = self.user_repo.get_roles(&input.user_id)?;
         if let Some(set) = input.set_roles {
@@ -362,9 +371,40 @@ impl UserManage {
         let current_roles_clone = current_roles.clone();
         let add_groups_clone = input.add_groups.clone();
         let rm_groups_clone = input.rm_groups.clone();
+        let actor_id_clone = user.subject_id.clone();
+        let audit_ctx_clone = ctx.clone();
         self.uow.execute(Box::new(move |tx| {
             // Last admin guard inside tx to prevent TOCTOU
-            if user_currently_admin && !user_will_have_admin_direct {
+            // Only trigger when the user actually loses admin access
+            let removing_admin_group = rm_groups_clone
+                .iter()
+                .any(|g| admin_groups.contains(g));
+            let user_loses_admin = user_currently_admin && !user_will_have_admin_direct;
+            // Check if user retains admin via other admin groups not being removed
+            let user_retains_admin_via_other_group = if removing_admin_group {
+                let mut retains = false;
+                for ag in &admin_groups {
+                    if !rm_groups_clone.contains(ag)
+                        && tx.user_in_group_tx(&user_id_clone, ag)?
+                    {
+                        retains = true;
+                        break;
+                    }
+                }
+                retains
+            } else {
+                false
+            };
+            // Also consider admin groups being added in this same update
+            let adding_admin_group = add_groups_clone
+                .iter()
+                .any(|g| admin_groups.contains(g));
+            // Skip guard if user retains admin (direct, remaining group, or newly added group)
+            let needs_guard = (user_loses_admin || removing_admin_group)
+                && !user_will_have_admin_direct
+                && !user_retains_admin_via_other_group
+                && !adding_admin_group;
+            if needs_guard && tx.user_has_admin_tx(&user_id_clone, &admin_groups)? {
                 let admin_count = tx.count_admins_tx(&admin_groups)?;
                 if admin_count <= 1 {
                     return Err(AppError::Validation(
@@ -379,42 +419,41 @@ impl UserManage {
             for group in &rm_groups_clone {
                 tx.remove_member_tx(group, &user_id_clone)?;
             }
+            // Audit inside tx for fail-closed guarantee
+            for _group in &add_groups_clone {
+                let audit = dbward_domain::entities::AuditEvent::simple(
+                    "group.member_added",
+                    "identity",
+                    &actor_id_clone,
+                    Some(&user_id_clone),
+                    now,
+                    &audit_ctx_clone,
+                );
+                tx.record(&audit)?;
+            }
+            for _group in &rm_groups_clone {
+                let audit = dbward_domain::entities::AuditEvent::simple(
+                    "group.member_removed",
+                    "identity",
+                    &actor_id_clone,
+                    Some(&user_id_clone),
+                    now,
+                    &audit_ctx_clone,
+                );
+                tx.record(&audit)?;
+            }
+            let audit = dbward_domain::entities::AuditEvent::simple(
+                "user.updated",
+                "identity",
+                &actor_id_clone,
+                Some(&user_id_clone),
+                now,
+                &audit_ctx_clone,
+            );
+            tx.record(&audit)?;
             Ok(())
         }))?;
 
-        // Audit events (after successful commit)
-        for _group in &input.add_groups {
-            let audit = dbward_domain::entities::AuditEvent::simple(
-                "group.member_added",
-                "identity",
-                &user.subject_id,
-                Some(&input.user_id),
-                now,
-                ctx,
-            );
-            let _ = self.audit_logger.record(&audit);
-        }
-        for _group in &input.rm_groups {
-            let audit = dbward_domain::entities::AuditEvent::simple(
-                "group.member_removed",
-                "identity",
-                &user.subject_id,
-                Some(&input.user_id),
-                now,
-                ctx,
-            );
-            let _ = self.audit_logger.record(&audit);
-        }
-
-        let audit = dbward_domain::entities::AuditEvent::simple(
-            "user.updated",
-            "identity",
-            &user.subject_id,
-            Some(&input.user_id),
-            self.clock.now(),
-            ctx,
-        );
-        let _ = self.audit_logger.record(&audit);
         self.role_resolver.invalidate_cache(&input.user_id);
         Ok(())
     }
@@ -552,13 +591,9 @@ impl UserManage {
             return Err(AppError::Gone("user has been deleted".into()));
         }
 
-        // Only check limit when transitioning from suspended to active
-        if existing.status == dbward_domain::entities::UserStatus::Suspended {
-            let count = self.user_repo.count_active()?;
-            if count >= self.license.max_users() {
-                return Err(AppError::PlanLimit("user limit reached".into()));
-            }
-        }
+        let needs_limit_check =
+            existing.status == dbward_domain::entities::UserStatus::Suspended;
+        let max_users = self.license.max_users();
 
         let now = self.clock.now();
         let uid = user_id.to_string();
@@ -572,6 +607,12 @@ impl UserManage {
             ctx,
         );
         self.uow.execute(Box::new(move |tx| {
+            if needs_limit_check {
+                let count = tx.count_active_tx()?;
+                if count >= max_users {
+                    return Err(AppError::PlanLimit("user limit reached".into()));
+                }
+            }
             tx.activate_user(&uid, now)?;
             tx.record(&audit_event)?;
             Ok(())
@@ -855,6 +896,18 @@ mod tests {
         fn activate(&self, _: &str, _: DateTime<Utc>) -> Result<bool, AppError> {
             Ok(true)
         }
+        fn count_active(&self) -> Result<u32, AppError> {
+            Ok(1)
+        }
+        fn get_roles(&self, _: &str) -> Result<Vec<String>, AppError> {
+            Ok(vec!["developer".into()])
+        }
+        fn is_deleted(&self, _: &str) -> Result<bool, AppError> {
+            Ok(false)
+        }
+        fn count_admins(&self) -> Result<u32, AppError> {
+            Ok(1)
+        }
     }
 
     struct FakeTokenRepo;
@@ -1018,7 +1071,6 @@ mod tests {
             policy_repo: Arc::new(FakePolicyRepo),
             id_gen: Arc::new(FakeIdGen),
             token_gen: Arc::new(FakeTokenGen),
-            audit_logger: Arc::new(crate::test_support::NoopAuditLogger),
             notifier: Arc::new(crate::test_support::NoopNotifier),
         }
     }
@@ -1141,6 +1193,15 @@ mod tests {
             fn count_active(&self) -> Result<u32, AppError> {
                 Ok(5)
             }
+            fn get_roles(&self, _: &str) -> Result<Vec<String>, AppError> {
+                Ok(vec![])
+            }
+            fn is_deleted(&self, _: &str) -> Result<bool, AppError> {
+                Ok(false)
+            }
+            fn count_admins(&self) -> Result<u32, AppError> {
+                Ok(1)
+            }
         }
         let uc = UserManage {
             authorizer: Arc::new(AllowAll),
@@ -1154,7 +1215,6 @@ mod tests {
             policy_repo: Arc::new(FakePolicyRepo),
             id_gen: Arc::new(FakeIdGen),
             token_gen: Arc::new(FakeTokenGen),
-            audit_logger: Arc::new(crate::test_support::NoopAuditLogger),
             notifier: Arc::new(crate::test_support::NoopNotifier),
         };
         let result = uc.activate("u1", &admin_user(), &AuditContext::System);

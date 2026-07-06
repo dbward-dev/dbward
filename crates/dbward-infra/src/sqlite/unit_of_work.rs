@@ -895,6 +895,18 @@ impl UserWriterOps for SqliteTxScope<'_> {
         Ok(false)
     }
 
+    fn user_in_group_tx(&self, user_id: &str, group_name: &str) -> Result<bool, AppError> {
+        let exists: bool = self
+            .conn
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM group_members WHERE user_id = ?1 AND group_name = ?2)",
+                params![user_id, group_name],
+                |r| r.get(0),
+            )
+            .map_err(|e| AppError::Internal(format!("user_in_group_tx: {e}")))?;
+        Ok(exists)
+    }
+
     fn set_slack_user_id_tx(
         &self,
         user_id: &str,

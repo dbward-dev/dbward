@@ -181,6 +181,11 @@ pub trait UserWriterOps {
         let _ = (user_id, admin_groups);
         Err(AppError::Internal("not implemented".into()))
     }
+    /// Check if user is a member of a specific group within transaction.
+    fn user_in_group_tx(&self, user_id: &str, group_name: &str) -> Result<bool, AppError> {
+        let _ = (user_id, group_name);
+        Err(AppError::Internal("user_in_group_tx not implemented".into()))
+    }
     /// Set slack_user_id and source on a user within transaction.
     fn set_slack_user_id_tx(
         &self,

@@ -175,32 +175,91 @@ pub async fn update_roles_groups(
         })
         .unwrap_or_default();
 
+    // Parse slack_user_id with proper null/type handling
+    let slack_user_id: Option<Option<String>> = match body.get("slack_user_id") {
+        Some(serde_json::Value::String(s)) => {
+            let valid = s.is_empty()
+                || (s.len() >= 2
+                    && matches!(s.as_bytes()[0], b'U' | b'W')
+                    && s[1..].bytes().all(|b| b.is_ascii_uppercase() || b.is_ascii_digit()));
+            if !valid {
+                return Err(map_error(dbward_app::error::AppError::Validation(
+                    "invalid slack_user_id format (expected ^[UW][A-Z0-9]+$ or empty string to clear)".into(),
+                )));
+            }
+            Some(if s.is_empty() { None } else { Some(s.clone()) })
+        }
+        Some(serde_json::Value::Null) => Some(None), // explicit clear
+        Some(_) => {
+            return Err(map_error(dbward_app::error::AppError::Validation(
+                "slack_user_id must be a string or null".into(),
+            )));
+        }
+        None => None, // field absent
+    };
+
     if set_roles.is_none()
         && add_roles.is_empty()
         && rm_roles.is_empty()
         && add_groups.is_empty()
         && rm_groups.is_empty()
+        && slack_user_id.is_none()
     {
         return Err(map_error(dbward_app::error::AppError::Validation(
-            "no updateable fields provided (use roles, add_roles, rm_roles, add_groups, rm_groups)"
+            "no updateable fields provided (use roles, add_roles, rm_roles, add_groups, rm_groups, slack_user_id)"
                 .into(),
         )));
     }
 
-    let uc = state.users().manage();
-    uc.update(
-        UserUpdateInput {
-            user_id: id.clone(),
-            set_roles,
-            add_roles,
-            rm_roles,
-            add_groups,
-            rm_groups,
-        },
-        &user,
-        &ctx,
-    )
-    .map_err(map_error)?;
+    let has_role_group_changes = set_roles.is_some()
+        || !add_roles.is_empty()
+        || !rm_roles.is_empty()
+        || !add_groups.is_empty()
+        || !rm_groups.is_empty();
+
+    // Authorization check (UserWrite required for any user mutation including slack_user_id link).
+    // Design: slack_user_id linking is an admin-only operation. Self-service linking is done via
+    // Slack onboarding flow, not direct API.
+    state
+        .authorizer()
+        .authorize_global(&user, dbward_domain::auth::Permission::UserWrite)
+        .map_err(|e| map_error(dbward_app::error::AppError::Forbidden(e)))?;
+
+    // Reject if user is deleted
+    if state.user_repo().is_deleted(&id).map_err(map_error)? {
+        return Err(map_error(dbward_app::error::AppError::Gone(
+            "user has been deleted".into(),
+        )));
+    }
+
+    // Execute role/group update first (may fail validation)
+    if has_role_group_changes {
+        let uc = state.users().manage();
+        uc.update(
+            UserUpdateInput {
+                user_id: id.clone(),
+                set_roles,
+                add_roles,
+                rm_roles,
+                add_groups,
+                rm_groups,
+            },
+            &user,
+            &ctx,
+        )
+        .map_err(map_error)?;
+    }
+
+    // Persist slack_user_id only after role/group update succeeds.
+    // Note: not fully atomic with role/group UoW — if this write fails, roles are already
+    // committed. Acceptable trade-off: slack_user_id is a link field, not a security-critical
+    // mutation. Full atomicity would require extending UserUpdateInput (deferred to v0.2).
+    if let Some(ref link_value) = slack_user_id {
+        state
+            .user_repo()
+            .update_slack_user_id(&id, link_value.as_deref())
+            .map_err(map_error)?;
+    }
 
     Ok((
         StatusCode::OK,
@@ -306,75 +365,6 @@ pub async fn activate(
         resp["source"] = serde_json::json!("config");
     }
     Ok((StatusCode::OK, Json(resp)))
-}
-
-#[allow(dead_code)] // Kept for slack_user_id update; will be integrated in later step
-pub async fn patch(
-    State(state): State<AppState>,
-    Extension(user): Extension<AuthUser>,
-    Path(id): Path<String>,
-    Json(body): Json<serde_json::Value>,
-) -> Result<(StatusCode, Json<serde_json::Value>), (StatusCode, Json<serde_json::Value>)> {
-    use dbward_domain::auth::{Permission, ResourceContext};
-
-    for field in ["role", "roles", "groups", "subject_type", "status"] {
-        if body.get(field).is_some() {
-            return Err(map_error(dbward_app::error::AppError::Validation(format!(
-                "cannot update field '{field}' via this endpoint"
-            ))));
-        }
-    }
-
-    let ctx = ResourceContext::User {
-        target_id: id.clone(),
-    };
-    let db = dbward_domain::values::DatabaseName::wildcard();
-    let env = dbward_domain::values::Environment::wildcard();
-    state
-        .authorizer
-        .authorize_scoped(&user, Permission::UserWrite, &db, &env, &ctx)
-        .map_err(|e| map_error(dbward_app::error::AppError::Forbidden(e)))?;
-
-    let slack_user_id = match body.get("slack_user_id") {
-        Some(serde_json::Value::String(s)) => {
-            let valid = s.len() >= 2
-                && matches!(s.as_bytes()[0], b'U' | b'W')
-                && s[1..]
-                    .bytes()
-                    .all(|b| b.is_ascii_uppercase() || b.is_ascii_digit());
-            if !valid {
-                return Err(map_error(dbward_app::error::AppError::Validation(
-                    "invalid slack_user_id format (expected ^[UW][A-Z0-9]+$)".into(),
-                )));
-            }
-            Some(s.as_str().to_string())
-        }
-        Some(serde_json::Value::Null) => None,
-        Some(_) => {
-            return Err(map_error(dbward_app::error::AppError::Validation(
-                "slack_user_id must be a string or null".into(),
-            )));
-        }
-        None => {
-            return Err(map_error(dbward_app::error::AppError::Validation(
-                "no updateable fields provided".into(),
-            )));
-        }
-    };
-
-    state
-        .users()
-        .user_repo()
-        .update_slack_user_id(&id, slack_user_id.as_deref())
-        .map_err(map_error)?;
-
-    Ok((
-        StatusCode::OK,
-        Json(serde_json::json!({
-            "id": id,
-            "slack_user_id": slack_user_id,
-        })),
-    ))
 }
 
 /// Query the source column for a user (returns None if user not found or error).

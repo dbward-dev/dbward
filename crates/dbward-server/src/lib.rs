@@ -823,14 +823,40 @@ pub async fn run_from_args(
                                                         .unwrap_or(true)
                                                 })
                                     });
-                                if direct_admin_count == 0 && !group_has_active_admin_member {
+                                // OIDC role_mappings can also grant admin at login time
+                                // (only relevant when auth mode supports OIDC)
+                                let oidc_can_grant_admin =
+                                    (startup_auth_mode == "oidc" || startup_auth_mode == "both")
+                                        && new_cfg
+                                            .auth
+                                            .oidc
+                                            .as_ref()
+                                            .map(|oidc| {
+                                                oidc.role_mappings
+                                                    .iter()
+                                                    .any(|m| m.claim == "groups" && m.role == "admin")
+                                            })
+                                            .unwrap_or(false);
+                                if direct_admin_count == 0
+                                    && !group_has_active_admin_member
+                                    && !oidc_can_grant_admin
+                                {
                                     tracing::warn!(
                                         "config reload rejected: would leave zero admin users"
                                     );
                                 } else {
-                                    resolver.update_group_roles(new_group_roles);
+                                    resolver.reload_config(
+                                        new_group_roles,
+                                        new_cfg
+                                            .auth
+                                            .roles
+                                            .iter()
+                                            .map(build_role_definition)
+                                            .collect(),
+                                        new_cfg.auth.default_role.clone(),
+                                    );
                                     tracing::info!(
-                                        "config reload: DbRoleResolver group_roles updated + cache cleared"
+                                        "config reload: DbRoleResolver updated (group_roles + role_definitions + default_role)"
                                     );
                                     // Only update reloadable config when admin guard passes
                                     let role_resolver: Arc<dyn dbward_app::ports::RoleResolver> =
