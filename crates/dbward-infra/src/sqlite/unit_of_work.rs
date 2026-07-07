@@ -793,7 +793,7 @@ impl UserWriterOps for SqliteTxScope<'_> {
         let count: u32 = self
             .conn
             .query_row(
-                "SELECT COUNT(*) FROM users WHERE lifecycle_state = 'active'",
+                "SELECT COUNT(*) FROM users WHERE lifecycle_state = 'active' AND status = 'active'",
                 [],
                 |r| r.get(0),
             )

@@ -23,14 +23,17 @@ async fn expire_pending_requests(state: &AppState) {
     let expired_users: Vec<String> = {
         let conn = state.db_conn().lock();
         // Find and update expired pending requests
-        let _ = conn.execute(
+        if let Err(e) = conn.execute(
             "UPDATE onboarding_requests SET status = 'expired', decided_at = ?1 \
              WHERE status = 'pending' AND expires_at <= ?1",
             dbward_infra::rusqlite::params![now],
-        );
+        ) {
+            tracing::error!(error = %e, "onboarding_expiry: failed to expire pending requests");
+            return;
+        }
 
         // Get slack_user_ids of just-expired requests for DM notification
-        conn.prepare(
+        match conn.prepare(
             "SELECT slack_user_id FROM onboarding_requests \
              WHERE status = 'expired' AND decided_at = ?1",
         )
@@ -39,14 +42,19 @@ async fn expire_pending_requests(state: &AppState) {
                 r.get::<_, String>(0)
             })?;
             Ok(rows.filter_map(|r| r.ok()).collect())
-        })
-        .unwrap_or_default()
+        }) {
+            Ok(users) => users,
+            Err(e) => {
+                tracing::error!(error = %e, "onboarding_expiry: failed to query expired users");
+                return;
+            }
+        }
     };
 
     // DM expired users
     if let Some(ref sc) = state.slack_client {
         for slack_user_id in expired_users {
-            let _ = sc
+            if let Err(e) = sc
                 .post_message(
                     &slack_user_id,
                     &[serde_json::json!({
@@ -58,7 +66,10 @@ async fn expire_pending_requests(state: &AppState) {
                     })],
                     "Your dbward access request has expired.",
                 )
-                .await;
+                .await
+            {
+                tracing::warn!(error = %e, %slack_user_id, "onboarding_expiry: failed to DM expired user");
+            }
         }
     }
 }
