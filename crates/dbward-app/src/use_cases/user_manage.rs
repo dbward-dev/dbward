@@ -151,7 +151,7 @@ impl UserManage {
             updated_at: now,
         };
 
-        // Token ceiling = direct roles + group-derived roles (from config).
+        // Token ceiling = direct roles + group-derived roles + default_role fallback.
         let mut effective_roles = input.roles.clone();
         for group in &input.groups {
             for role in self.role_resolver.roles_for_group(group) {
@@ -159,6 +159,11 @@ impl UserManage {
                     effective_roles.push(role);
                 }
             }
+        }
+        if effective_roles.is_empty()
+            && let Some(dr) = self.role_resolver.default_role()
+        {
+            effective_roles.push(dr);
         }
 
         let ceiling = dbward_domain::entities::ScopeCeiling {

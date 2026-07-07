@@ -113,12 +113,8 @@ impl TokenManage {
             }
         }
 
-        // Validation 4: User ceiling required
-        if subject_type == dbward_domain::auth::SubjectType::User && input.scope_ceiling.is_none() {
-            return Err(AppError::Validation(
-                "scope_ceiling is required for user tokens".into(),
-            ));
-        }
+        // Auto-ceiling: if scope_ceiling is not specified for user tokens, default to resolved roles
+        let mut input = input;
 
         // Validation 5: ceiling roles non-empty and exist
         if let Some(ref ceiling) = input.scope_ceiling {
@@ -166,9 +162,16 @@ impl TokenManage {
             .map_err(|e| AppError::Internal(format!("role resolution: {e}")))?;
         if resolved_roles.is_empty() {
             return Err(AppError::Validation(format!(
-                "subject '{}' resolves to no roles; add to [[auth.role_bindings]] or set default_role",
+                "subject '{}' resolves to no roles; assign roles/groups or set default_role",
                 input.subject_id
             )));
+        }
+
+        // Auto-ceiling: default to resolved roles when not explicitly provided
+        if input.scope_ceiling.is_none() && subject_type == dbward_domain::auth::SubjectType::User {
+            input.scope_ceiling = Some(dbward_domain::entities::ScopeCeiling {
+                roles: resolved_roles.iter().map(|r| r.name.clone()).collect(),
+            });
         }
 
         // Validation 7: resolved ∩ ceiling must be non-empty
@@ -650,7 +653,7 @@ mod tests {
     }
 
     #[test]
-    fn create_user_token_requires_scope_ceiling() {
+    fn create_user_token_auto_ceiling_from_resolve() {
         let uc = make_uc(vec![]);
         let result = uc.create(
             TokenCreateInput {
@@ -665,9 +668,9 @@ mod tests {
             &make_user(),
             &dbward_domain::entities::AuditContext::System,
         );
-        assert!(
-            matches!(result, Err(AppError::Validation(ref msg)) if msg.contains("scope_ceiling is required"))
-        );
+        // Auto-ceiling: resolved roles (admin) become the ceiling
+        let output = result.unwrap();
+        assert!(!output.token.is_empty());
     }
 
     #[test]

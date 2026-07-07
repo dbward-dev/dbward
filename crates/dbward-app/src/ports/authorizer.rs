@@ -64,8 +64,14 @@ pub trait RoleResolver: Send + Sync {
         vec![]
     }
 
-    /// Returns TOML-configured groups for a subject_id (for AuthUser.groups augmentation).
-    fn config_groups_for(&self, _subject_id: &str) -> Option<&Vec<String>> {
+    /// Returns the group memberships for a subject_id (for AuthUser.groups).
+    /// DB-backed: queries group_members table. Config-backed: returns TOML groups.
+    fn groups_for_subject(&self, _subject_id: &str) -> Vec<String> {
+        vec![]
+    }
+
+    /// Returns the configured default_role (applied when no other roles resolve).
+    fn default_role(&self) -> Option<String> {
         None
     }
 }

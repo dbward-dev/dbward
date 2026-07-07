@@ -405,12 +405,33 @@ impl RoleResolver for DbRoleResolver {
         }
     }
 
-    fn config_groups_for(&self, subject_id: &str) -> Option<&Vec<String>> {
-        // Cannot return borrow from DB-backed resolver.
-        // Callers should use the groups from resolve() result instead.
-        // This method will be removed when auth middleware is updated (Step 5.6).
-        let _ = subject_id;
-        None
+    fn groups_for_subject(&self, subject_id: &str) -> Vec<String> {
+        let conn = match self.pool.get() {
+            Ok(c) => c,
+            Err(e) => {
+                tracing::error!(error = %e, "groups_for_subject: failed to get connection");
+                return vec![];
+            }
+        };
+        match conn.prepare("SELECT group_name FROM group_members WHERE user_id = ?1") {
+            Ok(mut stmt) => {
+                match stmt.query_map(rusqlite::params![subject_id], |row| row.get(0)) {
+                    Ok(rows) => rows.flatten().collect(),
+                    Err(e) => {
+                        tracing::warn!(error = %e, subject_id, "groups_for_subject: query failed");
+                        vec![]
+                    }
+                }
+            }
+            Err(e) => {
+                tracing::warn!(error = %e, subject_id, "groups_for_subject: prepare failed");
+                vec![]
+            }
+        }
+    }
+
+    fn default_role(&self) -> Option<String> {
+        self.snapshot.load().default_role.clone()
     }
 
     fn roles_for_group(&self, group_name: &str) -> Vec<String> {

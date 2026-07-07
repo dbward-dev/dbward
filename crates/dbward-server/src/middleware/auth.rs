@@ -292,14 +292,12 @@ pub async fn auth_middleware(
                 auth_error_response(e)
             })?;
 
-        // Groups for AuthUser (approval matching): Config groups only
+        // Groups for AuthUser (approval matching): from DB group_members
         let groups = state
             .reloadable
             .load()
             .role_resolver
-            .config_groups_for(&verified.subject_id)
-            .cloned()
-            .unwrap_or_default();
+            .groups_for_subject(&verified.subject_id);
 
         // scope_ceiling application
         let effective_roles = match &verified.scope_ceiling {
@@ -380,17 +378,15 @@ pub async fn auth_middleware(
         }
     }
 
-    // Augment AuthUser.groups with TOML [[auth.groups]] membership
-    if let Some(config_groups) = state
+    // Augment AuthUser.groups with DB group_members
+    for g in state
         .reloadable
         .load()
         .role_resolver
-        .config_groups_for(&user.subject_id)
+        .groups_for_subject(&user.subject_id)
     {
-        for g in config_groups {
-            if !user.groups.contains(g) {
-                user.groups.push(g.clone());
-            }
+        if !user.groups.contains(&g) {
+            user.groups.push(g);
         }
     }
 

@@ -1383,9 +1383,10 @@ fn build_review_modal(
         None => (vec![], vec![], vec![]),
     };
 
+    // Admin review modal: show ALL roles (assignable + restricted) for admin override
     let role_options: Vec<serde_json::Value> = assignable_roles
         .iter()
-        .filter(|r| !restricted_roles.contains(r))
+        .chain(restricted_roles.iter())
         .map(|r| serde_json::json!({"text": {"type": "plain_text", "text": r}, "value": r}))
         .collect();
     let group_options: Vec<serde_json::Value> = assignable_groups
@@ -1393,9 +1394,10 @@ fn build_review_modal(
         .map(|g| serde_json::json!({"text": {"type": "plain_text", "text": g}, "value": g}))
         .collect();
 
+    let all_roles: Vec<String> = assignable_roles.iter().chain(restricted_roles.iter()).cloned().collect();
     let initial_role_options: Vec<serde_json::Value> = initial_roles
         .iter()
-        .filter(|r| assignable_roles.contains(r))
+        .filter(|r| all_roles.contains(r))
         .map(|r| serde_json::json!({"text": {"type": "plain_text", "text": r}, "value": r}))
         .collect();
     let initial_group_options: Vec<serde_json::Value> = initial_groups
@@ -1554,31 +1556,8 @@ async fn handle_onboarding_review_submit(
         return (StatusCode::OK, axum::Json(err_response)).into_response();
     }
 
-    // Server-side validation: reject restricted/unassigned roles/groups
-    if let Some(ref onboarding_cfg) = state.slack_onboarding {
-        for role in &roles {
-            if onboarding_cfg.restricted_roles.contains(role)
-                || !onboarding_cfg.assignable_roles.contains(role)
-            {
-                tracing::warn!(role = %role, "onboarding: restricted or unassigned role in submission");
-                let err = serde_json::json!({
-                    "response_action": "errors",
-                    "errors": { "roles_block": format!("Role '{}' is not allowed for onboarding.", role) }
-                });
-                return (StatusCode::OK, axum::Json(err)).into_response();
-            }
-        }
-        for group in &groups {
-            if !onboarding_cfg.assignable_groups.contains(group) {
-                tracing::warn!(group = %group, "onboarding: unassigned group in submission");
-                let err = serde_json::json!({
-                    "response_action": "errors",
-                    "errors": { "groups_block": format!("Group '{}' is not allowed for onboarding.", group) }
-                });
-                return (StatusCode::OK, axum::Json(err)).into_response();
-            }
-        }
-    }
+    // Note: Role/group validation is handled by UserManage::add() (unknown role → Validation error).
+    // Admin can assign any known role during approval, including restricted_roles.
 
     // Load onboarding request
     let req_data = match state.onboarding_repo().get_pending(&request_id) {

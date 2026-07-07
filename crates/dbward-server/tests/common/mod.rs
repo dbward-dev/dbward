@@ -60,13 +60,10 @@ impl RoleResolver for NoopRoleResolver {
         }
     }
 
-    fn config_groups_for(&self, subject_id: &str) -> Option<&Vec<String>> {
-        // Test helper: all users belong to backend-team and dba-team for workflow tests
-        static GROUPS: std::sync::LazyLock<Vec<String>> =
-            std::sync::LazyLock::new(|| vec!["backend-team".into(), "dba-team".into()]);
+    fn groups_for_subject(&self, subject_id: &str) -> Vec<String> {
         match subject_id {
-            "agent-01" => None,
-            _ => Some(&GROUPS),
+            "agent-01" => vec![],
+            _ => vec!["backend-team".into(), "dba-team".into()],
         }
     }
 }
