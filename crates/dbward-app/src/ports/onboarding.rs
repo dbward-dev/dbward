@@ -49,18 +49,6 @@ pub trait OnboardingRequestRepo: Send + Sync {
     /// Get a pending request by ID. Returns None if not found or not pending.
     fn get_pending(&self, request_id: &str) -> Result<Option<OnboardingRequest>, AppError>;
 
-    /// Atomically claim a request as approved (CAS: pending → approved).
-    /// Returns ClaimResult { claimed: true } if successfully claimed, false if already processed.
-    fn claim_approved(
-        &self,
-        request_id: &str,
-        decided_by: &str,
-        decided_at: DateTime<Utc>,
-        approved_roles: &[String],
-        approved_groups: &[String],
-        decision_comment: Option<&str>,
-    ) -> Result<ClaimResult, AppError>;
-
     /// Atomically claim a request as rejected (CAS: pending → rejected).
     fn claim_rejected(
         &self,

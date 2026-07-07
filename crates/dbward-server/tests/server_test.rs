@@ -428,17 +428,6 @@ impl dbward_app::ports::OnboardingRequestRepo for StubOnboardingRepo {
     ) -> Result<Option<dbward_app::ports::OnboardingRequest>, AppError> {
         Ok(None)
     }
-    fn claim_approved(
-        &self,
-        _: &str,
-        _: &str,
-        _: chrono::DateTime<chrono::Utc>,
-        _: &[String],
-        _: &[String],
-        _: Option<&str>,
-    ) -> Result<dbward_app::ports::ClaimResult, AppError> {
-        Ok(dbward_app::ports::ClaimResult { claimed: false })
-    }
     fn claim_rejected(
         &self,
         _: &str,

@@ -128,40 +128,6 @@ impl OnboardingRequestRepo for SqliteOnboardingRequestRepo {
         }
     }
 
-    fn claim_approved(
-        &self,
-        request_id: &str,
-        decided_by: &str,
-        decided_at: DateTime<Utc>,
-        approved_roles: &[String],
-        approved_groups: &[String],
-        decision_comment: Option<&str>,
-    ) -> Result<ClaimResult, AppError> {
-        let conn = self.conn.lock();
-        let roles_json =
-            serde_json::to_string(approved_roles).map_err(json_err("claim_approved: roles"))?;
-        let groups_json =
-            serde_json::to_string(approved_groups).map_err(json_err("claim_approved: groups"))?;
-        let affected = conn
-            .execute(
-                "UPDATE onboarding_requests SET status = 'approved', decided_by = ?1, decided_at = ?2, \
-                 approved_roles_json = ?3, approved_groups_json = ?4, decision_comment = ?5 \
-                 WHERE id = ?6 AND status = 'pending'",
-                params![
-                    decided_by,
-                    decided_at.to_rfc3339(),
-                    roles_json,
-                    groups_json,
-                    decision_comment,
-                    request_id,
-                ],
-            )
-            .map_err(db_err("claim_approved"))?;
-        Ok(ClaimResult {
-            claimed: affected > 0,
-        })
-    }
-
     fn claim_rejected(
         &self,
         request_id: &str,
