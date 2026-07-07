@@ -9,7 +9,7 @@ use tokio_util::sync::CancellationToken;
 use tracing::{error, info, warn};
 
 use dbward_app::ports::WebhookEvent;
-use dbward_domain::entities::{ActorType, AuditContext, AuditEvent, EventCategory, EventOutcome};
+use dbward_domain::entities::{ActorType, AuditEvent, EventCategory, EventOutcome};
 
 use crate::config::RetentionConfig;
 use crate::state::AppState;

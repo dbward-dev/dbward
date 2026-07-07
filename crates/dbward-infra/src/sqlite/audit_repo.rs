@@ -130,7 +130,7 @@ impl AuditRepo for SqliteAuditRepo {
         };
 
         let sql = format!(
-            "SELECT id, event_type, event_category, event_version, outcome, actor_id, actor_type, resource_type, resource_id, peer_ip, client_ip, client_ip_source, request_id, operation, database_name, environment, detail_fingerprint, detail_raw, reason, metadata_json, prev_hash, event_hash, created_at FROM audit_events {where_clause} ORDER BY created_at DESC LIMIT ?{idx} OFFSET ?{}",
+            "SELECT id, event_type, event_category, event_version, outcome, actor_id, actor_type, resource_type, resource_id, peer_ip, client_ip, client_ip_source, request_id, operation, database_name, environment, detail_fingerprint, detail_raw, reason, metadata_json, prev_hash, event_hash, created_at FROM audit_events {where_clause} ORDER BY rowid DESC LIMIT ?{idx} OFFSET ?{}",
             idx + 1
         );
 

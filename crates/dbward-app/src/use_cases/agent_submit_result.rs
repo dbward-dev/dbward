@@ -281,6 +281,7 @@ impl AgentSubmitResult {
         audit_event.database_name = Some(request.database.to_string());
         audit_event.environment = Some(request.environment.to_string());
         audit_event.operation = Some(request.operation.as_str().to_string());
+        audit_event.request_id = Some(execution.request_id.clone());
 
         // A-3/A-4: Enrich metadata_json with rows_affected and duration_ms
         // rows_affected is only meaningful for successful executions
@@ -308,6 +309,14 @@ impl AgentSubmitResult {
                 meta["duration_ms"] = dur.into();
             }
             audit_event.metadata_json = meta.to_string();
+        }
+
+        // Promote migrate result_data (applied/reverted) into metadata_json
+        if input.success
+            && request.operation.is_migration_mutation()
+            && let Some(ref data) = input.result_data
+        {
+            promote_migrate_result(&mut audit_event, data);
         }
 
         // Atomic: execution update + request update + result manifest + audit (fail-closed)
@@ -434,6 +443,44 @@ fn parse_selector_for_access(sel: &str) -> (SelectorType, String) {
     } else {
         (SelectorType::User, sel.to_string())
     }
+}
+
+/// Promote migrate result_data (applied/reverted/duration_ms) into audit metadata_json.
+/// Only extracts allowed keys; silently skips on parse failure. Max 4KB total.
+fn promote_migrate_result(audit_event: &mut AuditEvent, data: &[u8]) {
+    const MAX_BYTES: usize = 4096;
+    if data.len() > MAX_BYTES {
+        // Fallback: just record the count
+        if let Ok(v) = serde_json::from_slice::<serde_json::Value>(data) {
+            let mut meta = parse_metadata(&audit_event.metadata_json);
+            if let Some(arr) = v.get("applied").and_then(|a| a.as_array()) {
+                meta["applied_count"] = arr.len().into();
+            }
+            if let Some(arr) = v.get("reverted").and_then(|a| a.as_array()) {
+                meta["reverted_count"] = arr.len().into();
+            }
+            audit_event.metadata_json = meta.to_string();
+        }
+        return;
+    }
+    let Ok(v) = serde_json::from_slice::<serde_json::Value>(data) else {
+        return;
+    };
+    let mut meta = parse_metadata(&audit_event.metadata_json);
+    if let Some(applied) = v.get("applied") {
+        meta["applied"] = applied.clone();
+    }
+    if let Some(reverted) = v.get("reverted") {
+        meta["reverted"] = reverted.clone();
+    }
+    audit_event.metadata_json = meta.to_string();
+}
+
+fn parse_metadata(json_str: &str) -> serde_json::Value {
+    serde_json::from_str::<serde_json::Value>(json_str)
+        .ok()
+        .filter(|v| v.is_object())
+        .unwrap_or_else(|| serde_json::json!({}))
 }
 
 #[cfg(test)]
@@ -1087,5 +1134,57 @@ mod tests {
             .await,
             Err(AppError::Conflict(_))
         ));
+    }
+
+    #[test]
+    fn promote_migrate_result_extracts_applied() {
+        let mut event = AuditEvent::simple(
+            "execution.completed",
+            "execution",
+            "agent-1",
+            Some("exec-1"),
+            chrono::Utc::now(),
+            &dbward_domain::entities::AuditContext::System,
+        );
+        let data = br#"{"applied":["100247","100301"],"duration_ms":42}"#;
+        promote_migrate_result(&mut event, data);
+        let meta: serde_json::Value = serde_json::from_str(&event.metadata_json).unwrap();
+        assert_eq!(meta["applied"], serde_json::json!(["100247", "100301"]));
+        // duration_ms from result_data is NOT promoted (canonical source is input.duration_ms)
+        assert!(meta.get("duration_ms").is_none());
+    }
+
+    #[test]
+    fn promote_migrate_result_oversized_falls_back_to_count() {
+        let mut event = AuditEvent::simple(
+            "execution.completed",
+            "execution",
+            "agent-1",
+            Some("exec-1"),
+            chrono::Utc::now(),
+            &dbward_domain::entities::AuditContext::System,
+        );
+        // Create data > 4KB
+        let versions: Vec<String> = (0..500).map(|i| format!("version_{i:04}")).collect();
+        let data = serde_json::json!({"applied": versions}).to_string();
+        promote_migrate_result(&mut event, data.as_bytes());
+        let meta: serde_json::Value = serde_json::from_str(&event.metadata_json).unwrap();
+        assert_eq!(meta["applied_count"], 500);
+        assert!(meta.get("applied").is_none());
+    }
+
+    #[test]
+    fn promote_migrate_result_invalid_json_is_noop() {
+        let mut event = AuditEvent::simple(
+            "execution.completed",
+            "execution",
+            "agent-1",
+            Some("exec-1"),
+            chrono::Utc::now(),
+            &dbward_domain::entities::AuditContext::System,
+        );
+        let original = event.metadata_json.clone();
+        promote_migrate_result(&mut event, b"not json");
+        assert_eq!(event.metadata_json, original);
     }
 }

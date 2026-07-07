@@ -34,15 +34,12 @@ pub(crate) async fn run_dispatch_timeout_once(state: &AppState) -> TickResult {
     };
 
     for id in ids {
-        let mut audit_event = AuditEvent::simple(
+        let audit_event = make_audit_event(
             "request.dispatch_timeout",
-            "approval",
-            "system",
-            Some(&id),
-            now,
-            &AuditContext::System,
+            EventCategory::Approval,
+            &id,
+            state,
         );
-        audit_event.request_id = Some(id.clone());
         let id_owned = id.clone();
         let updated = match dbward_app::ports::transaction::uow_execute(
             bg.uow().as_ref(),

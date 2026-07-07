@@ -34,9 +34,21 @@ pub fn build_audit_event(
         now,
         &event.audit_context,
     );
+    audit_event.request_id = Some(event.request_id.clone());
     audit_event.database_name = Some(event.database.as_str().to_string());
     audit_event.environment = Some(event.environment.as_str().to_string());
     audit_event.operation = Some(event.operation.as_str().to_string());
+
+    // For execution events, resource_id should be the execution_id (the entity key),
+    // not the request_id (which is the correlation key stored in request_id field).
+    match &event.metadata {
+        EventMetadata::Claimed { execution_id, .. }
+        | EventMetadata::Completed { execution_id, .. }
+        | EventMetadata::ExecutionLost { execution_id } => {
+            audit_event.resource_id = Some(execution_id.clone());
+        }
+        _ => {}
+    }
 
     if let EventMetadata::Created { ref detail, .. } = event.metadata {
         audit_event.detail_fingerprint = Some(redact_fn(detail));
@@ -153,7 +165,9 @@ pub fn build_webhook_event(event: &TransitionEvent) -> crate::ports::WebhookEven
             _ => None,
         },
         redacted_detail: match &event.metadata {
-            EventMetadata::Created { detail, .. } => Some(detail.clone()),
+            EventMetadata::Created { detail, .. } => {
+                Some(redact_webhook_detail(event.operation.as_str(), detail))
+            }
             _ => None,
         },
         error_summary: match &event.metadata {
@@ -186,5 +200,177 @@ pub fn build_webhook_event(event: &TransitionEvent) -> crate::ports::WebhookEven
             } => Some(matched_selector.clone()),
             _ => None,
         },
+    }
+}
+
+/// Redact webhook detail: summarize version list for migrate operations,
+/// pass through unchanged for normal queries (users filter externally).
+fn redact_webhook_detail(operation: &str, detail: &str) -> String {
+    match operation {
+        "migrate_up" | "migrate_down" => summarize_migrate_detail(operation, detail),
+        _ => detail.to_string(),
+    }
+}
+
+/// Parse migrate detail JSON and produce a human-readable summary without SQL content.
+fn summarize_migrate_detail(operation: &str, detail: &str) -> String {
+    let parsed: Result<serde_json::Value, _> = serde_json::from_str(detail);
+    match parsed {
+        Ok(v) => {
+            let versions = v["versions"]
+                .as_array()
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(|v| v.as_str())
+                        .map(sanitize_version)
+                        .collect::<Vec<_>>()
+                        .join(",")
+                })
+                .unwrap_or_default();
+            let max_count = v["max_count"].as_u64();
+            match max_count {
+                Some(n) => format!("{operation}: versions=[{versions}] max_count={n}"),
+                None => format!("{operation}: versions=[{versions}]"),
+            }
+        }
+        Err(_) => format!("{operation}: <parse error>"),
+    }
+}
+
+/// Sanitize a version string: only allow alphanumeric, underscore, hyphen, dot.
+/// Anything else is replaced to prevent injection of SQL or sensitive content.
+fn sanitize_version(v: &str) -> String {
+    if v.len() > 64
+        || v.chars()
+            .any(|c| !c.is_ascii_alphanumeric() && c != '_' && c != '-' && c != '.')
+    {
+        format!("<invalid:{}>", v.len())
+    } else {
+        v.to_string()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::Utc;
+    use dbward_domain::entities::{AuditContext, RequestStatus};
+    use dbward_domain::services::status_machine::{EventMetadata, TransitionEvent};
+    use dbward_domain::values::{DatabaseName, Environment, Operation};
+
+    fn make_event(metadata: EventMetadata) -> TransitionEvent {
+        TransitionEvent {
+            request_id: "req-001".to_string(),
+            previous_status: RequestStatus::Approved,
+            new_status: RequestStatus::Running,
+            actor_id: "agent-1".to_string(),
+            actor_type: dbward_domain::auth::SubjectType::Agent,
+            database: DatabaseName::new("testdb").unwrap(),
+            environment: Environment::new("production").unwrap(),
+            operation: Operation::ExecuteSelect,
+            timestamp: Utc::now(),
+            metadata,
+            requester_id: "user-alice".to_string(),
+            audit_context: AuditContext::System,
+            auth_token_id: None,
+        }
+    }
+
+    #[test]
+    fn p0_claimed_sets_execution_id_as_resource_id_and_request_id() {
+        let event = make_event(EventMetadata::Claimed {
+            execution_id: "exec-123".to_string(),
+            agent_id: "agent-1".to_string(),
+        });
+        let audit = build_audit_event(&event, Utc::now(), RedactionMode::Full, noop_redact);
+        assert_eq!(audit.resource_id.as_deref(), Some("exec-123"));
+        assert_eq!(audit.request_id.as_deref(), Some("req-001"));
+    }
+
+    #[test]
+    fn p0_completed_sets_execution_id_as_resource_id_and_request_id() {
+        let event = make_event(EventMetadata::Completed {
+            success: true,
+            execution_id: "exec-456".to_string(),
+        });
+        let audit = build_audit_event(&event, Utc::now(), RedactionMode::Full, noop_redact);
+        assert_eq!(audit.resource_id.as_deref(), Some("exec-456"));
+        assert_eq!(audit.request_id.as_deref(), Some("req-001"));
+    }
+
+    #[test]
+    fn p0_execution_lost_sets_execution_id_as_resource_id_and_request_id() {
+        let event = make_event(EventMetadata::ExecutionLost {
+            execution_id: "exec-789".to_string(),
+        });
+        let audit = build_audit_event(&event, Utc::now(), RedactionMode::Full, noop_redact);
+        assert_eq!(audit.resource_id.as_deref(), Some("exec-789"));
+        assert_eq!(audit.request_id.as_deref(), Some("req-001"));
+    }
+
+    #[test]
+    fn p0_created_keeps_request_id_as_resource_id() {
+        let event = make_event(EventMetadata::Created {
+            detail: "SELECT 1".to_string(),
+            emergency: false,
+        });
+        let audit = build_audit_event(&event, Utc::now(), RedactionMode::Full, noop_redact);
+        // Non-execution events keep request_id as resource_id
+        assert_eq!(audit.resource_id.as_deref(), Some("req-001"));
+        assert_eq!(audit.request_id.as_deref(), Some("req-001"));
+    }
+
+    #[test]
+    fn p1b_webhook_passes_through_normal_query() {
+        let event = make_event(EventMetadata::Created {
+            detail: "SELECT * FROM users WHERE id = 42".to_string(),
+            emergency: false,
+        });
+        let wh = build_webhook_event(&event);
+        let detail = wh.redacted_detail.unwrap();
+        // Normal queries pass through unchanged (users filter externally)
+        assert_eq!(detail, "SELECT * FROM users WHERE id = 42");
+    }
+
+    #[test]
+    fn p1b_webhook_summarizes_migrate_detail() {
+        let mut event = make_event(EventMetadata::Created {
+            detail: r#"{"format":"v2","direction":"up","versions":["100247","100301"],"migrations":[{"version":"100247","sql":"CREATE TABLE x()","transactional":true}],"dir_sha256":"abc","max_count":2}"#.to_string(),
+            emergency: false,
+        });
+        event.operation = Operation::MigrateUp;
+        let wh = build_webhook_event(&event);
+        let detail = wh.redacted_detail.unwrap();
+        assert!(
+            detail.contains("migrate_up"),
+            "should contain operation: {detail}"
+        );
+        assert!(
+            detail.contains("100247"),
+            "should contain versions: {detail}"
+        );
+        assert!(
+            !detail.contains("CREATE TABLE"),
+            "should not contain SQL: {detail}"
+        );
+    }
+
+    #[test]
+    fn p1b_webhook_migrate_parse_error_does_not_leak_sql() {
+        let mut event = make_event(EventMetadata::Created {
+            detail: "not valid json CREATE TABLE secret()".to_string(),
+            emergency: false,
+        });
+        event.operation = Operation::MigrateUp;
+        let wh = build_webhook_event(&event);
+        let detail = wh.redacted_detail.unwrap();
+        assert!(
+            detail.contains("<parse error>"),
+            "should indicate error: {detail}"
+        );
+        assert!(
+            !detail.contains("CREATE TABLE"),
+            "should not contain SQL: {detail}"
+        );
     }
 }
