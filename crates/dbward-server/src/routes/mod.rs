@@ -319,7 +319,7 @@ pub fn build_router(state: AppState) -> Router {
 
     // MCP router: auth + optional CORS (preflight must bypass auth)
     let mcp_router = {
-        use tower_http::cors::{AllowHeaders, AllowMethods, AllowOrigin, CorsLayer};
+        use tower_http::cors::{AllowHeaders, AllowMethods, AllowOrigin, CorsLayer, ExposeHeaders};
         let mcp_route = Router::new()
             .route(
                 "/mcp",
@@ -356,7 +356,8 @@ pub fn build_router(state: AppState) -> Router {
                         // Phase 2: session management + SSE resumption
                         "mcp-session-id".parse().unwrap(),
                         "last-event-id".parse().unwrap(),
-                    ])),
+                    ]))
+                    .expose_headers(ExposeHeaders::list(["mcp-session-id".parse().unwrap()])),
             )
         };
 

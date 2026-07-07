@@ -81,17 +81,20 @@ pub async fn login(
     let challenge = base64_url_encode(&Sha256::digest(verifier.as_bytes()));
 
     let state = generate_random(32);
-    let port = find_port().await?;
+    let listener = find_listener().await?;
+    let port = listener
+        .local_addr()
+        .map_err(|e| format!("failed to get listener address: {e}"))?
+        .port();
     let redirect_uri = format!("http://127.0.0.1:{port}/callback");
 
-    let auth_url = format!(
-        "{}?response_type=code&client_id={}&redirect_uri={}&scope=openid+email+profile&state={}&code_challenge={}&code_challenge_method=S256",
-        discovery.authorization_endpoint,
-        urlencoded(client_id),
-        urlencoded(&redirect_uri),
-        urlencoded(&state),
-        urlencoded(&challenge),
-    );
+    let auth_url = build_authorization_url(
+        &discovery.authorization_endpoint,
+        client_id,
+        &redirect_uri,
+        &state,
+        &challenge,
+    )?;
 
     eprintln!("Opening browser for authentication...");
     eprintln!("If the browser doesn't open, visit:\n{auth_url}");
@@ -100,7 +103,7 @@ pub async fn login(
     }
 
     // Wait for callback
-    let code = wait_for_callback(port, &state).await?;
+    let code = wait_for_callback(listener, &state).await?;
 
     // Exchange code for tokens
     let client = reqwest::Client::new();
@@ -448,78 +451,134 @@ async fn discover_with_override(
     Ok(disc)
 }
 
-async fn wait_for_callback(port: u16, expected_state: &str) -> Result<String, String> {
-    let listener = tokio::net::TcpListener::bind(format!("127.0.0.1:{port}"))
-        .await
-        .map_err(|e| format!("callback server failed: {e}"))?;
+async fn wait_for_callback(
+    listener: tokio::net::TcpListener,
+    expected_state: &str,
+) -> Result<String, String> {
+    // Retry accept loop: reject invalid connections until we get a valid callback
+    let timeout = tokio::time::timeout(std::time::Duration::from_secs(300), async {
+        loop {
+            let (stream, _) = listener
+                .accept()
+                .await
+                .map_err(|e| format!("accept failed: {e}"))?;
 
-    let (stream, _) = listener
-        .accept()
-        .await
-        .map_err(|e| format!("accept failed: {e}"))?;
+            // Read until we have the full request line (ends with \r\n or \n)
+            let mut buf = Vec::with_capacity(4096);
+            let request_line = match read_request_line(&stream, &mut buf).await {
+                Some(line) => line,
+                None => continue,
+            };
 
-    let mut buf = vec![0u8; 4096];
-    stream
-        .readable()
-        .await
-        .map_err(|e| format!("read failed: {e}"))?;
-    let n = stream
-        .try_read(&mut buf)
-        .map_err(|e| format!("read failed: {e}"))?;
-    let request = String::from_utf8_lossy(&buf[..n]);
+            // Parse query params from GET /callback?code=xxx&state=yyy HTTP/1.1
+            let query = request_line
+                .split('?')
+                .nth(1)
+                .unwrap_or("")
+                .split(' ')
+                .next()
+                .unwrap_or("");
 
-    // Parse query params from GET /callback?code=xxx&state=yyy
-    let path = request.lines().next().unwrap_or("");
-    let query = path
-        .split('?')
-        .nth(1)
-        .unwrap_or("")
-        .split(' ')
-        .next()
-        .unwrap_or("");
+            let params: std::collections::HashMap<String, String> =
+                url::form_urlencoded::parse(query.as_bytes())
+                    .into_owned()
+                    .collect();
 
-    let mut code = None;
-    let mut state = None;
-    for param in query.split('&') {
-        let mut kv = param.splitn(2, '=');
-        match (kv.next(), kv.next()) {
-            (Some("code"), Some(v)) => code = Some(v.to_string()),
-            (Some("state"), Some(v)) => state = Some(v.to_string()),
-            _ => {}
+            let Some(code) = params.get("code") else {
+                // Not a valid callback — send 400 and try again
+                let _ = send_error_response(&stream, "missing code").await;
+                continue;
+            };
+            let Some(recv_state) = params.get("state") else {
+                let _ = send_error_response(&stream, "missing state").await;
+                continue;
+            };
+
+            if recv_state != expected_state {
+                let _ = send_error_response(&stream, "state mismatch").await;
+                continue;
+            }
+
+            // Valid callback — send success response
+            let html = "<html><body><h2>Login successful!</h2><p>You can close this tab.</p></body></html>";
+            let response = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: {}\r\n\r\n{}",
+                html.len(),
+                html
+            );
+            let _ = write_all(&stream, response.as_bytes()).await;
+
+            return Ok::<String, String>(code.to_string());
         }
+    });
+
+    match timeout.await {
+        Ok(result) => result,
+        Err(_) => Err("login timed out waiting for callback (300s)".into()),
     }
-
-    // Send response
-    let html = "<html><body><h2>Login successful!</h2><p>You can close this tab.</p></body></html>";
-    let response = format!(
-        "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: {}\r\n\r\n{}",
-        html.len(),
-        html
-    );
-    stream
-        .writable()
-        .await
-        .map_err(|e| format!("write failed: {e}"))?;
-    stream
-        .try_write(response.as_bytes())
-        .map_err(|e| format!("write failed: {e}"))?;
-
-    let code = code.ok_or("missing code in callback")?;
-    let recv_state = state.ok_or("missing state in callback")?;
-    if recv_state != expected_state {
-        return Err("state mismatch — possible CSRF attack".into());
-    }
-
-    Ok(code)
 }
 
-async fn find_port() -> Result<u16, String> {
+/// Read bytes from the stream until we find the first line (ending with \n).
+/// Returns None if the connection closes or errors before we get a full line.
+async fn read_request_line(stream: &tokio::net::TcpStream, buf: &mut Vec<u8>) -> Option<String> {
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(10);
+    loop {
+        if tokio::time::Instant::now() > deadline {
+            return None;
+        }
+        match tokio::time::timeout(std::time::Duration::from_secs(5), stream.readable()).await {
+            Ok(Ok(())) => {}
+            _ => return None,
+        }
+        let mut tmp = [0u8; 1024];
+        match stream.try_read(&mut tmp) {
+            Ok(0) => return None,
+            Ok(n) => {
+                buf.extend_from_slice(&tmp[..n]);
+                if let Some(pos) = buf.iter().position(|&b| b == b'\n') {
+                    let line = String::from_utf8_lossy(&buf[..pos]).to_string();
+                    return Some(line);
+                }
+                if buf.len() > 8192 {
+                    return None;
+                }
+            }
+            Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => continue,
+            Err(_) => return None,
+        }
+    }
+}
+
+/// Best-effort write all bytes to the stream.
+async fn write_all(stream: &tokio::net::TcpStream, data: &[u8]) -> Result<(), ()> {
+    let mut written = 0;
+    while written < data.len() {
+        if stream.writable().await.is_err() {
+            return Err(());
+        }
+        match stream.try_write(&data[written..]) {
+            Ok(n) => written += n,
+            Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => continue,
+            Err(_) => return Err(()),
+        }
+    }
+    Ok(())
+}
+
+async fn send_error_response(stream: &tokio::net::TcpStream, msg: &str) -> Result<(), ()> {
+    let body = format!("<html><body><h2>Error: {msg}</h2></body></html>");
+    let response = format!(
+        "HTTP/1.1 400 Bad Request\r\nContent-Type: text/html\r\nContent-Length: {}\r\n\r\n{}",
+        body.len(),
+        body
+    );
+    write_all(stream, response.as_bytes()).await
+}
+
+async fn find_listener() -> Result<tokio::net::TcpListener, String> {
     for port in 19836..=19840 {
-        if tokio::net::TcpListener::bind(format!("127.0.0.1:{port}"))
-            .await
-            .is_ok()
-        {
-            return Ok(port);
+        if let Ok(listener) = tokio::net::TcpListener::bind(format!("127.0.0.1:{port}")).await {
+            return Ok(listener);
         }
     }
     Err("no available port for callback server".into())
@@ -577,14 +636,24 @@ fn base64_url_encode(bytes: &[u8]) -> String {
     base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(bytes)
 }
 
-fn urlencoded(s: &str) -> String {
-    s.replace(':', "%3A")
-        .replace('/', "%2F")
-        .replace('?', "%3F")
-        .replace('&', "%26")
-        .replace('=', "%3D")
-        .replace('+', "%2B")
-        .replace(' ', "+")
+fn build_authorization_url(
+    authorization_endpoint: &str,
+    client_id: &str,
+    redirect_uri: &str,
+    state: &str,
+    code_challenge: &str,
+) -> Result<String, String> {
+    let mut url = url::Url::parse(authorization_endpoint)
+        .map_err(|e| format!("invalid authorization_endpoint: {e}"))?;
+    url.query_pairs_mut()
+        .append_pair("response_type", "code")
+        .append_pair("client_id", client_id)
+        .append_pair("redirect_uri", redirect_uri)
+        .append_pair("scope", "openid email profile")
+        .append_pair("state", state)
+        .append_pair("code_challenge", code_challenge)
+        .append_pair("code_challenge_method", "S256");
+    Ok(url.to_string())
 }
 
 fn display_verification_uri(
@@ -634,7 +703,71 @@ async fn wait_for_cancel_signal() {
 
 #[cfg(test)]
 mod tests {
-    use super::{display_verification_uri, rewrite_url_base};
+    use super::{build_authorization_url, display_verification_uri, rewrite_url_base};
+
+    #[test]
+    fn builds_authorization_url_with_correct_encoding() {
+        let url = build_authorization_url(
+            "https://auth.example.com/authorize",
+            "my-client",
+            "http://127.0.0.1:19836/callback",
+            "random_state_123",
+            "challenge_abc-def",
+        )
+        .unwrap();
+
+        assert!(url.starts_with("https://auth.example.com/authorize?"));
+        assert!(url.contains("response_type=code"));
+        assert!(url.contains("client_id=my-client"));
+        assert!(url.contains("redirect_uri=http%3A%2F%2F127.0.0.1%3A19836%2Fcallback"));
+        assert!(url.contains("scope=openid+email+profile"));
+        assert!(url.contains("state=random_state_123"));
+        assert!(url.contains("code_challenge=challenge_abc-def"));
+        assert!(url.contains("code_challenge_method=S256"));
+    }
+
+    #[test]
+    fn builds_authorization_url_preserves_existing_query() {
+        let url = build_authorization_url(
+            "https://auth.example.com/authorize?tenant=foo",
+            "client",
+            "http://127.0.0.1:19836/callback",
+            "state",
+            "challenge",
+        )
+        .unwrap();
+
+        assert!(url.contains("tenant=foo"));
+        assert!(url.contains("client_id=client"));
+    }
+
+    #[test]
+    fn builds_authorization_url_encodes_special_chars() {
+        let url = build_authorization_url(
+            "https://auth.example.com/authorize",
+            "client with spaces & symbols #[]!",
+            "http://127.0.0.1:19836/callback",
+            "state",
+            "challenge",
+        )
+        .unwrap();
+
+        // Should not contain raw & or # in client_id value
+        assert!(!url.contains("client_id=client with"));
+        assert!(url.contains("client_id=client+with+spaces"));
+    }
+
+    #[test]
+    fn builds_authorization_url_rejects_invalid_endpoint() {
+        let result = build_authorization_url(
+            "not a valid url",
+            "client",
+            "http://127.0.0.1:19836/callback",
+            "state",
+            "challenge",
+        );
+        assert!(result.is_err());
+    }
 
     #[test]
     fn rewrites_matching_url_base() {

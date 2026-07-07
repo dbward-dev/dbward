@@ -666,6 +666,7 @@ dependencies = [
  "tokio",
  "toml",
  "unicode-width",
+ "url",
 ]
 
 [[package]]
