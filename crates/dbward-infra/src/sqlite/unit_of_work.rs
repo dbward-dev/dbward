@@ -819,7 +819,7 @@ impl UserWriterOps for SqliteTxScope<'_> {
             let count: u32 = self
                 .conn
                 .query_row(
-                    "SELECT COUNT(*) FROM users WHERE lifecycle_state = 'active' AND status = 'active' AND roles_json LIKE '%\"admin\"%'",
+                    "SELECT COUNT(*) FROM users WHERE lifecycle_state = 'active' AND status = 'active' AND EXISTS(SELECT 1 FROM json_each(roles_json) WHERE value = 'admin')",
                     [],
                     |r| r.get(0),
                 )
@@ -861,7 +861,7 @@ impl UserWriterOps for SqliteTxScope<'_> {
         let has_direct: bool = self
             .conn
             .query_row(
-                "SELECT EXISTS(SELECT 1 FROM users WHERE id = ?1 AND roles_json LIKE '%\"admin\"%')",
+                "SELECT EXISTS(SELECT 1 FROM users WHERE id = ?1 AND EXISTS(SELECT 1 FROM json_each(roles_json) WHERE value = 'admin'))",
                 params![user_id],
                 |r| r.get(0),
             )
@@ -952,18 +952,6 @@ impl UserWriterOps for SqliteTxScope<'_> {
             )
             .map_err(db_err("tx: claim_onboarding_approved"))?;
         Ok(affected > 0)
-    }
-
-    fn rollback_onboarding_to_pending_tx(&self, request_id: &str) -> Result<(), AppError> {
-        self.conn
-            .execute(
-                "UPDATE onboarding_requests SET status = 'pending', decided_by = NULL, decided_at = NULL, \
-                 approved_roles_json = NULL, approved_groups_json = NULL, decision_comment = NULL \
-                 WHERE id = ?1",
-                params![request_id],
-            )
-            .map_err(db_err("tx: rollback_onboarding_to_pending"))?;
-        Ok(())
     }
 }
 

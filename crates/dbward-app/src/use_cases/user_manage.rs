@@ -241,8 +241,8 @@ impl UserManage {
             }
             tx.create_token_tx(&token_clone)?;
             // Audit inside tx for fail-closed guarantee
-            for _group in &groups_clone {
-                let audit = dbward_domain::entities::AuditEvent::simple(
+            for group in &groups_clone {
+                let mut audit = dbward_domain::entities::AuditEvent::simple(
                     "group.member_added",
                     "identity",
                     &actor_id_clone,
@@ -250,6 +250,7 @@ impl UserManage {
                     now,
                     &audit_ctx_clone,
                 );
+                audit.metadata_json = serde_json::json!({"group": group}).to_string();
                 tx.record(&audit)?;
             }
             let audit = dbward_domain::entities::AuditEvent::simple(
@@ -385,6 +386,7 @@ impl UserManage {
             .map(|roles| roles.iter().any(|r| r.name == "admin"))
             .unwrap_or(true); // fail-close: assume admin if resolve fails
         let user_will_have_admin_direct = current_roles.contains(&"admin".to_string());
+        let removing_admin_direct = input.rm_roles.contains(&"admin".to_string());
 
         // Validate groups before committing any changes
         let now = self.clock.now();
@@ -431,7 +433,7 @@ impl UserManage {
                 .iter()
                 .any(|g| admin_groups.contains(g));
             // Skip guard if user retains admin (direct, remaining group, or newly added group)
-            let needs_guard = (user_loses_admin || removing_admin_group)
+            let needs_guard = (user_loses_admin || removing_admin_group || removing_admin_direct)
                 && !user_will_have_admin_direct
                 && !user_retains_admin_via_other_group
                 && !adding_admin_group;
@@ -451,8 +453,8 @@ impl UserManage {
                 tx.remove_member_tx(group, &user_id_clone)?;
             }
             // Audit inside tx for fail-closed guarantee
-            for _group in &add_groups_clone {
-                let audit = dbward_domain::entities::AuditEvent::simple(
+            for group in &add_groups_clone {
+                let mut audit = dbward_domain::entities::AuditEvent::simple(
                     "group.member_added",
                     "identity",
                     &actor_id_clone,
@@ -460,10 +462,11 @@ impl UserManage {
                     now,
                     &audit_ctx_clone,
                 );
+                audit.metadata_json = serde_json::json!({"group": group}).to_string();
                 tx.record(&audit)?;
             }
-            for _group in &rm_groups_clone {
-                let audit = dbward_domain::entities::AuditEvent::simple(
+            for group in &rm_groups_clone {
+                let mut audit = dbward_domain::entities::AuditEvent::simple(
                     "group.member_removed",
                     "identity",
                     &actor_id_clone,
@@ -471,6 +474,7 @@ impl UserManage {
                     now,
                     &audit_ctx_clone,
                 );
+                audit.metadata_json = serde_json::json!({"group": group}).to_string();
                 tx.record(&audit)?;
             }
             let audit = dbward_domain::entities::AuditEvent::simple(

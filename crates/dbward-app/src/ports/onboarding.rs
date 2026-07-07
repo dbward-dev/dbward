@@ -69,7 +69,4 @@ pub trait OnboardingRequestRepo: Send + Sync {
         decided_at: DateTime<Utc>,
         decision_comment: Option<&str>,
     ) -> Result<ClaimResult, AppError>;
-
-    /// Rollback an approved request back to pending (on user creation failure).
-    fn rollback_to_pending(&self, request_id: &str) -> Result<(), AppError>;
 }

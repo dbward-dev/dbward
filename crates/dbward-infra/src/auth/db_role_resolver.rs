@@ -146,17 +146,6 @@ impl DbRoleResolver {
         self.cache.clear();
     }
 
-    /// Update group→roles mapping from config (call on config reload).
-    pub fn update_group_roles(&self, new_group_roles: HashMap<String, Vec<String>>) {
-        let current = self.snapshot.load();
-        self.snapshot.store(Arc::new(ResolverSnapshot {
-            group_roles: new_group_roles,
-            roles: current.roles.clone(),
-            default_role: current.default_role.clone(),
-        }));
-        self.cache.clear();
-    }
-
     /// Atomically update all config-derived state in a single snapshot swap.
     pub fn reload_config(
         &self,
@@ -338,30 +327,44 @@ impl RoleResolver for DbRoleResolver {
     fn subjects_for_role(&self, role: &str) -> Vec<String> {
         let conn = match self.pool.get() {
             Ok(c) => c,
-            Err(_) => return Vec::new(),
+            Err(e) => {
+                tracing::error!(error = %e, "subjects_for_role: failed to get connection");
+                return Vec::new();
+            }
         };
         let mut subjects: HashSet<String> = HashSet::new();
 
         // Direct role holders
-        if let Ok(mut stmt) =
-            conn.prepare("SELECT DISTINCT u.id FROM users u, json_each(u.roles_json) je WHERE je.value = ?1 AND u.lifecycle_state = 'active' AND u.status = 'active'")
-            && let Ok(rows) = stmt.query_map(rusqlite::params![role], |row| row.get(0))
-        {
-            for r in rows.flatten() {
-                subjects.insert(r);
+        match conn.prepare("SELECT DISTINCT u.id FROM users u, json_each(u.roles_json) je WHERE je.value = ?1 AND u.lifecycle_state = 'active' AND u.status = 'active'") {
+            Ok(mut stmt) => {
+                match stmt.query_map(rusqlite::params![role], |row| row.get(0)) {
+                    Ok(rows) => {
+                        for r in rows.flatten() {
+                            subjects.insert(r);
+                        }
+                    }
+                    Err(e) => tracing::warn!(error = %e, role, "subjects_for_role: query failed for direct holders"),
+                }
             }
+            Err(e) => tracing::warn!(error = %e, role, "subjects_for_role: prepare failed for direct holders"),
         }
 
         // Group-derived role holders
         let snap = self.snapshot.load();
         for (group, roles) in snap.group_roles.iter() {
-            if roles.iter().any(|r| r == role)
-                && let Ok(mut stmt) =
-                    conn.prepare("SELECT gm.user_id FROM group_members gm JOIN users u ON u.id = gm.user_id WHERE gm.group_name = ?1 AND u.lifecycle_state = 'active' AND u.status = 'active'")
-                && let Ok(rows) = stmt.query_map(rusqlite::params![group], |row| row.get(0))
-            {
-                for r in rows.flatten() {
-                    subjects.insert(r);
+            if roles.iter().any(|r| r == role) {
+                match conn.prepare("SELECT gm.user_id FROM group_members gm JOIN users u ON u.id = gm.user_id WHERE gm.group_name = ?1 AND u.lifecycle_state = 'active' AND u.status = 'active'") {
+                    Ok(mut stmt) => {
+                        match stmt.query_map(rusqlite::params![group], |row| row.get(0)) {
+                            Ok(rows) => {
+                                for r in rows.flatten() {
+                                    subjects.insert(r);
+                                }
+                            }
+                            Err(e) => tracing::warn!(error = %e, %group, "subjects_for_role: query failed for group"),
+                        }
+                    }
+                    Err(e) => tracing::warn!(error = %e, %group, "subjects_for_role: prepare failed for group"),
                 }
             }
         }
@@ -375,16 +378,24 @@ impl RoleResolver for DbRoleResolver {
         } else if let Some(group) = selector.strip_prefix("group:") {
             let conn = match self.pool.get() {
                 Ok(c) => c,
-                Err(_) => return Vec::new(),
+                Err(e) => {
+                    tracing::error!(error = %e, "subjects_for_selector: failed to get connection");
+                    return Vec::new();
+                }
             };
             let mut result = Vec::new();
-            if let Ok(mut stmt) =
-                conn.prepare("SELECT user_id FROM group_members WHERE group_name = ?1")
-                && let Ok(rows) = stmt.query_map(rusqlite::params![group], |row| row.get(0))
-            {
-                for r in rows.flatten() {
-                    result.push(r);
+            match conn.prepare("SELECT user_id FROM group_members WHERE group_name = ?1") {
+                Ok(mut stmt) => {
+                    match stmt.query_map(rusqlite::params![group], |row| row.get(0)) {
+                        Ok(rows) => {
+                            for r in rows.flatten() {
+                                result.push(r);
+                            }
+                        }
+                        Err(e) => tracing::warn!(error = %e, %group, "subjects_for_selector: query failed"),
+                    }
                 }
+                Err(e) => tracing::warn!(error = %e, %group, "subjects_for_selector: prepare failed"),
             }
             result
         } else if let Some(user) = selector.strip_prefix("user:") {

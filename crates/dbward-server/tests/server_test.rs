@@ -431,9 +431,6 @@ impl dbward_app::ports::OnboardingRequestRepo for StubOnboardingRepo {
     fn claim_rejected(&self, _: &str, _: &str, _: chrono::DateTime<chrono::Utc>, _: Option<&str>) -> Result<dbward_app::ports::ClaimResult, AppError> {
         Ok(dbward_app::ports::ClaimResult { claimed: false })
     }
-    fn rollback_to_pending(&self, _: &str) -> Result<(), AppError> {
-        Ok(())
-    }
 }
 
 struct StubTokenRepo;

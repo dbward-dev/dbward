@@ -167,16 +167,4 @@ impl OnboardingRequestRepo for SqliteOnboardingRequestRepo {
             .map_err(db_err("claim_rejected"))?;
         Ok(ClaimResult { claimed: affected > 0 })
     }
-
-    fn rollback_to_pending(&self, request_id: &str) -> Result<(), AppError> {
-        let conn = self.conn.lock();
-        conn.execute(
-            "UPDATE onboarding_requests SET status = 'pending', decided_by = NULL, decided_at = NULL, \
-             approved_roles_json = NULL, approved_groups_json = NULL, decision_comment = NULL \
-             WHERE id = ?1",
-            params![request_id],
-        )
-        .map_err(db_err("rollback_to_pending"))?;
-        Ok(())
-    }
 }
