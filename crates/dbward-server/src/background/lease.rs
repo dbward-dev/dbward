@@ -31,7 +31,8 @@ pub(crate) async fn run_lease_reclaim_once(state: &AppState) -> TickResult {
     };
 
     for (exec_id, req_id) in expired {
-        let audit = make_audit_event("execution.lost", EventCategory::Agent, &req_id, state);
+        let mut audit = make_audit_event("execution.lost", EventCategory::Agent, &req_id, state);
+        audit.resource_id = Some(exec_id.clone());
         let exec_id_owned = exec_id.clone();
         let req_id_owned = req_id.clone();
         match bg.uow().execute(Box::new(move |tx| {

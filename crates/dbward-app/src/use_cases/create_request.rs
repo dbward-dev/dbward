@@ -45,6 +45,18 @@ impl BreakGlassDenial {
     }
 }
 
+/// Truncate a string to at most `max_bytes` without splitting a UTF-8 char boundary.
+fn truncate_utf8(s: &str, max_bytes: usize) -> &str {
+    if s.len() <= max_bytes {
+        return s;
+    }
+    let mut end = max_bytes;
+    while end > 0 && !s.is_char_boundary(end) {
+        end -= 1;
+    }
+    &s[..end]
+}
+
 pub struct CreateRequest {
     pub authorizer: Arc<dyn Authorizer>,
     pub policy: Arc<dyn PolicyEvaluator>,
@@ -302,12 +314,20 @@ impl CreateRequest {
                                     .collect();
                                 let mut audit_event = dbward_domain::entities::AuditEvent::simple(
                                     "request.blocked_by_review",
-                                    "request",
+                                    "approval",
                                     &user.subject_id,
                                     None,
                                     self.clock.now(),
                                     ctx,
                                 );
+                                audit_event.database_name = Some(input.database.to_string());
+                                audit_event.environment = Some(input.environment.to_string());
+                                audit_event.operation = Some(operation.as_str().to_string());
+                                let fp = dbward_domain::services::sql_redactor::redact_literals(
+                                    &input.detail,
+                                );
+                                audit_event.detail_fingerprint =
+                                    Some(truncate_utf8(&fp, 1024).to_string());
                                 audit_event.metadata_json = serde_json::json!({
                                     "blocked_rules": reasons,
                                     "break_glass_attempted": true,
@@ -336,7 +356,7 @@ impl CreateRequest {
                             // Audit: record blocked request
                             let mut audit_event = dbward_domain::entities::AuditEvent::simple(
                                 "request.blocked_by_review",
-                                "request",
+                                "approval",
                                 &user.subject_id,
                                 None,
                                 self.clock.now(),
@@ -344,6 +364,12 @@ impl CreateRequest {
                             );
                             audit_event.database_name = Some(input.database.to_string());
                             audit_event.environment = Some(input.environment.to_string());
+                            audit_event.operation = Some(operation.as_str().to_string());
+                            let fp = dbward_domain::services::sql_redactor::redact_literals(
+                                &input.detail,
+                            );
+                            audit_event.detail_fingerprint =
+                                Some(truncate_utf8(&fp, 1024).to_string());
                             audit_event.metadata_json = serde_json::json!({
                                 "blocked_rules": reasons,
                             })
