@@ -185,26 +185,30 @@ impl ServerClient {
         environment: Option<&str>,
         user: Option<&str>,
     ) -> Result<Value, CliError> {
-        let mut url = "/api/requests".to_string();
-        let mut query_parts: Vec<String> = Vec::new();
+        let mut params: Vec<(&str, String)> = Vec::new();
         if let Some(l) = limit {
-            query_parts.push(format!("limit={l}"));
+            params.push(("limit", l.to_string()));
         }
         if let Some(s) = status {
-            query_parts.push(format!("status={s}"));
+            params.push(("status", s.to_string()));
         }
         if let Some(database) = database {
-            query_parts.push(format!("database={database}"));
+            params.push(("database", database.to_string()));
         }
         if let Some(environment) = environment {
-            query_parts.push(format!("environment={environment}"));
+            params.push(("environment", environment.to_string()));
         }
         if let Some(user) = user {
-            query_parts.push(format!("user={user}"));
+            params.push(("user", user.to_string()));
         }
-        if !query_parts.is_empty() {
-            url = format!("{url}?{}", query_parts.join("&"));
-        }
+        let url = if params.is_empty() {
+            "/api/requests".to_string()
+        } else {
+            let query = url::form_urlencoded::Serializer::new(String::new())
+                .extend_pairs(params.iter().map(|(k, v)| (*k, v.as_str())))
+                .finish();
+            format!("/api/requests?{query}")
+        };
         self.get_json(&url).await
     }
 
@@ -342,41 +346,44 @@ impl ServerClient {
         since: Option<&str>,
         until: Option<&str>,
     ) -> Result<Value, CliError> {
-        let mut parts: Vec<String> = Vec::new();
+        let mut params: Vec<(&str, String)> = Vec::new();
         if let Some(l) = limit {
-            parts.push(format!("limit={l}"));
+            params.push(("limit", l.to_string()));
         }
         if let Some(u) = user {
-            parts.push(format!("actor_id={u}"));
+            params.push(("actor_id", u.to_string()));
         }
         if let Some(v) = operation {
-            parts.push(format!("operation={v}"));
+            params.push(("operation", v.to_string()));
         }
         if let Some(v) = status {
-            parts.push(format!("status={v}"));
+            params.push(("status", v.to_string()));
         }
         if let Some(v) = event_type {
-            parts.push(format!("event_type={v}"));
+            params.push(("event_type", v.to_string()));
         }
         if let Some(v) = category {
-            parts.push(format!("event_category={v}"));
+            params.push(("event_category", v.to_string()));
         }
         if let Some(v) = outcome {
-            parts.push(format!("outcome={v}"));
+            params.push(("outcome", v.to_string()));
         }
         if let Some(v) = environment {
-            parts.push(format!("environment={v}"));
+            params.push(("environment", v.to_string()));
         }
         if let Some(v) = since {
-            parts.push(format!("since={v}"));
+            params.push(("since", v.to_string()));
         }
         if let Some(v) = until {
-            parts.push(format!("until={v}"));
+            params.push(("until", v.to_string()));
         }
-        let url = if parts.is_empty() {
+        let url = if params.is_empty() {
             "/api/audit/events".to_string()
         } else {
-            format!("/api/audit/events?{}", parts.join("&"))
+            let query = url::form_urlencoded::Serializer::new(String::new())
+                .extend_pairs(params.iter().map(|(k, v)| (*k, v.as_str())))
+                .finish();
+            format!("/api/audit/events?{query}")
         };
         self.get_json(&url).await
     }
