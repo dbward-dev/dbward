@@ -35,16 +35,17 @@ async fn expire_pending_requests(state: &AppState) {
         }
 
         // Get slack_user_ids + message_ts of just-expired requests
-        match conn.prepare(
-            "SELECT slack_user_id, message_ts FROM onboarding_requests \
+        match conn
+            .prepare(
+                "SELECT slack_user_id, message_ts FROM onboarding_requests \
              WHERE status = 'expired' AND decided_at = ?1",
-        )
-        .and_then(|mut stmt| {
-            let rows = stmt.query_map(dbward_infra::rusqlite::params![now], |r| {
-                Ok((r.get::<_, String>(0)?, r.get::<_, Option<String>>(1)?))
-            })?;
-            Ok(rows.filter_map(|r| r.ok()).collect())
-        }) {
+            )
+            .and_then(|mut stmt| {
+                let rows = stmt.query_map(dbward_infra::rusqlite::params![now], |r| {
+                    Ok((r.get::<_, String>(0)?, r.get::<_, Option<String>>(1)?))
+                })?;
+                Ok(rows.filter_map(|r| r.ok()).collect())
+            }) {
             Ok(data) => data,
             Err(e) => {
                 tracing::error!(error = %e, "onboarding_expiry: failed to query expired requests");

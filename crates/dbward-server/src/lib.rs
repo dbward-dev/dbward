@@ -516,7 +516,9 @@ pub async fn run_from_args(
         agent_repo,
         user_repo,
         group_repo: Arc::new(dbward_infra::sqlite::SqliteGroupRepo::new(conn.clone())),
-        onboarding_repo: Arc::new(dbward_infra::sqlite::SqliteOnboardingRequestRepo::new(conn.clone())),
+        onboarding_repo: Arc::new(dbward_infra::sqlite::SqliteOnboardingRequestRepo::new(
+            conn.clone(),
+        )),
         token_repo,
         webhook_repo,
         policy_repo,
@@ -826,18 +828,18 @@ pub async fn run_from_args(
                                     });
                                 // OIDC role_mappings can also grant admin at login time
                                 // (only relevant when auth mode supports OIDC)
-                                let oidc_can_grant_admin =
-                                    (startup_auth_mode == "oidc" || startup_auth_mode == "both")
-                                        && new_cfg
-                                            .auth
-                                            .oidc
-                                            .as_ref()
-                                            .map(|oidc| {
-                                                oidc.role_mappings
-                                                    .iter()
-                                                    .any(|m| m.claim == "groups" && m.role == "admin")
-                                            })
-                                            .unwrap_or(false);
+                                let oidc_can_grant_admin = (startup_auth_mode == "oidc"
+                                    || startup_auth_mode == "both")
+                                    && new_cfg
+                                        .auth
+                                        .oidc
+                                        .as_ref()
+                                        .map(|oidc| {
+                                            oidc.role_mappings
+                                                .iter()
+                                                .any(|m| m.claim == "groups" && m.role == "admin")
+                                        })
+                                        .unwrap_or(false);
                                 if direct_admin_count == 0
                                     && !group_has_active_admin_member
                                     && !oidc_can_grant_admin

@@ -34,8 +34,10 @@ impl OnboardingRequestRepo for SqliteOnboardingRequestRepo {
 
     fn create(&self, input: &CreateOnboardingInput) -> Result<(), AppError> {
         let conn = self.conn.lock();
-        let roles_json = serde_json::to_string(&input.requested_roles).map_err(json_err("create: roles"))?;
-        let groups_json = serde_json::to_string(&input.requested_groups).map_err(json_err("create: groups"))?;
+        let roles_json =
+            serde_json::to_string(&input.requested_roles).map_err(json_err("create: roles"))?;
+        let groups_json =
+            serde_json::to_string(&input.requested_groups).map_err(json_err("create: groups"))?;
         conn.execute(
             "INSERT INTO onboarding_requests \
              (id, slack_user_id, display_name, requested_roles_json, requested_groups_json, reason, status, created_at, expires_at) \
@@ -88,7 +90,18 @@ impl OnboardingRequestRepo for SqliteOnboardingRequestRepo {
             },
         );
         match result {
-            Ok((id, slack_user_id, display_name, roles_json, groups_json, reason, status, message_ts, created_at_str, expires_at_str)) => {
+            Ok((
+                id,
+                slack_user_id,
+                display_name,
+                roles_json,
+                groups_json,
+                reason,
+                status,
+                message_ts,
+                created_at_str,
+                expires_at_str,
+            )) => {
                 let requested_roles: Vec<String> =
                     serde_json::from_str(&roles_json).map_err(json_err("get_pending: roles"))?;
                 let requested_groups: Vec<String> =
@@ -125,8 +138,10 @@ impl OnboardingRequestRepo for SqliteOnboardingRequestRepo {
         decision_comment: Option<&str>,
     ) -> Result<ClaimResult, AppError> {
         let conn = self.conn.lock();
-        let roles_json = serde_json::to_string(approved_roles).map_err(json_err("claim_approved: roles"))?;
-        let groups_json = serde_json::to_string(approved_groups).map_err(json_err("claim_approved: groups"))?;
+        let roles_json =
+            serde_json::to_string(approved_roles).map_err(json_err("claim_approved: roles"))?;
+        let groups_json =
+            serde_json::to_string(approved_groups).map_err(json_err("claim_approved: groups"))?;
         let affected = conn
             .execute(
                 "UPDATE onboarding_requests SET status = 'approved', decided_by = ?1, decided_at = ?2, \
@@ -142,7 +157,9 @@ impl OnboardingRequestRepo for SqliteOnboardingRequestRepo {
                 ],
             )
             .map_err(db_err("claim_approved"))?;
-        Ok(ClaimResult { claimed: affected > 0 })
+        Ok(ClaimResult {
+            claimed: affected > 0,
+        })
     }
 
     fn claim_rejected(
@@ -165,6 +182,8 @@ impl OnboardingRequestRepo for SqliteOnboardingRequestRepo {
                 ],
             )
             .map_err(db_err("claim_rejected"))?;
-        Ok(ClaimResult { claimed: affected > 0 })
+        Ok(ClaimResult {
+            claimed: affected > 0,
+        })
     }
 }

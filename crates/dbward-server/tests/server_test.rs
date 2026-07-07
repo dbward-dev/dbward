@@ -361,18 +361,18 @@ impl UserRepo for StubUserRepo {
         Ok(())
     }
 
-            fn count_active(&self) -> Result<u32, AppError> {
-                Ok(1)
-            }
-            fn get_roles(&self, _: &str) -> Result<Vec<String>, AppError> {
-                Ok(vec![])
-            }
-            fn is_deleted(&self, _: &str) -> Result<bool, AppError> {
-                Ok(false)
-            }
-            fn count_admins(&self) -> Result<u32, AppError> {
-                Ok(1)
-            }
+    fn count_active(&self) -> Result<u32, AppError> {
+        Ok(1)
+    }
+    fn get_roles(&self, _: &str) -> Result<Vec<String>, AppError> {
+        Ok(vec![])
+    }
+    fn is_deleted(&self, _: &str) -> Result<bool, AppError> {
+        Ok(false)
+    }
+    fn count_admins(&self) -> Result<u32, AppError> {
+        Ok(1)
+    }
 }
 
 struct StubGroupRepo;
@@ -422,13 +422,30 @@ impl dbward_app::ports::OnboardingRequestRepo for StubOnboardingRepo {
     fn set_message_ts(&self, _: &str, _: &str) -> Result<(), AppError> {
         Ok(())
     }
-    fn get_pending(&self, _: &str) -> Result<Option<dbward_app::ports::OnboardingRequest>, AppError> {
+    fn get_pending(
+        &self,
+        _: &str,
+    ) -> Result<Option<dbward_app::ports::OnboardingRequest>, AppError> {
         Ok(None)
     }
-    fn claim_approved(&self, _: &str, _: &str, _: chrono::DateTime<chrono::Utc>, _: &[String], _: &[String], _: Option<&str>) -> Result<dbward_app::ports::ClaimResult, AppError> {
+    fn claim_approved(
+        &self,
+        _: &str,
+        _: &str,
+        _: chrono::DateTime<chrono::Utc>,
+        _: &[String],
+        _: &[String],
+        _: Option<&str>,
+    ) -> Result<dbward_app::ports::ClaimResult, AppError> {
         Ok(dbward_app::ports::ClaimResult { claimed: false })
     }
-    fn claim_rejected(&self, _: &str, _: &str, _: chrono::DateTime<chrono::Utc>, _: Option<&str>) -> Result<dbward_app::ports::ClaimResult, AppError> {
+    fn claim_rejected(
+        &self,
+        _: &str,
+        _: &str,
+        _: chrono::DateTime<chrono::Utc>,
+        _: Option<&str>,
+    ) -> Result<dbward_app::ports::ClaimResult, AppError> {
         Ok(dbward_app::ports::ClaimResult { claimed: false })
     }
 }

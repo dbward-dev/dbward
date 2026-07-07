@@ -844,7 +844,9 @@ impl UserWriterOps for SqliteTxScope<'_> {
                     AND u.lifecycle_state = 'active' AND u.status = 'active'\
             )"
         );
-        let mut stmt = self.conn.prepare(&sql)
+        let mut stmt = self
+            .conn
+            .prepare(&sql)
             .map_err(|e| AppError::Internal(format!("count_admins_tx: {e}")))?;
         let params: Vec<&dyn rusqlite::types::ToSql> = admin_groups
             .iter()
@@ -880,13 +882,17 @@ impl UserWriterOps for SqliteTxScope<'_> {
             let sql = format!(
                 "SELECT EXISTS(SELECT 1 FROM group_members WHERE user_id = ?1 AND group_name IN ({placeholders}))"
             );
-            let mut stmt = self.conn.prepare(&sql)
+            let mut stmt = self
+                .conn
+                .prepare(&sql)
                 .map_err(|e| AppError::Internal(format!("user_has_admin_tx: {e}")))?;
-            let mut param_values: Vec<Box<dyn rusqlite::types::ToSql>> = vec![Box::new(user_id.to_string())];
+            let mut param_values: Vec<Box<dyn rusqlite::types::ToSql>> =
+                vec![Box::new(user_id.to_string())];
             for g in admin_groups {
                 param_values.push(Box::new(g.clone()));
             }
-            let param_refs: Vec<&dyn rusqlite::types::ToSql> = param_values.iter().map(|b| b.as_ref()).collect();
+            let param_refs: Vec<&dyn rusqlite::types::ToSql> =
+                param_values.iter().map(|b| b.as_ref()).collect();
             let has_via_group: bool = stmt
                 .query_row(param_refs.as_slice(), |r| r.get(0))
                 .map_err(|e| AppError::Internal(format!("user_has_admin_tx: {e}")))?;

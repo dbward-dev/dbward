@@ -711,7 +711,11 @@ impl crate::ports::transaction::UserWriterOps for NoopTxScope {
     fn count_admins_tx(&self, _admin_groups: &[String]) -> Result<u32, crate::error::AppError> {
         Ok(2)
     }
-    fn user_has_admin_tx(&self, _user_id: &str, _admin_groups: &[String]) -> Result<bool, crate::error::AppError> {
+    fn user_has_admin_tx(
+        &self,
+        _user_id: &str,
+        _admin_groups: &[String],
+    ) -> Result<bool, crate::error::AppError> {
         Ok(false)
     }
     fn set_slack_user_id_tx(

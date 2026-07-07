@@ -302,7 +302,8 @@ impl RoleResolver for DbRoleResolver {
         }
 
         // Cache miss: query DB
-        let (role_names, effective_groups) = self.resolve_from_db_with_snapshot(&snap, subject_id, groups)?;
+        let (role_names, effective_groups) =
+            self.resolve_from_db_with_snapshot(&snap, subject_id, groups)?;
         let resolved = self.resolve_role_names_with_snapshot(&snap, &role_names)?;
 
         // Only cache when no OIDC groups were provided (stable result)
@@ -385,17 +386,19 @@ impl RoleResolver for DbRoleResolver {
             };
             let mut result = Vec::new();
             match conn.prepare("SELECT user_id FROM group_members WHERE group_name = ?1") {
-                Ok(mut stmt) => {
-                    match stmt.query_map(rusqlite::params![group], |row| row.get(0)) {
-                        Ok(rows) => {
-                            for r in rows.flatten() {
-                                result.push(r);
-                            }
+                Ok(mut stmt) => match stmt.query_map(rusqlite::params![group], |row| row.get(0)) {
+                    Ok(rows) => {
+                        for r in rows.flatten() {
+                            result.push(r);
                         }
-                        Err(e) => tracing::warn!(error = %e, %group, "subjects_for_selector: query failed"),
                     }
+                    Err(e) => {
+                        tracing::warn!(error = %e, %group, "subjects_for_selector: query failed")
+                    }
+                },
+                Err(e) => {
+                    tracing::warn!(error = %e, %group, "subjects_for_selector: prepare failed")
                 }
-                Err(e) => tracing::warn!(error = %e, %group, "subjects_for_selector: prepare failed"),
             }
             result
         } else if let Some(user) = selector.strip_prefix("user:") {
@@ -414,15 +417,13 @@ impl RoleResolver for DbRoleResolver {
             }
         };
         match conn.prepare("SELECT group_name FROM group_members WHERE user_id = ?1") {
-            Ok(mut stmt) => {
-                match stmt.query_map(rusqlite::params![subject_id], |row| row.get(0)) {
-                    Ok(rows) => rows.flatten().collect(),
-                    Err(e) => {
-                        tracing::warn!(error = %e, subject_id, "groups_for_subject: query failed");
-                        vec![]
-                    }
+            Ok(mut stmt) => match stmt.query_map(rusqlite::params![subject_id], |row| row.get(0)) {
+                Ok(rows) => rows.flatten().collect(),
+                Err(e) => {
+                    tracing::warn!(error = %e, subject_id, "groups_for_subject: query failed");
+                    vec![]
                 }
-            }
+            },
             Err(e) => {
                 tracing::warn!(error = %e, subject_id, "groups_for_subject: prepare failed");
                 vec![]

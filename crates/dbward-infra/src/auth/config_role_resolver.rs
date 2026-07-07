@@ -254,7 +254,10 @@ impl RoleResolver for ConfigRoleResolver {
     }
 
     fn groups_for_subject(&self, subject_id: &str) -> Vec<String> {
-        self.subject_groups.get(subject_id).cloned().unwrap_or_default()
+        self.subject_groups
+            .get(subject_id)
+            .cloned()
+            .unwrap_or_default()
     }
 
     fn default_role(&self) -> Option<String> {

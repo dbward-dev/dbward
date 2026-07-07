@@ -414,17 +414,13 @@ impl UserManage {
         self.uow.execute(Box::new(move |tx| {
             // Last admin guard inside tx to prevent TOCTOU
             // Only trigger when the user actually loses admin access
-            let removing_admin_group = rm_groups_clone
-                .iter()
-                .any(|g| admin_groups.contains(g));
+            let removing_admin_group = rm_groups_clone.iter().any(|g| admin_groups.contains(g));
             let user_loses_admin = user_currently_admin && !user_will_have_admin_direct;
             // Check if user retains admin via other admin groups not being removed
             let user_retains_admin_via_other_group = if removing_admin_group {
                 let mut retains = false;
                 for ag in &admin_groups {
-                    if !rm_groups_clone.contains(ag)
-                        && tx.user_in_group_tx(&user_id_clone, ag)?
-                    {
+                    if !rm_groups_clone.contains(ag) && tx.user_in_group_tx(&user_id_clone, ag)? {
                         retains = true;
                         break;
                     }
@@ -434,9 +430,7 @@ impl UserManage {
                 false
             };
             // Also consider admin groups being added in this same update
-            let adding_admin_group = add_groups_clone
-                .iter()
-                .any(|g| admin_groups.contains(g));
+            let adding_admin_group = add_groups_clone.iter().any(|g| admin_groups.contains(g));
             // Skip guard if user retains admin (direct, remaining group, or newly added group)
             let needs_guard = (user_loses_admin || removing_admin_group || removing_admin_direct)
                 && !user_will_have_admin_direct
@@ -495,6 +489,27 @@ impl UserManage {
         }))?;
 
         self.role_resolver.invalidate_cache(&input.user_id);
+
+        self.notifier.dispatch(crate::ports::WebhookEvent {
+            event_type: "user.updated".into(),
+            request_id: None,
+            database: None,
+            environment: None,
+            actor: Some(user.subject_id.clone()),
+            detail: Some(format!("user '{}' updated", input.user_id)),
+            requester: None,
+            reason: None,
+            redacted_detail: None,
+            error_summary: None,
+            approval_hint: None,
+            operation: None,
+            step_index: None,
+            total_steps: None,
+            expires_at: None,
+            approvers: None,
+            matched_selector: None,
+        });
+
         Ok(())
     }
 
@@ -546,6 +561,27 @@ impl UserManage {
         })?;
 
         self.role_resolver.invalidate_cache(user_id);
+
+        self.notifier.dispatch(crate::ports::WebhookEvent {
+            event_type: "user.deleted".into(),
+            request_id: None,
+            database: None,
+            environment: None,
+            actor: Some(user.subject_id.clone()),
+            detail: Some(format!("user '{}' deleted", user_id)),
+            requester: None,
+            reason: None,
+            redacted_detail: None,
+            error_summary: None,
+            approval_hint: None,
+            operation: None,
+            step_index: None,
+            total_steps: None,
+            expires_at: None,
+            approvers: None,
+            matched_selector: None,
+        });
+
         Ok(())
     }
 
@@ -605,6 +641,26 @@ impl UserManage {
 
         self.role_resolver.invalidate_cache(&input.user_id);
 
+        self.notifier.dispatch(crate::ports::WebhookEvent {
+            event_type: "user.suspended".into(),
+            request_id: None,
+            database: None,
+            environment: None,
+            actor: Some(user.subject_id.clone()),
+            detail: Some(format!("user '{}' suspended", input.user_id)),
+            requester: None,
+            reason: None,
+            redacted_detail: None,
+            error_summary: None,
+            approval_hint: None,
+            operation: None,
+            step_index: None,
+            total_steps: None,
+            expires_at: None,
+            approvers: None,
+            matched_selector: None,
+        });
+
         Ok(UserSuspendOutput {
             id: input.user_id,
             revoked_tokens: result.0,
@@ -631,8 +687,7 @@ impl UserManage {
             return Err(AppError::Gone("user has been deleted".into()));
         }
 
-        let needs_limit_check =
-            existing.status == dbward_domain::entities::UserStatus::Suspended;
+        let needs_limit_check = existing.status == dbward_domain::entities::UserStatus::Suspended;
         let max_users = self.license.max_users();
 
         let now = self.clock.now();
@@ -659,6 +714,26 @@ impl UserManage {
         }))?;
 
         self.role_resolver.invalidate_cache(user_id);
+
+        self.notifier.dispatch(crate::ports::WebhookEvent {
+            event_type: "user.activated".into(),
+            request_id: None,
+            database: None,
+            environment: None,
+            actor: Some(user.subject_id.clone()),
+            detail: Some(format!("user '{}' activated", user_id)),
+            requester: None,
+            reason: None,
+            redacted_detail: None,
+            error_summary: None,
+            approval_hint: None,
+            operation: None,
+            step_index: None,
+            total_steps: None,
+            expires_at: None,
+            approvers: None,
+            matched_selector: None,
+        });
 
         Ok(())
     }

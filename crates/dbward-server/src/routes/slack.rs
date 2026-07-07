@@ -1034,7 +1034,9 @@ async fn handle_join_command(state: &AppState, trigger_id: &str, slack_user_id: 
         Err(e) => {
             tracing::error!(error = %e, "onboarding: failed to check pending status");
             // Fail-closed: reject the request if we can't verify pending status
-            return ephemeral_response("❌ Unable to process your request. Please try again later.");
+            return ephemeral_response(
+                "❌ Unable to process your request. Please try again later.",
+            );
         }
     };
     if has_pending {
@@ -1181,18 +1183,22 @@ async fn handle_onboarding_submission(
         .map(|c| c.request_ttl_hours)
         .unwrap_or(72);
     let expires_at = now + chrono::Duration::hours(ttl_hours as i64);
-    let insert_result = state.onboarding_repo().create(
-        &dbward_app::ports::CreateOnboardingInput {
+    let insert_result = state
+        .onboarding_repo()
+        .create(&dbward_app::ports::CreateOnboardingInput {
             id: request_id.clone(),
             slack_user_id: slack_user_id.to_string(),
             display_name: Some(display_name.clone()),
             requested_roles: roles.clone(),
             requested_groups: groups.clone(),
-            reason: if reason.is_empty() { None } else { Some(reason.clone()) },
+            reason: if reason.is_empty() {
+                None
+            } else {
+                Some(reason.clone())
+            },
             created_at: now,
             expires_at,
-        },
-    );
+        });
     if let Err(e) = insert_result {
         let err_msg = e.to_string();
         if err_msg.contains("UNIQUE") || err_msg.contains("unique") {
@@ -1394,7 +1400,11 @@ fn build_review_modal(
         .map(|g| serde_json::json!({"text": {"type": "plain_text", "text": g}, "value": g}))
         .collect();
 
-    let all_roles: Vec<String> = assignable_roles.iter().chain(restricted_roles.iter()).cloned().collect();
+    let all_roles: Vec<String> = assignable_roles
+        .iter()
+        .chain(restricted_roles.iter())
+        .cloned()
+        .collect();
     let initial_role_options: Vec<serde_json::Value> = initial_roles
         .iter()
         .filter(|r| all_roles.contains(r))
@@ -1569,7 +1579,11 @@ async fn handle_onboarding_review_submit(
     };
 
     let (target_slack_id, display_name, message_ts) = match req_data {
-        Some(req) => (req.slack_user_id, req.display_name.unwrap_or_default(), req.message_ts),
+        Some(req) => (
+            req.slack_user_id,
+            req.display_name.unwrap_or_default(),
+            req.message_ts,
+        ),
         None => return StatusCode::OK.into_response(),
     };
 
@@ -1593,10 +1607,20 @@ async fn handle_onboarding_review_submit(
             // Slugify: lowercase, replace non-ASCII-alnum with hyphens, collapse, trim
             let slug: String = display_name
                 .chars()
-                .map(|c| if c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '@' || c == '.' { c } else { '-' })
+                .map(|c| {
+                    if c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '@' || c == '.' {
+                        c
+                    } else {
+                        '-'
+                    }
+                })
                 .collect::<String>()
                 .to_ascii_lowercase();
-            let slug = slug.split('-').filter(|s| !s.is_empty()).collect::<Vec<_>>().join("-");
+            let slug = slug
+                .split('-')
+                .filter(|s| !s.is_empty())
+                .collect::<Vec<_>>()
+                .join("-");
             if slug.is_empty() {
                 format!("slack-{target_slack_id}")
             } else {
@@ -1690,18 +1714,22 @@ async fn handle_onboarding_review_submit(
                     }
                 }
             }
-            Err(dbward_app::error::AppError::Conflict(ref msg)) if msg.contains("already processed") => {
+            Err(dbward_app::error::AppError::Conflict(ref msg))
+                if msg.contains("already processed") =>
+            {
                 // Idempotent: onboarding request already claimed — silent no-op
                 tracing::info!("onboarding: duplicate approval (already processed)");
             }
             Err(e) => {
                 tracing::error!(error = %e, "onboarding: user creation failed (tx rolled back atomically)");
                 if let Some(ref sc) = state.slack_client {
-                    let _ = sc.post_ephemeral(
-                        &channel_id,
-                        &approver_slack_id,
-                        &format!("⚠️ User creation failed: {e}. Please try again."),
-                    ).await;
+                    let _ = sc
+                        .post_ephemeral(
+                            &channel_id,
+                            &approver_slack_id,
+                            &format!("⚠️ User creation failed: {e}. Please try again."),
+                        )
+                        .await;
                 }
             }
         }

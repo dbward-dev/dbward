@@ -139,7 +139,9 @@ pub trait UserWriterOps {
         _user_id: &str,
         _now: chrono::DateTime<chrono::Utc>,
     ) -> Result<(), AppError> {
-        Err(AppError::Internal("add_group_member_tx not implemented".into()))
+        Err(AppError::Internal(
+            "add_group_member_tx not implemented".into(),
+        ))
     }
     /// Set roles in transaction.
     fn set_roles_tx(&self, _user_id: &str, _roles: &[String]) -> Result<(), AppError> {
@@ -147,7 +149,9 @@ pub trait UserWriterOps {
     }
     /// Remove group membership in transaction.
     fn remove_member_tx(&self, _group_name: &str, _user_id: &str) -> Result<(), AppError> {
-        Err(AppError::Internal("remove_member_tx not implemented".into()))
+        Err(AppError::Internal(
+            "remove_member_tx not implemented".into(),
+        ))
     }
     /// Soft-delete a user in transaction.
     fn soft_delete_tx(
@@ -159,7 +163,9 @@ pub trait UserWriterOps {
     }
     /// Remove all group memberships for a user in transaction.
     fn remove_all_memberships_tx(&self, _user_id: &str) -> Result<(), AppError> {
-        Err(AppError::Internal("remove_all_memberships_tx not implemented".into()))
+        Err(AppError::Internal(
+            "remove_all_memberships_tx not implemented".into(),
+        ))
     }
     /// Count active users within transaction (for atomic plan limit check).
     fn count_active_tx(&self) -> Result<u32, AppError> {
@@ -184,7 +190,9 @@ pub trait UserWriterOps {
     /// Check if user is a member of a specific group within transaction.
     fn user_in_group_tx(&self, user_id: &str, group_name: &str) -> Result<bool, AppError> {
         let _ = (user_id, group_name);
-        Err(AppError::Internal("user_in_group_tx not implemented".into()))
+        Err(AppError::Internal(
+            "user_in_group_tx not implemented".into(),
+        ))
     }
     /// Set slack_user_id and source on a user within transaction.
     fn set_slack_user_id_tx(
@@ -193,7 +201,9 @@ pub trait UserWriterOps {
         _slack_user_id: &str,
         _source: &str,
     ) -> Result<(), AppError> {
-        Err(AppError::Internal("set_slack_user_id_tx not implemented".into()))
+        Err(AppError::Internal(
+            "set_slack_user_id_tx not implemented".into(),
+        ))
     }
 
     /// Atomically claim an onboarding request as approved within the same transaction
@@ -207,8 +217,17 @@ pub trait UserWriterOps {
         approved_groups: &[String],
         decision_comment: Option<&str>,
     ) -> Result<bool, AppError> {
-        let _ = (request_id, decided_by, decided_at, approved_roles, approved_groups, decision_comment);
-        Err(AppError::Internal("claim_onboarding_approved_tx not implemented".into()))
+        let _ = (
+            request_id,
+            decided_by,
+            decided_at,
+            approved_roles,
+            approved_groups,
+            decision_comment,
+        );
+        Err(AppError::Internal(
+            "claim_onboarding_approved_tx not implemented".into(),
+        ))
     }
 }
 

@@ -182,7 +182,9 @@ pub async fn update_roles_groups(
             let valid = s.is_empty()
                 || (s.len() >= 2
                     && matches!(s.as_bytes()[0], b'U' | b'W')
-                    && s[1..].bytes().all(|b| b.is_ascii_uppercase() || b.is_ascii_digit()));
+                    && s[1..]
+                        .bytes()
+                        .all(|b| b.is_ascii_uppercase() || b.is_ascii_digit()));
             if !valid {
                 return Err(map_error(dbward_app::error::AppError::Validation(
                     "invalid slack_user_id format (expected ^[UW][A-Z0-9]+$ or empty string to clear)".into(),
