@@ -83,7 +83,7 @@ Create a dedicated CI token with appropriate permissions:
 ```bash
 dbward token create \
   --subject "github-actions" \
-  --role developer \
+  --scope-roles developer \
   --expires 90d
 ```
 

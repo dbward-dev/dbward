@@ -52,8 +52,8 @@ curl -X POST http://localhost:3000/api/tokens \
 | Field | Type | Description |
 |-------|------|-------------|
 | `subject_id` | string | **Required.** User or service identifier. |
-| `subject_type` | string | `user` or `agent`. Default: `user`. |
-| `scope_ceiling` | object | Max roles this token can activate. Format: `{"roles": ["role1", "role2"]}`. Effective roles = intersection of `scope_ceiling.roles` and the user's assigned roles (direct + group-derived). Set `null` for agent tokens (`--no-scope-ceiling`) to inherit all assigned roles. **Required** for `user` tokens. |
+| `subject_type` | string | **Required.** `user` or `agent`. |
+| `scope_ceiling` | object | Max roles this token can activate. Format: `{"roles": ["role1", "role2"]}`. Effective roles = intersection of `scope_ceiling.roles` and the user's assigned roles (direct + group-derived). Set `null` for agent tokens (`--no-scope-ceiling`). **Optional** (auto-derived from resolved roles when omitted) for `user` tokens. |
 | `name` | string | Human-readable label. |
 | `expires_at` | datetime | Absolute expiry (RFC 3339). Unset = no expiration. |
 
@@ -220,7 +220,7 @@ dbward user add alice --role developer
 dbward user add bob --role dba --group backend-team
 
 # Suspend a user (revokes tokens, cancels pending requests)
-dbward user suspend alice --reason "offboarding"
+dbward user suspend alice
 
 # Reactivate
 dbward user activate alice
@@ -311,7 +311,7 @@ Both are extracted from the JWT on every request. Neither is stored in dbward's 
 
 ## Agent authentication
 
-Agents use API tokens with `subject_type = "agent"` and typically `--no-scope-ceiling` to inherit all bound roles:
+Agents use API tokens with `subject_type = "agent"` and `--no-scope-ceiling`. Agents always resolve to the `agent-default` role regardless of ceiling:
 
 ```bash
 dbward token create --subject prod-agent --subject-type agent --no-scope-ceiling

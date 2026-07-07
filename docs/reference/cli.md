@@ -282,6 +282,7 @@ Manage API tokens.
 ### dbward token create
 
 ```bash
+dbward token create --subject alice
 dbward token create --subject alice --scope-roles developer
 dbward token create --subject agent-1 --subject-type agent --no-scope-ceiling
 dbward token create --subject bob --scope-roles developer,dba --expires 90d
@@ -290,12 +291,11 @@ dbward token create --subject bob --scope-roles developer,dba --expires 90d
 | Option | Default | Description |
 |--------|---------|-------------|
 | `--subject <ID>` | — | **Required.** Subject ID |
-| `--scope-roles <ROLES>` | — | Comma-separated roles for scope ceiling. **Required** for user tokens. Conflicts with `--no-scope-ceiling`. |
+| `--scope-roles <ROLES>` | — | Comma-separated roles for scope ceiling. Optional. When omitted, defaults to the user's resolved roles (auto-ceiling). Conflicts with `--no-scope-ceiling`. |
 | `--subject-type <TYPE>` | user | `user` or `agent` |
 | `--name <NAME>` | | Token display name |
 | `--no-scope-ceiling` | false | Remove scope ceiling (agent tokens only). Token inherits all bound roles. Conflicts with `--scope-roles`. |
 | `--expires <DURATION>` | | Expiry: `90d`, `24h`, `30m`, ISO date, or datetime |
-| `--role <ROLE>` | | **Deprecated.** Alias for `--scope-roles`. Will be removed in a future release. |
 
 ### dbward token list
 
@@ -345,6 +345,8 @@ dbward user add bob --role dba --group backend-team
 | `--role <ROLE>` | Role to assign (repeatable) |
 | `--group <GROUP>` | Group to add user to (repeatable) |
 
+On success, prints the initial API token to stdout. Store it securely — it cannot be retrieved later.
+
 ### dbward user update
 
 Update an existing user.
@@ -352,16 +354,19 @@ Update an existing user.
 ```bash
 dbward user update alice --role admin
 dbward user update alice --slack-user-id U02CR3TMKKJ
-dbward user update alice --add-group dba-team --remove-group backend-team
+dbward user update alice --add-group dba-team --rm-group backend-team
+dbward user update alice --add-role dba --rm-role readonly
 ```
 
 | Option | Description |
 |--------|-------------|
 | `<ID>` (positional) | **Required.** User identifier |
 | `--role <ROLE>` | Set roles (replaces existing, repeatable) |
+| `--add-role <ROLE>` | Add a role (repeatable) |
+| `--rm-role <ROLE>` | Remove a role (repeatable) |
 | `--slack-user-id <ID>` | Link Slack account for approval notifications |
 | `--add-group <GROUP>` | Add to group (repeatable) |
-| `--remove-group <GROUP>` | Remove from group (repeatable) |
+| `--rm-group <GROUP>` | Remove from group (repeatable) |
 
 ### dbward user show
 
@@ -377,27 +382,19 @@ List all users.
 
 ```bash
 dbward user list
-dbward user list --status active
-dbward user list --group backend-team
 ```
-
-| Option | Description |
-|--------|-------------|
-| `--status <STATUS>` | Filter by status: `active`, `suspended` |
-| `--group <GROUP>` | Filter by group membership |
 
 ### dbward user suspend
 
 Suspend a user (revokes tokens, cancels pending requests).
 
 ```bash
-dbward user suspend alice --reason "offboarding"
+dbward user suspend alice
 ```
 
 | Option | Description |
 |--------|-------------|
 | `<ID>` (positional) | **Required.** User identifier |
-| `--reason <TEXT>` | Reason for suspension |
 
 ### dbward user activate
 
@@ -409,7 +406,7 @@ dbward user activate alice
 
 ### dbward user rm
 
-Remove a user (revokes tokens, cancels requests, deletes record).
+Remove a user (soft-delete: revokes tokens, removes group memberships, retains record for audit).
 
 ```bash
 dbward user rm alice
@@ -590,18 +587,24 @@ No additional options. See [MCP Reference](mcp.md).
 
 ---
 
-## /dbward join (Slack command)
+## dbward slack
 
-Self-service user onboarding via Slack. When a user types `/dbward join` in Slack, they are registered as a new dbward user with the role and groups configured in `[slack.onboarding]`.
+### dbward slack init
 
+Generate a Slack App Manifest and creation URL. Creates an app with all required scopes, Interactivity URL, and Slash Commands pre-configured.
+
+```bash
+dbward slack init --server-url https://dbward.example.com
+dbward slack init --server-url https://dbward.example.com --open
+dbward slack init --server-url https://dbward.example.com --manifest-only
 ```
-/dbward join
-```
 
-**Requirements:**
-- `[slack.onboarding]` must be enabled in server config
-- The user's Slack user ID is automatically linked to their dbward account
-- If the user already exists, the command returns their current status
+| Option | Default | Description |
+|--------|---------|-------------|
+| `--server-url <URL>` | **Required.** | Public URL of the dbward server |
+| `--app-name <NAME>` | `dbward` | Slack app display name |
+| `--open` | false | Open browser to Slack app creation page |
+| `--manifest-only` | false | Output manifest YAML only (no instructions) |
 
 ---
 

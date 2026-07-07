@@ -33,10 +33,7 @@ pub fn create_bootstrap_token(
 
     let subject_type = if is_agent { "agent" } else { "user" };
 
-    // Bootstrap ceiling: admin→["admin"], developer→["developer"], agent→None
-    // NOTE: Token creation passes Validation 6 (subject must resolve ≥1 role).
-    // This requires config to have role_bindings for bootstrap subjects
-    // (e.g. [[auth.role_bindings]] role="admin" subjects=["admin"]).
+    // scope_ceiling: explicit role for user tokens, None for agent tokens.
     let scope_ceiling = if is_agent {
         None
     } else {

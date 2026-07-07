@@ -486,7 +486,7 @@ dbward request resume <ID>     # Resume + wait for result
 dbward request result <ID>      # Retrieve execution result from server
 dbward mcp                      # MCP stdio server
 dbward-server --config server.toml        # HTTP server (auto-initializes on first run)
-dbward token create --subject <USER> --subject-type user --role <ROLE>
+dbward token create --subject <USER> --scope-roles <ROLE>
 dbward token revoke <ID>
 dbward agent --config <PATH>    # Start agent
 ```

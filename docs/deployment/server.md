@@ -249,9 +249,9 @@ cat /data/admin-token    # admin token
 cat /data/agent-token    # agent token
 
 # Additional tokens via CLI (requires admin token):
-dbward token create --subject alice --role admin
-dbward token create --subject bob --role developer
-dbward token create --subject prod-agent --role agent-default --subject-type agent
+dbward token create --subject alice --scope-roles admin
+dbward token create --subject bob --scope-roles developer
+dbward token create --subject prod-agent --subject-type agent --no-scope-ceiling
 ```
 
 For API-based token management, see [REST API Reference](../reference/api.md#tokens).

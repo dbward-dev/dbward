@@ -12,9 +12,9 @@ dbward uses role-based access control (RBAC) with database and environment scopi
 | Role | Permissions | Scope |
 |------|-------------|-------|
 | `admin` | `*` (all) | All databases, all environments |
-| `developer` | `request.create`, `request.create_select`, `request.view`, `request.cancel`, `request.resume`, `result.view`, `token.revoke_own` | All |
-| `readonly` | `request.create_select`, `request.view`, `result.view` | All |
-| `agent-default` | `agent.poll`, `agent.claim`, `agent.heartbeat`, `agent.submit_result` | All |
+| `developer` | `request.execute`, `request.query`, `request.view`, `request.cancel`, `request.resume`, `result.view`, `workflow.read`, `token.revoke_own` | All |
+| `readonly` | `request.query`, `request.view`, `result.view`, `workflow.read` | All |
+| `agent-default` | `agent.operate` | All |
 
 Built-in roles cannot be redefined in config.
 
@@ -23,7 +23,7 @@ Built-in roles cannot be redefined in config.
 ```toml
 [[auth.roles]]
 name = "dba"
-permissions = ["request.create", "request.approve", "request.view", "result.view", "audit.view"]
+permissions = ["request.execute", "request.approve", "request.view", "result.view", "audit.read"]
 databases = ["app", "analytics"]       # Scope to specific databases (empty = all)
 environments = ["production", "staging"]  # Scope to environments (empty = all)
 ```
@@ -64,7 +64,7 @@ Assign roles directly when creating or updating a user:
 
 ```bash
 dbward user add alice --role dba
-dbward user update alice --role admin
+dbward user update alice --add-role admin
 ```
 
 Roles are stored in the user record (`roles_json` column).
@@ -100,14 +100,16 @@ default_role = "developer"
 
 | Permission | Description |
 |-----------|-------------|
-| `request.create` | Create requests (DML, migrations) |
-| `request.create_select` | Create SELECT-only requests |
+| `request.execute` | Create requests (DML, DDL, migrations) |
+| `request.query` | Create SELECT-only requests |
 | `request.approve` | Approve requests |
 | `request.resume` | Resume approved requests |
 | `request.cancel` | Cancel own requests |
 | `request.view` | View requests and status |
 | `request.break_glass` | Use emergency bypass |
 | `request.break_glass_ddl` | Allow DDL in emergency mode (requires `request.break_glass`) |
+| `request.preflight` | Run preflight SQL analysis |
+| `request.preflight_explain` | Run preflight with EXPLAIN |
 
 ### Result permissions
 
@@ -119,35 +121,38 @@ default_role = "developer"
 
 | Permission | Description |
 |-----------|-------------|
-| `audit.view` | View own audit events |
-| `audit.view_all` | View all audit events |
+| `audit.read` | View audit events |
 
-### Management permissions
+### Workflow and policy permissions
 
 | Permission | Description |
 |-----------|-------------|
-| `workflow.manage` | Create/delete workflows |
-| `policy.manage` | Manage execution/result/notification policies |
-| `role.manage` | Create/delete custom roles via API |
-| `webhook.manage` | Create/update/delete webhooks |
-| `user.manage` | Suspend/activate users |
+| `workflow.read` | View workflow definitions |
+| `workflow.write` | Create/update/delete workflows |
+| `policy.write` | Manage execution/result/notification policies |
+| `role.write` | Create/delete custom roles via API |
+| `webhook.write` | Create/update/delete webhooks |
+
+### User and token permissions
+
+| Permission | Description |
+|-----------|-------------|
+| `user.write` | Add, update, suspend, activate, and delete users |
+| `user.read` | List and view users and groups |
 | `token.write` | Create/revoke any token |
 | `token.revoke_own` | Revoke own tokens |
-| `metrics.view` | Access /metrics endpoint |
 
 ### Agent permissions
 
 | Permission | Description |
 |-----------|-------------|
-| `agent.poll` | Poll for jobs |
-| `agent.claim` | Claim jobs |
-| `agent.heartbeat` | Send heartbeats |
-| `agent.submit_result` | Submit execution results |
+| `agent.operate` | Poll, claim, heartbeat, and submit results |
 
-### Wildcard
+### Other
 
 | Permission | Description |
 |-----------|-------------|
+| `metrics.view` | Access /metrics endpoint |
 | `*` | All permissions (admin only) |
 
 ## Selectors
@@ -176,6 +181,8 @@ claim = "groups"
 value = "platform"
 role = "admin"
 ```
+
+OIDC users are auto-provisioned on first login (JIT). Their roles are resolved from OIDC role mappings + group membership + `default_role`.
 
 ## See also
 
