@@ -141,7 +141,7 @@ Submit SQL directly from Slack using the `/dbward execute` slash command:
 2. Fill in Database/Environment, SQL, and optional Reason
 3. Submit — the request enters the approval flow
 
-See [Notifications: Slash Command](notifications.md#slash-command) for setup instructions.
+See [Slack Integration: Slash Commands](slack.md#slash-commands) for setup instructions.
 
 ## See also
 
