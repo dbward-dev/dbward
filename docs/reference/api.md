@@ -214,33 +214,80 @@ Permission: Any authenticated user
 
 ## Users
 
+### POST /api/users
+
+Create a new user and generate an initial API token. The raw token is returned only once — store it securely.
+
+Permission: `user.write`
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `id` | string | ✓ | User identifier (1–128 chars, ASCII alphanumeric + `-_@.`) |
+| `roles` | string[] | | Roles to assign |
+| `groups` | string[] | | Groups to assign |
+
+Response (201) includes `id`, `token`, `token_prefix`, `roles`, `groups`.
+
 ### GET /api/users
 
 List all registered users.
 
-Permission: `user.write`
+Permission: `user.read`
+
+### GET /api/users/{id}
+
+Get a single user's details including roles, groups, and status.
+
+Permission: `user.read`
 
 ### PATCH /api/users/{id}
 
-Update a user's profile fields.
+Update a user's roles, groups, or profile fields. All fields are optional but at least one must be provided.
 
-Permission: `user.write` (or self-update for own profile)
+Permission: `user.write`
 
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| `slack_user_id` | string \| null | ✓ | Set or clear Slack user ID |
+| Field | Type | Description |
+|-------|------|-------------|
+| `roles` | string[] | Replace all roles |
+| `add_roles` | string[] | Add roles |
+| `rm_roles` | string[] | Remove roles |
+| `add_groups` | string[] | Add to groups |
+| `rm_groups` | string[] | Remove from groups |
+| `slack_user_id` | string \| null | Set or clear Slack user ID |
 
 ### POST /api/users/{id}/suspend
 
-Suspend a user. Revokes all active tokens and cancels pending requests. For config-managed users, status reverts on server restart.
+Suspend a user. Revokes all active tokens and cancels pending requests.
 
 Permission: `user.write`
 
 ### POST /api/users/{id}/activate
 
-Reactivate a previously suspended user. For config-managed users, status reverts on server restart.
+Reactivate a previously suspended user.
 
 Permission: `user.write`
+
+### DELETE /api/users/{id}
+
+Soft-delete a user. The user record is retained for audit purposes but can no longer authenticate.
+
+Permission: `user.write`
+
+---
+
+## Groups
+
+### GET /api/groups
+
+List all groups defined in config.
+
+Permission: `user.read`
+
+### GET /api/groups/{name}
+
+Get a group's current members.
+
+Permission: `user.read`
 
 ---
 
@@ -257,11 +304,12 @@ Permission: `token.write`
 | `subject_id` | string | ✓ | Subject the token authenticates as |
 | `subject_type` | string | ✓ | `user` or `agent` |
 | `name` | string | | Human-readable label |
-| `scope_ceiling` | object | user: ✓ | Max effective roles: `{"roles": ["developer"]}` |
+| `scope_ceiling` | object | | Max effective roles: `{"roles": ["developer"]}` |
 | `expires_at` | DateTime | | Expiration time (ISO 8601) |
 
 Notes:
-- `scope_ceiling` is required for user tokens. Agent tokens may omit it (unrestricted).
+- `scope_ceiling` is optional for user tokens. When omitted, the ceiling is auto-derived from the user's resolved roles.
+- Agent tokens may omit `scope_ceiling` (unrestricted).
 - Effective permissions = resolved roles ∩ scope_ceiling.
 
 ### GET /api/tokens

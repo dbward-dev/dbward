@@ -961,7 +961,7 @@ pub struct SlackConfig {
 /// Configuration for Slack-based user onboarding (/dbward join).
 #[derive(Debug, Clone, Deserialize, PartialEq)]
 pub struct SlackOnboardingConfig {
-    #[serde(default = "default_true")]
+    #[serde(default)]
     pub enabled: bool,
     #[serde(default)]
     pub assignable_roles: Vec<String>,

@@ -108,7 +108,7 @@ Define custom roles and groups in TOML.
 ```toml
 [[auth.roles]]
 name = "dba"
-permissions = ["request.create", "request.approve", "audit.view"]
+permissions = ["request.execute", "request.approve", "audit.read"]
 
 [[auth.groups]]
 name = "backend-team"
@@ -120,7 +120,7 @@ roles = ["developer"]
 | Field | Type | Required | Default | Description |
 |---|---|---|---|---|
 | `name` | String | ✓ | — | Role identifier. Cannot redefine built-ins: `admin`, `developer`, `readonly`, `agent-default`. |
-| `permissions` | String[] | ✓ | — | Granted permissions (e.g. `"request.create"`, `"request.approve"`, `"*"`). [Full list →](authorization.md#permissions) |
+| `permissions` | String[] | ✓ | — | Granted permissions (e.g. `"request.execute"`, `"request.approve"`, `"*"`). [Full list →](authorization.md#permissions) |
 | `databases` | String[] | | `[]` | Restrict to specific databases. Empty = all. |
 | `environments` | String[] | | `[]` | Restrict to specific environments. Empty = all. |
 
@@ -367,20 +367,24 @@ channel = "C0123ABC456"
 
 ### [slack.onboarding]
 
-Automatic user provisioning when a user first interacts via the `/dbward join` Slack command.
+Self-service user onboarding via the `/dbward join` Slack command. Requests require admin approval before the user is created.
 
 ```toml
 [slack.onboarding]
 enabled = true
-default_role = "developer"
-default_groups = ["backend-team"]
+assignable_roles = ["developer", "dba", "readonly"]
+assignable_groups = ["backend-team", "dba-team"]
+restricted_roles = ["admin"]
+request_ttl_hours = 72
 ```
 
 | Field | Type | Required | Default | Description |
 |---|---|---|---|---|
-| `enabled` | bool | | `false` | Enable Slack-based user onboarding. |
-| `default_role` | String | | — | Role assigned to users who join via Slack. Falls back to `[auth].default_role`. |
-| `default_groups` | String[] | | `[]` | Groups automatically assigned to users who join via Slack. |
+| `enabled` | bool | | `false` | Enable Slack-based user onboarding via `/dbward join`. |
+| `assignable_roles` | String[] | ✓ | — | Roles available for selection during onboarding. |
+| `assignable_groups` | String[] | | `[]` | Groups available for selection during onboarding. |
+| `restricted_roles` | String[] | | `[]` | Roles hidden from applicants but assignable by admins during approval. |
+| `request_ttl_hours` | u64 | | `72` | Hours before a pending request expires automatically. |
 
 ### trusted_proxies
 

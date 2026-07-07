@@ -133,11 +133,11 @@ To immediately revoke an agent's ability to execute:
 
 To immediately disable a user's access:
 
-1. **Config suspend** (recommended): Set `status = "suspended"` in `server.toml` and restart/reload — revokes all tokens and cancels pending requests atomically.
-2. **API suspend**: `POST /api/users/{id}/suspend` — immediate but reverts to config value on restart.
-3. **Remove from config**: Remove the `[[users]]` entry — deletes the user record entirely.
+1. **CLI suspend** (recommended): `dbward user suspend alice` — revokes all tokens and cancels pending requests atomically.
+2. **API suspend**: `POST /api/users/{id}/suspend` — immediate, equivalent to CLI suspend.
+3. **Remove user**: `dbward user rm alice` — soft-deletes the user (revokes all tokens, removes group memberships, retains record for audit).
 
-For OIDC users, use `POST /api/users/{id}/suspend` for immediate access revocation. The server checks `is_suspended` on every request regardless of JWT validity. Additionally, disable the account in your IdP to prevent new JWT issuance.
+For OIDC users, use `dbward user suspend <id>` or `POST /api/users/{id}/suspend` for immediate access revocation. The server checks `is_suspended` on every request regardless of JWT validity. Additionally, disable the account in your IdP to prevent new JWT issuance.
 
 ## Slack & Webhook Security
 

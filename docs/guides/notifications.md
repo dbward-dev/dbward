@@ -175,6 +175,7 @@ Slack buttons and slash commands are configured automatically by `dbward slack i
 | Command | Action |
 |---|---|
 | `/dbward execute` | Open SQL submission modal |
+| `/dbward join` | Request onboarding (requires admin approval) |
 | `/dbward help` | Show usage |
 
 **Authentication:** Both `/api/slack/commands` and `/api/slack/interactions` are verified using the [Slack Signing Secret](https://api.slack.com/authentication/verifying-requests-from-slack) (HMAC-SHA256). Only requests signed by Slack are accepted.

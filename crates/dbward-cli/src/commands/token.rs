@@ -27,7 +27,7 @@ pub enum TokenAction {
         subject: String,
         #[arg(long, default_value = "user", value_parser = parse_subject_type)]
         subject_type: String,
-        /// Scope ceiling roles (required for user tokens, comma-separated)
+        /// Scope ceiling roles (comma-separated). Omit to use the user's resolved roles.
         #[arg(long, value_delimiter = ',')]
         scope_roles: Vec<String>,
         /// No scope ceiling (agent tokens only)
@@ -91,13 +91,10 @@ pub async fn run_token_command(
                 // Deprecated --role flag → convert to scope_ceiling
                 eprintln!("⚠ --role is deprecated. Use --scope-roles instead.");
                 Some(json!({"roles": [legacy_role]}))
-            } else if subject_type == "agent" {
-                // Agent without explicit ceiling → None (unrestricted)
-                None
             } else {
-                return Err(CliError::Config(
-                    "--scope-roles is required for user tokens".into(),
-                ));
+                // User tokens: auto-ceiling from resolved roles (server-side)
+                // Agent tokens: unrestricted (no ceiling)
+                None
             };
 
             let expires_at = match expires.as_deref() {
