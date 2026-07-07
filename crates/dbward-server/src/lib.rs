@@ -166,6 +166,7 @@ pub async fn run_from_args(
         cfg.effective_auth_mode(),
         None,
         Some(policy_repo.clone()),
+        None, // user_repo not available yet (pre-bootstrap)
     )
     .map_err(|e| format!("config: {e}"))?;
     let role_resolver = pre_reloadable.role_resolver.clone();
@@ -452,11 +453,40 @@ pub async fn run_from_args(
 
     // Rebuild initial_reloadable with the final effective_auth_mode
     // (may differ from cfg.effective_auth_mode() due to license fallback)
-    let initial_reloadable = if effective_auth_mode == cfg.effective_auth_mode() {
-        pre_reloadable
-    } else {
-        build_reloadable_config_with(&cfg, &effective_auth_mode, None, Some(policy_repo.clone()))
-            .map_err(|e| format!("config: {e}"))?
+    // V25: Use DbRoleResolver (DashMap + TTL 5s) instead of ConfigRoleResolver bridge
+    let db_role_resolver = {
+        let mut group_roles: HashMap<String, Vec<String>> = HashMap::new();
+        for gc in &cfg.auth.groups {
+            group_roles.insert(gc.name.clone(), gc.roles.clone());
+        }
+        if (effective_auth_mode == "oidc" || effective_auth_mode == "both")
+            && let Some(ref oidc) = cfg.auth.oidc
+        {
+            for mapping in &oidc.role_mappings {
+                if mapping.claim == "groups" {
+                    group_roles
+                        .entry(mapping.value.clone())
+                        .or_default()
+                        .push(mapping.role.clone());
+                }
+            }
+        }
+        let role_defs: Vec<_> = cfg.auth.roles.iter().map(build_role_definition).collect();
+        Arc::new(
+            dbward_infra::auth::DbRoleResolver::new(
+                db_path.to_str().unwrap_or("dbward.db"),
+                group_roles,
+                role_defs,
+                cfg.auth.default_role.clone(),
+                Some(policy_repo.clone()),
+            )
+            .map_err(|e| format!("DbRoleResolver: {e}"))?,
+        )
+    };
+
+    let initial_reloadable = state::ReloadableConfig {
+        role_resolver: db_role_resolver.clone() as Arc<dyn dbward_app::ports::RoleResolver>,
+        default_approval_ttl_secs: Some(cfg.retention.approval_ttl_secs),
     };
 
     let token_verifier: Arc<dyn dbward_app::ports::TokenVerifier> = Arc::new(token_verifier_impl);
@@ -485,6 +515,10 @@ pub async fn run_from_args(
         background_task_repo: request_repo.clone(),
         agent_repo,
         user_repo,
+        group_repo: Arc::new(dbward_infra::sqlite::SqliteGroupRepo::new(conn.clone())),
+        onboarding_repo: Arc::new(dbward_infra::sqlite::SqliteOnboardingRequestRepo::new(
+            conn.clone(),
+        )),
         token_repo,
         webhook_repo,
         policy_repo,
@@ -537,6 +571,9 @@ pub async fn run_from_args(
             .unwrap_or(10_000),
         slack_config,
         slack_client: slack_client_for_state,
+        slack_onboarding: cfg.slack.as_ref().and_then(|s| s.onboarding.clone()),
+        db_conn: conn.clone(),
+        db_role_resolver: Some(db_role_resolver.clone()),
         mcp_enabled: cfg.mcp.enabled,
         mcp_allowed_origins: cfg.mcp.allowed_origins.clone(),
         mcp_default_database: cfg
@@ -752,18 +789,95 @@ pub async fn run_from_args(
                                  Role/auth changes skipped until restart."
                             );
                         } else {
-                            let new_reloadable = build_reloadable_config_with(
-                                &new_cfg,
-                                &startup_auth_mode,
-                                None,
-                                None,
-                            );
-                            match new_reloadable {
-                                Ok(r) => {
-                                    reload_state.reloadable.store(Arc::new(r));
+                            // V25: Update DbRoleResolver's group_roles from new config
+                            if let Some(ref resolver) = reload_state.db_role_resolver {
+                                let mut new_group_roles: HashMap<String, Vec<String>> =
+                                    HashMap::new();
+                                for gc in &new_cfg.auth.groups {
+                                    new_group_roles.insert(gc.name.clone(), gc.roles.clone());
+                                }
+                                if (startup_auth_mode == "oidc" || startup_auth_mode == "both")
+                                    && let Some(ref oidc) = new_cfg.auth.oidc
+                                {
+                                    for mapping in &oidc.role_mappings {
+                                        if mapping.claim == "groups" {
+                                            new_group_roles
+                                                .entry(mapping.value.clone())
+                                                .or_default()
+                                                .push(mapping.role.clone());
+                                        }
+                                    }
+                                }
+                                // Admin absence guard: reject reload if it would leave zero admins
+                                let direct_admin_count =
+                                    reload_state.user_repo().count_admins().unwrap_or(0);
+                                let group_has_active_admin_member =
+                                    new_group_roles.iter().any(|(group_name, roles)| {
+                                        roles.contains(&"admin".to_string())
+                                            && reload_state
+                                                .group_repo()
+                                                .list_members(group_name)
+                                                .unwrap_or_default()
+                                                .iter()
+                                                .any(|uid| {
+                                                    !reload_state
+                                                        .user_repo()
+                                                        .is_suspended(uid)
+                                                        .unwrap_or(true)
+                                                })
+                                    });
+                                // OIDC role_mappings can also grant admin at login time
+                                // (only relevant when auth mode supports OIDC)
+                                let oidc_can_grant_admin = (startup_auth_mode == "oidc"
+                                    || startup_auth_mode == "both")
+                                    && new_cfg
+                                        .auth
+                                        .oidc
+                                        .as_ref()
+                                        .map(|oidc| {
+                                            oidc.role_mappings
+                                                .iter()
+                                                .any(|m| m.claim == "groups" && m.role == "admin")
+                                        })
+                                        .unwrap_or(false);
+                                if direct_admin_count == 0
+                                    && !group_has_active_admin_member
+                                    && !oidc_can_grant_admin
+                                {
+                                    tracing::warn!(
+                                        "config reload rejected: would leave zero admin users"
+                                    );
+                                } else {
+                                    resolver.reload_config(
+                                        new_group_roles,
+                                        new_cfg
+                                            .auth
+                                            .roles
+                                            .iter()
+                                            .map(build_role_definition)
+                                            .collect(),
+                                        new_cfg.auth.default_role.clone(),
+                                    );
+                                    tracing::info!(
+                                        "config reload: DbRoleResolver updated (group_roles + role_definitions + default_role)"
+                                    );
+                                    // Only update reloadable config when admin guard passes
+                                    let role_resolver: Arc<dyn dbward_app::ports::RoleResolver> =
+                                        match reload_state.db_role_resolver.clone() {
+                                            Some(r) => r,
+                                            None => {
+                                                reload_state.reloadable.load().role_resolver.clone()
+                                            }
+                                        };
+                                    let new_r = state::ReloadableConfig {
+                                        role_resolver,
+                                        default_approval_ttl_secs: Some(
+                                            new_cfg.retention.approval_ttl_secs,
+                                        ),
+                                    };
+                                    reload_state.reloadable.store(Arc::new(new_r));
                                     tracing::info!("config reloaded successfully");
                                 }
-                                Err(e) => tracing::warn!("config reload failed (build): {e}"),
                             }
                         }
                     }
@@ -812,11 +926,9 @@ fn safety_guard(
             cfg.notification_policies.is_empty(),
         ),
         ("databases", cfg.databases.is_empty()),
-        ("users", cfg.users.is_empty()),
         // Note: roles excluded — built-in roles (admin/developer/readonly) are schema-seeded
         // with source='config' and cannot be redefined in TOML.
         ("groups", cfg.auth.groups.is_empty()),
-        ("role_bindings", cfg.auth.role_bindings.is_empty()),
     ];
 
     let c = conn.lock();
@@ -870,9 +982,6 @@ fn build_sync_uc(
         database_registry: state.database_registry().clone(),
         user_repo: Arc::new(dbward_infra::sqlite::SqliteUserRepo::new(conn.clone())),
         group_repo: Arc::new(dbward_infra::sqlite::SqliteGroupRepo::new(conn.clone())),
-        role_binding_repo: Arc::new(dbward_infra::sqlite::SqliteRoleBindingRepo::new(
-            conn.clone(),
-        )),
         token_repo: Arc::new(dbward_infra::sqlite::SqliteTokenRepo::new(conn.clone())),
         request_writer: Arc::new(dbward_infra::sqlite::SqliteRequestRepo::new(conn.clone())),
         uow: state.uow().clone(),
@@ -1025,10 +1134,8 @@ fn build_sync_inputs_and_run(
     use dbward_app::use_cases::sync_config::convert;
 
     let databases = convert::databases_from_config(&cfg.databases);
-    let users = convert::users_from_config(&cfg.users);
     let groups = convert::groups_from_config(&cfg.auth.groups);
     let roles = convert::roles_from_config(&cfg.auth.roles);
-    let role_bindings = convert::role_bindings_from_config(&cfg.auth.role_bindings);
     let webhooks = convert::webhooks_from_config(&cfg.webhooks);
     let workflows = convert::workflows_from_config(&cfg.workflows)?;
     let execution_policies = convert::execution_policies_from_config(&cfg.execution_policies);
@@ -1040,10 +1147,8 @@ fn build_sync_inputs_and_run(
 
     uc.sync_all(
         databases,
-        users,
         groups,
         roles,
-        role_bindings,
         webhooks,
         workflows,
         execution_policies,
@@ -1060,24 +1165,15 @@ fn build_reloadable_config_with(
     effective_auth_mode: &str,
     override_role_mappings: Option<&[dbward_config::server::OidcRoleMapping]>,
     policy_repo: Option<Arc<dyn dbward_app::ports::PolicyRepo>>,
+    user_repo: Option<&Arc<dyn dbward_app::ports::UserRepo>>,
 ) -> Result<state::ReloadableConfig, Box<dyn std::error::Error>> {
-    let mut group_bindings: HashMap<String, Vec<String>> = HashMap::new();
-    let mut user_bindings: HashMap<String, Vec<String>> = HashMap::new();
-    for rb in &cfg.auth.role_bindings {
-        for group in &rb.groups {
-            group_bindings
-                .entry(group.clone())
-                .or_default()
-                .push(rb.role.clone());
-        }
-        for subject in &rb.subjects {
-            user_bindings
-                .entry(subject.clone())
-                .or_default()
-                .push(rb.role.clone());
-        }
+    // Build group_roles from config [[auth.groups]].roles
+    let mut group_roles: HashMap<String, Vec<String>> = HashMap::new();
+    for gc in &cfg.auth.groups {
+        group_roles.insert(gc.name.clone(), gc.roles.clone());
     }
-    // Only include OIDC role_mappings when effective mode uses OIDC
+
+    // Include OIDC role_mappings (claim=groups → group_roles entry)
     if effective_auth_mode == "oidc" || effective_auth_mode == "both" {
         let mappings: &[dbward_config::server::OidcRoleMapping] = match override_role_mappings {
             Some(m) => m,
@@ -1085,27 +1181,36 @@ fn build_reloadable_config_with(
         };
         for mapping in mappings {
             if mapping.claim == "groups" {
-                group_bindings
+                group_roles
                     .entry(mapping.value.clone())
                     .or_default()
                     .push(mapping.role.clone());
             }
         }
     }
+
+    let role_definitions: Vec<_> = cfg.auth.roles.iter().map(build_role_definition).collect();
+
+    // V25: Read user→roles from DB for ConfigRoleResolver bridge
+    let user_bindings: HashMap<String, Vec<String>> = match user_repo {
+        Some(repo) => repo
+            .list()
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|u| !u.roles.is_empty())
+            .map(|u| (u.id, u.roles))
+            .collect(),
+        None => HashMap::new(),
+    };
+
     let resolver = dbward_infra::auth::ConfigRoleResolver::with_policy_repo(
-        cfg.auth.roles.iter().map(build_role_definition).collect(),
-        group_bindings,
+        role_definitions,
+        group_roles,
         user_bindings,
         cfg.auth.default_role.clone(),
         policy_repo,
     )
-    .with_group_members(
-        cfg.auth
-            .groups
-            .iter()
-            .map(|gc| (gc.name.clone(), gc.members.iter().cloned().collect()))
-            .collect(),
-    );
+    .with_group_members(HashMap::new());
     let role_resolver: Arc<dyn dbward_app::ports::RoleResolver> = Arc::new(resolver);
 
     Ok(state::ReloadableConfig {

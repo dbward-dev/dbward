@@ -9,6 +9,8 @@ description = "Infrastructure layer for dbward — port trait implementations"
 
 [dependencies]
 parking_lot = "0.12"
+dashmap = "6"
+arc-swap = "1"
 dbward-domain = { path = "../dbward-domain" }
 dbward-app = { path = "../dbward-app" }
 
@@ -17,7 +19,9 @@ async-trait = "0.1"
 tokio = { workspace = true }
 
 # Database
-rusqlite = { version = "0.35", features = ["bundled"] }
+rusqlite = { version = "0.35", features = ["bundled", "backup"] }
+r2d2 = "0.8"
+r2d2_sqlite = "0.28"
 
 # Serialization
 serde = { workspace = true }

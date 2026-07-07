@@ -12,7 +12,7 @@ echo ""
 wait_for_server
 
 TS=$(date +%s)
-# Use bootstrap admin token directly (role_bindings guarantee admin resolves)
+# Use bootstrap admin token directly (V25: roles resolved from DB)
 ADMIN_TOKEN=$(docker compose exec -T dbward-server cat /data/admin-token 2>/dev/null || echo "")
 
 # --- 1. List tokens ---

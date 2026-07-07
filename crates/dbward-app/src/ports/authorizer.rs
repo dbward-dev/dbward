@@ -41,8 +41,21 @@ pub trait RoleResolver: Send + Sync {
         groups: &[String],
     ) -> Result<Vec<ResolvedRole>, AuthError>;
 
+    /// Invalidate cached role resolution for a subject (no-op for non-caching impls).
+    fn invalidate_cache(&self, _subject_id: &str) {}
+
     /// Reverse lookup: role → subject_ids who have this role via static bindings.
     fn subjects_for_role(&self, _role: &str) -> Vec<String> {
+        vec![]
+    }
+
+    /// Get roles granted by a group (from config definition).
+    fn roles_for_group(&self, _group_name: &str) -> Vec<String> {
+        vec![]
+    }
+
+    /// Reverse lookup: returns all group names whose config grants the given role.
+    fn groups_granting_role(&self, _role: &str) -> Vec<String> {
         vec![]
     }
 
@@ -51,8 +64,14 @@ pub trait RoleResolver: Send + Sync {
         vec![]
     }
 
-    /// Returns TOML-configured groups for a subject_id (for AuthUser.groups augmentation).
-    fn config_groups_for(&self, _subject_id: &str) -> Option<&Vec<String>> {
+    /// Returns the group memberships for a subject_id (for AuthUser.groups).
+    /// DB-backed: queries group_members table. Config-backed: returns TOML groups.
+    fn groups_for_subject(&self, _subject_id: &str) -> Vec<String> {
+        vec![]
+    }
+
+    /// Returns the configured default_role (applied when no other roles resolve).
+    fn default_role(&self) -> Option<String> {
         None
     }
 }

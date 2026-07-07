@@ -17,35 +17,14 @@ permissions = ["request.execute", "request.query", "request.resume", "request.ca
 databases = ["*"]
 environments = ["*"]
 
-[[auth.role_bindings]]
-role = "slack-user"
-subjects = ["alice", "bob", "carol"]
-
-# Bootstrap subjects (required for token auth to resolve roles)
-[[auth.role_bindings]]
-role = "admin"
-subjects = ["admin"]
-
-[[auth.role_bindings]]
-role = "developer"
-subjects = ["developer"]
-
-# E2E test subjects
-[[auth.role_bindings]]
-role = "admin"
-subjects = ["alice", "carol", "e2e-admin"]
-
-[[auth.role_bindings]]
-role = "developer"
-subjects = ["bob", "e2e-dev"]
-
+# V25: Groups define name + roles. Members managed via API/CLI.
 [[auth.groups]]
 name = "backend-team"
-members = ["bob", "alice"]
+roles = ["developer"]
 
 [[auth.groups]]
 name = "dba-team"
-members = ["bob", "carol"]
+roles = ["developer", "admin"]
 
 # Database registry
 [[databases]]
@@ -198,16 +177,14 @@ environment = "production"
 webhooks = ["dev-receiver"]
 events = ["execution.completed"]
 
-[[users]]
-id = "alice"
-status = "active"
-
-[[users]]
-id = "bob"
-status = "active"
-
 # Slack integration (env vars set in .env or shell)
 [slack]
 bot_token = "${SLACK_BOT_TOKEN}"
 signing_secret = "${SLACK_SIGNING_SECRET}"
-channel = "C0123ABC456"
+channel = "C02C1EUJ0EN"
+
+[slack.onboarding]
+enabled = true
+assignable_roles = ["developer", "readonly"]
+assignable_groups = ["backend-team", "dba-team"]
+restricted_roles = ["admin"]

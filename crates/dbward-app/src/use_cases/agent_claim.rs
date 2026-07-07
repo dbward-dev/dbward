@@ -523,6 +523,19 @@ mod tests {
         fn ensure_exists(&self, _: &str) -> Result<(), AppError> {
             Ok(())
         }
+
+        fn count_active(&self) -> Result<u32, AppError> {
+            Ok(1)
+        }
+        fn get_roles(&self, _: &str) -> Result<Vec<String>, AppError> {
+            Ok(vec![])
+        }
+        fn is_deleted(&self, _: &str) -> Result<bool, AppError> {
+            Ok(false)
+        }
+        fn count_admins(&self) -> Result<u32, AppError> {
+            Ok(1)
+        }
     }
 
     struct FakeRoleResolver;

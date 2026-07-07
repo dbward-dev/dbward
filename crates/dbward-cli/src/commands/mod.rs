@@ -4,6 +4,7 @@ mod auth;
 mod dev;
 mod doctor;
 mod execute;
+mod group;
 pub(crate) mod helpers;
 mod migrate;
 mod misc;
@@ -205,10 +206,15 @@ pub enum Command {
         #[command(subcommand)]
         action: request::RequestAction,
     },
-    /// Update user profile
+    /// Manage users
     User {
         #[command(subcommand)]
         action: user::UserAction,
+    },
+    /// View groups
+    Group {
+        #[command(subcommand)]
+        action: group::GroupAction,
     },
     /// Manage API tokens
     Token {
@@ -632,6 +638,7 @@ pub async fn run(mut cli: Cli) -> Result<(), CliError> {
         }
         Command::Agents => misc::run_agents(&sc, json_output).await,
         Command::User { action } => user::run_user(&sc, action).await,
+        Command::Group { action } => group::run_group(&sc, action).await,
         Command::Token { action } => token::run_token_command(&action, &sc, json_output).await,
         Command::Policy { action } => match action {
             PolicyAction::Resolve {

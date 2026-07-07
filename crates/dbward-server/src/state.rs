@@ -4,7 +4,7 @@ use std::sync::atomic::AtomicBool;
 use arc_swap::ArcSwap;
 use dbward_app::ports::{
     AgentRepo, ApprovalRepo, AuditLogger, AuditRepo, Authorizer, BackgroundTaskRepo, Clock,
-    ContextRepo, DatabaseRegistry, DryRunRepo, IdGenerator, LicenseChecker, Notifier,
+    ContextRepo, DatabaseRegistry, DryRunRepo, GroupRepo, IdGenerator, LicenseChecker, Notifier,
     PolicyEvaluator, PolicyRepo, PreflightJobRepo, RequestReader, RequestWriter, ResultChannel,
     ResultStore, RoleResolver, SchemaRepo, SsrfValidator, TokenRepo, TokenSigner, TokenVerifier,
     UnitOfWork, UserRepo, WebhookRepo,
@@ -56,6 +56,8 @@ pub struct AppState {
     background_task_repo: Arc<dyn BackgroundTaskRepo>,
     agent_repo: Arc<dyn AgentRepo>,
     user_repo: Arc<dyn UserRepo>,
+    group_repo: Arc<dyn GroupRepo>,
+    onboarding_repo: Arc<dyn dbward_app::ports::OnboardingRequestRepo>,
     token_repo: Arc<dyn TokenRepo>,
     webhook_repo: Arc<dyn WebhookRepo>,
     policy_repo: Arc<dyn PolicyRepo>,
@@ -107,6 +109,13 @@ pub struct AppState {
     // Slack — pub(crate)
     pub(crate) slack_config: Option<dbward_infra::slack::SlackConfig>,
     pub(crate) slack_client: Option<Arc<dyn dbward_infra::slack::SlackClient>>,
+    pub(crate) slack_onboarding: Option<dbward_config::server::SlackOnboardingConfig>,
+
+    // Raw DB connection for low-level ops (onboarding etc.)
+    pub(crate) db_conn: dbward_infra::sqlite::DbConn,
+
+    // DbRoleResolver (shared, long-lived — DashMap cache survives config reloads)
+    pub(crate) db_role_resolver: Option<Arc<dbward_infra::auth::DbRoleResolver>>,
 
     // MCP
     pub(crate) mcp_enabled: bool,
@@ -411,15 +420,17 @@ impl<'a> UserUseCases<'a> {
         UserManage {
             authorizer: s.authorizer.clone(),
             user_repo: s.user_repo.clone(),
+            group_repo: s.group_repo.clone(),
             token_repo: s.token_repo.clone(),
             uow: s.uow.clone(),
             clock: s.clock.clone(),
             license: s.license_checker.clone(),
+            role_resolver: s.reloadable.load().role_resolver.clone(),
+            policy_repo: s.policy_repo.clone(),
+            id_gen: s.id_generator.clone(),
+            token_gen: s.token_value_generator.clone(),
+            notifier: s.notifier.clone(),
         }
-    }
-
-    pub(crate) fn user_repo(&self) -> &Arc<dyn UserRepo> {
-        &self.0.user_repo
     }
 }
 
@@ -562,6 +573,22 @@ impl AppState {
     pub(crate) fn user_repo(&self) -> &Arc<dyn UserRepo> {
         &self.user_repo
     }
+
+    pub(crate) fn group_repo(&self) -> &Arc<dyn GroupRepo> {
+        &self.group_repo
+    }
+
+    pub(crate) fn onboarding_repo(&self) -> &Arc<dyn dbward_app::ports::OnboardingRequestRepo> {
+        &self.onboarding_repo
+    }
+
+    pub(crate) fn db_conn(&self) -> &dbward_infra::sqlite::DbConn {
+        &self.db_conn
+    }
+
+    pub(crate) fn id_gen(&self) -> &Arc<dyn IdGenerator> {
+        &self.id_generator
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -701,6 +728,8 @@ pub struct AppStateBuilder {
     pub background_task_repo: Arc<dyn BackgroundTaskRepo>,
     pub agent_repo: Arc<dyn AgentRepo>,
     pub user_repo: Arc<dyn UserRepo>,
+    pub group_repo: Arc<dyn GroupRepo>,
+    pub onboarding_repo: Arc<dyn dbward_app::ports::OnboardingRequestRepo>,
     pub token_repo: Arc<dyn TokenRepo>,
     pub webhook_repo: Arc<dyn WebhookRepo>,
     pub policy_repo: Arc<dyn PolicyRepo>,
@@ -739,6 +768,9 @@ pub struct AppStateBuilder {
     pub preflight_max_explain_timeout_ms: u64,
     pub slack_config: Option<dbward_infra::slack::SlackConfig>,
     pub slack_client: Option<Arc<dyn dbward_infra::slack::SlackClient>>,
+    pub slack_onboarding: Option<dbward_config::server::SlackOnboardingConfig>,
+    pub db_conn: dbward_infra::sqlite::DbConn,
+    pub db_role_resolver: Option<Arc<dbward_infra::auth::DbRoleResolver>>,
     #[allow(dead_code)]
     pub mcp_enabled: bool,
     #[allow(dead_code)]
@@ -764,6 +796,8 @@ impl AppStateBuilder {
             background_task_repo: self.background_task_repo,
             agent_repo: self.agent_repo,
             user_repo: self.user_repo,
+            group_repo: self.group_repo,
+            onboarding_repo: self.onboarding_repo,
             token_repo: self.token_repo,
             webhook_repo: self.webhook_repo,
             policy_repo: self.policy_repo,
@@ -802,6 +836,9 @@ impl AppStateBuilder {
             preflight_max_explain_timeout_ms: self.preflight_max_explain_timeout_ms,
             slack_config: self.slack_config,
             slack_client: self.slack_client,
+            slack_onboarding: self.slack_onboarding,
+            db_conn: self.db_conn,
+            db_role_resolver: self.db_role_resolver,
             mcp_enabled: self.mcp_enabled,
             mcp_allowed_origins: self.mcp_allowed_origins,
             mcp_default_database: self.mcp_default_database,

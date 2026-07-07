@@ -6,7 +6,7 @@ use std::sync::Arc;
 use crate::error::AppError;
 use crate::ports::{
     Clock, DatabaseRegistry, GroupRepo, IdGenerator, LicenseChecker, Notifier, PolicyRepo,
-    RequestWriter, RoleBindingRepo, SsrfValidator, TokenRepo, UnitOfWork, UserRepo, WebhookRepo,
+    RequestWriter, SsrfValidator, TokenRepo, UnitOfWork, UserRepo, WebhookRepo,
 };
 
 /// All dependencies needed for config sync.
@@ -16,7 +16,6 @@ pub struct SyncConfig {
     pub database_registry: Arc<dyn DatabaseRegistry>,
     pub user_repo: Arc<dyn UserRepo>,
     pub group_repo: Arc<dyn GroupRepo>,
-    pub role_binding_repo: Arc<dyn RoleBindingRepo>,
     pub token_repo: Arc<dyn TokenRepo>,
     pub request_writer: Arc<dyn RequestWriter>,
     pub uow: Arc<dyn UnitOfWork>,
@@ -109,13 +108,6 @@ pub struct UserInput {
 
 pub struct GroupInput {
     pub name: String,
-    pub members: Vec<String>,
-}
-
-pub struct RoleBindingInput {
-    pub role: String,
-    pub subjects: Vec<String>,
-    pub groups: Vec<String>,
 }
 
 pub struct RoleInput {
@@ -132,7 +124,6 @@ pub struct SyncSummary {
     pub users: (u64, u64),
     pub groups: (u64, u64),
     pub roles: (u64, u64),
-    pub role_bindings: (u64, u64),
     pub webhooks: (u64, u64),
     pub workflows: (u64, u64),
     pub execution_policies: (u64, u64),
@@ -148,10 +139,8 @@ impl SyncConfig {
     pub fn sync_all(
         &self,
         databases: Vec<DatabaseInput>,
-        users: Vec<UserInput>,
         groups: Vec<GroupInput>,
         roles: Vec<RoleInput>,
-        role_bindings: Vec<RoleBindingInput>,
         webhooks: Vec<WebhookInput>,
         workflows: Vec<WorkflowInput>,
         execution_policies: Vec<ExecutionPolicyInput>,
@@ -171,10 +160,8 @@ impl SyncConfig {
                 license_checker,
                 ssrf_validator,
                 databases,
-                users,
                 groups,
                 roles,
-                role_bindings,
                 webhooks,
                 workflows,
                 execution_policies,
@@ -190,7 +177,6 @@ impl SyncConfig {
                 "users": {"upserted": summary.users.1, "stale": summary.users.0},
                 "groups": {"upserted": summary.groups.1, "stale": summary.groups.0},
                 "roles": {"upserted": summary.roles.1, "stale": summary.roles.0},
-                "role_bindings": {"upserted": summary.role_bindings.1, "stale": summary.role_bindings.0},
                 "webhooks": {"upserted": summary.webhooks.1, "stale": summary.webhooks.0},
                 "workflows": {"upserted": summary.workflows.1, "stale": summary.workflows.0},
                 "execution_policies": {"upserted": summary.execution_policies.1, "stale": summary.execution_policies.0},
@@ -269,10 +255,8 @@ impl SyncConfig {
         license_checker: &dyn crate::ports::LicenseChecker,
         ssrf_validator: &dyn crate::ports::SsrfValidator,
         databases: Vec<DatabaseInput>,
-        users: Vec<UserInput>,
         groups: Vec<GroupInput>,
         roles: Vec<RoleInput>,
-        role_bindings: Vec<RoleBindingInput>,
         webhooks: Vec<WebhookInput>,
         workflows: Vec<WorkflowInput>,
         execution_policies: Vec<ExecutionPolicyInput>,
@@ -282,7 +266,7 @@ impl SyncConfig {
     ) -> Result<SyncSummary, AppError> {
         Ok(SyncSummary {
             databases: apply::sync_databases(scope, license_checker, databases)?,
-            users: apply::sync_users(scope, clock, license_checker, users)?,
+            users: (0, 0), // V25: users managed via API, not config
             groups: apply::sync_groups(scope, groups)?,
             roles: {
                 let r = apply::sync_roles(scope, roles)?;
@@ -295,7 +279,6 @@ impl SyncConfig {
                 }
                 r
             },
-            role_bindings: apply::sync_role_bindings(scope, role_bindings)?,
             webhooks: {
                 let w = apply::sync_webhooks(scope, clock, ssrf_validator, webhooks)?;
                 let total = scope.list_active_webhooks()?.len() as u32;
@@ -330,7 +313,7 @@ impl SyncConfig {
 mod tests {
     use super::*;
     use crate::error::AppError;
-    use crate::ports::{DatabaseRegistry, GroupRepo, PolicyRepo, RoleBindingRepo, WebhookRepo};
+    use crate::ports::{DatabaseRegistry, GroupRepo, PolicyRepo, WebhookRepo};
     use crate::test_support::{FixedClock, FixedIdGen};
 
     /// Adapter: delegates SyncScope calls to standalone repo trait objects (for legacy tests).
@@ -506,21 +489,6 @@ mod tests {
             Ok(())
         }
         fn delete_stale_config_groups(&self, _: &[String]) -> Result<u64, AppError> {
-            Ok(0)
-        }
-    }
-    impl crate::ports::sync_scope::SyncRoleBindingOps for RepoSyncScope {
-        fn create_role_binding(
-            &self,
-            _: &str,
-            _: &str,
-            _: &[String],
-            _: &[String],
-            _: &str,
-        ) -> Result<(), AppError> {
-            Ok(())
-        }
-        fn delete_stale_config_role_bindings(&self, _: &[String]) -> Result<u64, AppError> {
             Ok(0)
         }
     }
@@ -861,34 +829,37 @@ mod tests {
 
     struct FakeGroupRepo;
     impl GroupRepo for FakeGroupRepo {
-        fn delete_by_source(&self, _: &str) -> Result<u64, AppError> {
-            Ok(0)
-        }
-        fn create(&self, _: &str, _: &[String], _: &str) -> Result<(), AppError> {
+        fn upsert(&self, _: &str) -> Result<(), AppError> {
             Ok(())
         }
-        fn list(&self) -> Result<Vec<(String, Vec<String>)>, AppError> {
+        fn list_names(&self) -> Result<Vec<String>, AppError> {
             Ok(vec![])
         }
-    }
-
-    struct FakeRoleBindingRepo;
-    impl RoleBindingRepo for FakeRoleBindingRepo {
-        fn delete_by_source(&self, _: &str) -> Result<u64, AppError> {
+        fn exists(&self, _: &str) -> Result<bool, AppError> {
+            Ok(false)
+        }
+        fn delete_stale(&self, _: &[String]) -> Result<u64, AppError> {
             Ok(0)
         }
-        fn create(
+        fn add_member(
             &self,
             _: &str,
             _: &str,
-            _: &[String],
-            _: &[String],
-            _: &str,
+            _: chrono::DateTime<chrono::Utc>,
         ) -> Result<(), AppError> {
             Ok(())
         }
-        fn list(&self) -> Result<Vec<crate::ports::RoleBindingEntry>, AppError> {
+        fn remove_member(&self, _: &str, _: &str) -> Result<bool, AppError> {
+            Ok(false)
+        }
+        fn list_members(&self, _: &str) -> Result<Vec<String>, AppError> {
             Ok(vec![])
+        }
+        fn list_groups_for_user(&self, _: &str) -> Result<Vec<String>, AppError> {
+            Ok(vec![])
+        }
+        fn remove_all_memberships(&self, _: &str) -> Result<u64, AppError> {
+            Ok(0)
         }
     }
 
@@ -943,7 +914,6 @@ mod tests {
             database_registry: Arc::new(FakeDatabaseRegistry),
             user_repo: Arc::new(FakeUserRepo),
             group_repo: Arc::new(FakeGroupRepo),
-            role_binding_repo: Arc::new(FakeRoleBindingRepo),
             token_repo: Arc::new(FakeTokenRepo),
             request_writer: Arc::new(FakeRequestWriter),
             uow: Arc::new(crate::test_support::NoopUnitOfWork),
@@ -1211,21 +1181,6 @@ mod tests {
                 Ok(())
             }
             fn delete_stale_config_groups(&self, _: &[String]) -> Result<u64, AppError> {
-                Ok(0)
-            }
-        }
-        impl crate::ports::sync_scope::SyncRoleBindingOps for TrackingScope {
-            fn create_role_binding(
-                &self,
-                _: &str,
-                _: &str,
-                _: &[String],
-                _: &[String],
-                _: &str,
-            ) -> Result<(), AppError> {
-                Ok(())
-            }
-            fn delete_stale_config_role_bindings(&self, _: &[String]) -> Result<u64, AppError> {
                 Ok(0)
             }
         }

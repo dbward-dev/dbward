@@ -57,17 +57,11 @@ pub(super) async fn run_server_mode(ctx: &mut DoctorContext, path: &std::path::P
     // S7: built_in_role_collision
     check_built_in_role_collision(ctx, &cfg);
 
-    // S8: role_binding_duplicates
-    check_role_binding_duplicates(ctx, &cfg);
-
     // S9: notification_webhook_refs
     check_notification_webhook_refs(ctx, &cfg);
 
-    // S10: role_binding_empty
-    check_role_binding_empty(ctx, &cfg);
-
-    // S12: token_binding_check (bootstrap subjects must have role_bindings)
-    check_token_binding(ctx, &cfg);
+    // S12: token_binding_check — V25: role_bindings removed, check skipped
+    // check_token_binding(ctx, &cfg);
 
     // S13: active token scan (read DB directly if state_dir is accessible)
     check_active_tokens(ctx, &cfg);
@@ -364,11 +358,6 @@ fn check_role_resolution(ctx: &mut DoctorContext, cfg: &dbward_config::ServerCon
         cfg.auth.roles.iter().map(|r| r.name.as_str()).collect();
     let mut undefined = Vec::new();
 
-    for rb in &cfg.auth.role_bindings {
-        if !builtin.contains(&rb.role.as_str()) && !config_roles.contains(rb.role.as_str()) {
-            undefined.push(rb.role.clone());
-        }
-    }
     if let Some(ref default) = cfg.auth.default_role
         && !builtin.contains(&default.as_str())
         && !config_roles.contains(default.as_str())
@@ -432,43 +421,6 @@ fn check_built_in_role_collision(ctx: &mut DoctorContext, cfg: &dbward_config::S
     }
 }
 
-fn check_role_binding_duplicates(ctx: &mut DoctorContext, cfg: &dbward_config::ServerConfig) {
-    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
-    let mut dups = Vec::new();
-    for (i, rb) in cfg.auth.role_bindings.iter().enumerate() {
-        let mut sorted_subjects = rb.subjects.clone();
-        sorted_subjects.sort();
-        sorted_subjects.dedup();
-        let mut sorted_groups = rb.groups.clone();
-        sorted_groups.sort();
-        sorted_groups.dedup();
-        let key = format!(
-            "{}|{}|{}",
-            rb.role,
-            sorted_subjects.join(","),
-            sorted_groups.join(",")
-        );
-        if !seen.insert(key) {
-            dups.push(format!("role_bindings[{i}] role='{}'", rb.role));
-        }
-    }
-    if dups.is_empty() {
-        ctx.record(CheckResult {
-            id: "role_binding_duplicates",
-            status: Status::Pass,
-            message: format!("{} bindings, no duplicates", cfg.auth.role_bindings.len()),
-            hint: None,
-        });
-    } else {
-        ctx.record(CheckResult {
-            id: "role_binding_duplicates",
-            status: Status::Fail,
-            message: format!("{} duplicate(s): {}", dups.len(), dups.join("; ")),
-            hint: Some("Remove duplicate role_bindings".into()),
-        });
-    }
-}
-
 fn check_notification_webhook_refs(ctx: &mut DoctorContext, cfg: &dbward_config::ServerConfig) {
     let webhook_ids: std::collections::HashSet<&str> =
         cfg.webhooks.iter().map(|w| w.id.as_str()).collect();
@@ -494,94 +446,6 @@ fn check_notification_webhook_refs(ctx: &mut DoctorContext, cfg: &dbward_config:
             message: format!("{} undefined: {}", missing.len(), missing.join("; ")),
             hint: Some("Define referenced webhooks in [[webhooks]]".into()),
         });
-    }
-}
-
-fn check_role_binding_empty(ctx: &mut DoctorContext, cfg: &dbward_config::ServerConfig) {
-    let mut empty = Vec::new();
-    for (i, rb) in cfg.auth.role_bindings.iter().enumerate() {
-        if rb.subjects.is_empty() && rb.groups.is_empty() {
-            empty.push(format!("role_bindings[{i}] role='{}'", rb.role));
-        }
-    }
-    if empty.is_empty() {
-        ctx.record(CheckResult {
-            id: "role_binding_empty",
-            status: Status::Pass,
-            message: "all bindings have at least one target".into(),
-            hint: None,
-        });
-    } else {
-        ctx.record(CheckResult {
-            id: "role_binding_empty",
-            status: Status::Warn,
-            message: format!("{} no-op binding(s): {}", empty.len(), empty.join("; ")),
-            hint: Some("Add subjects or groups to these bindings".into()),
-        });
-    }
-}
-
-/// Slack connectivity checks (only runs if [slack] is configured).
-fn check_token_binding(ctx: &mut DoctorContext, cfg: &dbward_config::ServerConfig) {
-    let has_default_role = cfg.auth.default_role.is_some();
-
-    let all_bound_subjects: Vec<&str> = cfg
-        .auth
-        .role_bindings
-        .iter()
-        .flat_map(|b| b.subjects.iter().map(|s| s.as_str()))
-        .collect();
-
-    let mut warnings = Vec::new();
-
-    // Check 1: bootstrap subjects must resolve
-    let bootstrap_subjects = ["admin", "developer"];
-    for subj in &bootstrap_subjects {
-        if !all_bound_subjects.contains(subj) && !has_default_role {
-            warnings.push(format!(
-                "bootstrap subject '{}' has no role_bindings — token auth will fail (403)",
-                subj
-            ));
-        }
-    }
-
-    // Check 2: warn if no default_role and no bindings at all (all dynamic tokens will 403)
-    if !has_default_role && cfg.auth.role_bindings.is_empty() {
-        warnings.push(
-            "no role_bindings and no default_role — all API tokens will fail (403). \
-             User tokens with scope_ceiling=NULL are always rejected."
-                .into(),
-        );
-    }
-
-    // Check 3: warn about scope_ceiling upgrade impact
-    if !has_default_role {
-        warnings.push(
-            "no default_role set — existing tokens for subjects without explicit bindings \
-             will fail after upgrade. Run `dbward token inspect <id>` to check."
-                .into(),
-        );
-    }
-
-    if warnings.is_empty() {
-        ctx.record(CheckResult {
-            id: "token_binding",
-            status: Status::Pass,
-            message: "token auth config OK (role_bindings + default_role cover bootstrap subjects)"
-                .into(),
-            hint: None,
-        });
-    } else {
-        for w in &warnings {
-            ctx.record(CheckResult {
-                id: "token_binding",
-                status: Status::Warn,
-                message: w.clone(),
-                hint: Some(
-                    "Add subject to [[auth.role_bindings]] or set [auth] default_role".into(),
-                ),
-            });
-        }
     }
 }
 
@@ -654,38 +518,12 @@ fn check_active_tokens(ctx: &mut DoctorContext, cfg: &dbward_config::ServerConfi
             continue;
         }
 
-        // Resolve roles from Config (subjects + group membership + default_role)
-        let subject_groups: Vec<&str> = cfg
-            .auth
-            .groups
-            .iter()
-            .filter(|g| g.members.iter().any(|m| m == &subject_id))
-            .map(|g| g.name.as_str())
-            .collect();
-        let mut resolved_roles: Vec<String> = cfg
-            .auth
-            .role_bindings
-            .iter()
-            .filter(|b| {
-                b.subjects.iter().any(|s| s == &subject_id)
-                    || b.groups
-                        .iter()
-                        .any(|g| subject_groups.contains(&g.as_str()))
-            })
-            .map(|b| b.role.clone())
-            .collect();
-        if let Some(ref default) = cfg.auth.default_role
-            && !resolved_roles.contains(default)
-        {
-            resolved_roles.push(default.clone());
-        }
+        // V25: roles are resolved from DB at runtime. Skip static resolution check.
+        let resolved_roles: Vec<String> = cfg.auth.default_role.iter().cloned().collect();
 
-        // Check: subject has no bindings and no default_role → 403
+        // Check: subject has no default_role configured → may rely on DB roles
         if subject_type == "user" && resolved_roles.is_empty() {
-            warnings.push(format!(
-                "prefix={} subject='{}' has no role_bindings → will fail (403)",
-                prefix, subject_id
-            ));
+            // Not a real error in V25 — roles are in DB. Skip warning.
             continue;
         }
 
@@ -1082,9 +920,9 @@ mode = "always"
 mode = "token"
 default_role = "developer"
 
-[[auth.role_bindings]]
-role = "admin"
-subjects = ["alice"]
+[[auth.groups]]
+name = "admins"
+roles = ["admin"]
 "#,
         );
         check_role_resolution(&mut ctx, &cfg);
@@ -1107,9 +945,9 @@ mode = "token"
 name = "dba"
 permissions = ["request.approve"]
 
-[[auth.role_bindings]]
-role = "dba"
-subjects = ["bob"]
+[[auth.groups]]
+name = "dba-team"
+roles = ["dba"]
 "#,
         );
         check_role_resolution(&mut ctx, &cfg);

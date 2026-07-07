@@ -134,6 +134,10 @@ fn workflow_state() -> AppState {
         background_task_repo: Arc::new(SqliteRequestRepo::new(conn.clone())),
         agent_repo: Arc::new(SqliteAgentRepo::new(conn.clone())),
         user_repo: Arc::new(SqliteUserRepo::new(conn.clone())),
+        group_repo: Arc::new(SqliteGroupRepo::new(conn.clone())),
+        onboarding_repo: Arc::new(dbward_infra::sqlite::SqliteOnboardingRequestRepo::new(
+            conn.clone(),
+        )),
         token_repo: Arc::new(SqliteTokenRepo::new(conn.clone())),
         webhook_repo: Arc::new(SqliteWebhookRepo::new(conn.clone())),
         policy_repo: Arc::new(SqlitePolicyRepo::new(conn.clone())),
@@ -173,6 +177,11 @@ fn workflow_state() -> AppState {
         preflight_max_explain_timeout_ms: 10000,
         slack_config: None,
         slack_client: None,
+        slack_onboarding: None,
+        db_role_resolver: None,
+        db_conn: std::sync::Arc::new(parking_lot::Mutex::new(
+            dbward_infra::rusqlite::Connection::open_in_memory().unwrap(),
+        )),
         auth_mode: "token".into(),
         max_persist_bytes: 10 * 1024 * 1024,
         storage_backend: "local".into(),

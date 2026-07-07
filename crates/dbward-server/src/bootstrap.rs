@@ -143,6 +143,32 @@ pub fn auto_bootstrap(
         .into());
     }
 
+    // --- V25: Insert bootstrap users into DB (idempotent) ---
+    let user_repo = state.user_repo();
+    let now = chrono::Utc::now();
+    let bootstrap_users = [
+        ("admin", vec!["admin".to_string()]),
+        ("developer", vec!["developer".to_string()]),
+        ("agent", vec!["agent-default".to_string()]),
+    ];
+    for (id, roles) in &bootstrap_users {
+        let user = dbward_domain::entities::User {
+            id: id.to_string(),
+            display_name: None,
+            email: None,
+            groups: vec![],
+            roles: roles.clone(),
+            status: dbward_domain::entities::UserStatus::Active,
+            last_seen_at: None,
+            created_at: now,
+            updated_at: now,
+        };
+        // INSERT OR IGNORE equivalent: only insert if not exists
+        if user_repo.get(id)?.is_none() {
+            user_repo.upsert(&user)?;
+        }
+    }
+
     // Create bootstrap tokens
     let admin_token = create_bootstrap_token(state, "admin", "admin", false)?;
     let dev_token = create_bootstrap_token(state, "developer", "developer", false)?;

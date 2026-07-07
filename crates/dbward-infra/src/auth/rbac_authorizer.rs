@@ -19,6 +19,10 @@ impl Authorizer for RbacAuthorizer {
         if user.has_permission(permission) {
             return Ok(());
         }
+        // user.write implies user.read
+        if permission == Permission::UserRead && user.has_permission(Permission::UserWrite) {
+            return Ok(());
+        }
         Err(AuthzError::Forbidden {
             permission,
             reason: format!(

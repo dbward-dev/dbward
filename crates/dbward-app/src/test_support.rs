@@ -702,6 +702,30 @@ impl crate::ports::transaction::UserWriterOps for NoopTxScope {
     ) -> Result<bool, crate::error::AppError> {
         Ok(true)
     }
+    fn count_active_tx(&self) -> Result<u32, crate::error::AppError> {
+        Ok(0)
+    }
+    fn user_exists_tx(&self, _user_id: &str) -> Result<bool, crate::error::AppError> {
+        Ok(false)
+    }
+    fn count_admins_tx(&self, _admin_groups: &[String]) -> Result<u32, crate::error::AppError> {
+        Ok(2)
+    }
+    fn user_has_admin_tx(
+        &self,
+        _user_id: &str,
+        _admin_groups: &[String],
+    ) -> Result<bool, crate::error::AppError> {
+        Ok(false)
+    }
+    fn set_slack_user_id_tx(
+        &self,
+        _user_id: &str,
+        _slack_user_id: &str,
+        _source: &str,
+    ) -> Result<(), crate::error::AppError> {
+        Ok(())
+    }
 }
 
 impl crate::ports::transaction::ResultWriterOps for NoopTxScope {
@@ -824,24 +848,7 @@ impl crate::ports::sync_scope::SyncGroupOps for NoopSyncScope {
         Ok(0)
     }
 }
-impl crate::ports::sync_scope::SyncRoleBindingOps for NoopSyncScope {
-    fn create_role_binding(
-        &self,
-        _: &str,
-        _: &str,
-        _: &[String],
-        _: &[String],
-        _: &str,
-    ) -> Result<(), crate::error::AppError> {
-        Ok(())
-    }
-    fn delete_stale_config_role_bindings(
-        &self,
-        _: &[String],
-    ) -> Result<u64, crate::error::AppError> {
-        Ok(0)
-    }
-}
+
 impl crate::ports::sync_scope::SyncTokenOps for NoopSyncScope {
     fn revoke_all_tokens_for_user(
         &self,

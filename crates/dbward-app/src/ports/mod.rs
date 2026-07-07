@@ -1,6 +1,7 @@
 mod authorizer;
 mod clock;
 pub mod crypto;
+pub mod onboarding;
 pub mod repos;
 mod services;
 pub mod sync_scope;
@@ -11,20 +12,23 @@ pub use authorizer::{
 };
 pub use clock::{Clock, IdGenerator, TokenValueGenerator};
 pub use crypto::{AuditSigner, AuditVerifier};
+pub use onboarding::{
+    ClaimResult, CreateOnboardingInput, OnboardingRequest, OnboardingRequestRepo,
+};
 pub use repos::{
     AgentRepo, ApprovalRepo, AuditFilter, AuditLogger, AuditRepo, AuditVerifyFailure,
     AuditVerifyResult, BackgroundTaskRepo, BreakGlassMetrics, CompletionOutcome,
     ConfigGenerationRepo, ContextRepo, DatabaseRegistry, DryRunJobRecord, DryRunRepo,
     ExecutionTokenClaims, GroupRepo, LicenseChecker, NoopConfigGenerationRepo, PolicyRepo,
     PreflightJob, PreflightJobRepo, PutOptions, RequestContextRecord, RequestReader, RequestWriter,
-    ResultChannel, ResultStore, ResultStream, RoleBindingEntry, RoleBindingRepo, SchemaRepo,
-    SchemaSnapshotRecord, ServerMetaRepo, SsrfValidator, StoredResultEntry, TokenRepo, TokenSigner,
-    UserRepo, VerifyFailureReason, WebhookDeliveryRepo, WebhookRepo,
+    ResultChannel, ResultStore, ResultStream, SchemaRepo, SchemaSnapshotRecord, ServerMetaRepo,
+    SsrfValidator, StoredResultEntry, TokenRepo, TokenSigner, UserRepo, VerifyFailureReason,
+    WebhookDeliveryRepo, WebhookRepo,
 };
 pub use services::{Notifier, WebhookEvent, WebhookSender};
 pub use sync_scope::{
-    SyncConfigGenerationOps, SyncDatabaseOps, SyncGroupOps, SyncPolicyOps, SyncRoleBindingOps,
-    SyncScope, SyncTokenOps, SyncUserOps, SyncWebhookOps,
+    SyncConfigGenerationOps, SyncDatabaseOps, SyncGroupOps, SyncPolicyOps, SyncScope, SyncTokenOps,
+    SyncUserOps, SyncWebhookOps,
 };
 pub use transaction::{
     ApprovalWriterOps, AuditWriterOps, ExecutionWriterOps, RequestWriterOps, ResultWriterOps,

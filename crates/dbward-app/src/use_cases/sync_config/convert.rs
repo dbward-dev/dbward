@@ -7,8 +7,7 @@ use dbward_domain::values::{DatabaseName, Environment, Operation, Selector};
 
 use super::{
     ApproverInput, DatabaseInput, ExecutionPolicyInput, GroupInput, NotificationPolicyInput,
-    ResultPolicyInput, RoleBindingInput, RoleInput, UserInput, WebhookInput, WorkflowInput,
-    WorkflowStepInput,
+    ResultPolicyInput, RoleInput, WebhookInput, WorkflowInput, WorkflowStepInput,
 };
 use crate::error::AppError;
 
@@ -172,20 +171,10 @@ pub fn databases_from_config(defs: &[server::DatabaseDef]) -> Vec<DatabaseInput>
         .collect()
 }
 
-pub fn users_from_config(defs: &[server::UserDef]) -> Vec<UserInput> {
-    defs.iter()
-        .map(|u| UserInput {
-            id: u.id.clone(),
-            status: u.status.clone(),
-        })
-        .collect()
-}
-
 pub fn groups_from_config(defs: &[server::GroupConfig]) -> Vec<GroupInput> {
     defs.iter()
         .map(|g| GroupInput {
             name: g.name.clone(),
-            members: g.members.clone(),
         })
         .collect()
 }
@@ -197,16 +186,6 @@ pub fn roles_from_config(defs: &[server::RoleConfig]) -> Vec<RoleInput> {
             permissions: r.permissions.clone(),
             databases: r.databases.clone(),
             environments: r.environments.clone(),
-        })
-        .collect()
-}
-
-pub fn role_bindings_from_config(defs: &[server::RoleBinding]) -> Vec<RoleBindingInput> {
-    defs.iter()
-        .map(|rb| RoleBindingInput {
-            role: rb.role.clone(),
-            subjects: rb.subjects.clone(),
-            groups: rb.groups.clone(),
         })
         .collect()
 }

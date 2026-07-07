@@ -30,14 +30,6 @@ pub async fn run_dev(database_url: &str, port: u16) -> Result<(), CliError> {
 mode = "token"
 default_role = "developer"
 
-[[auth.role_bindings]]
-role = "admin"
-subjects = ["admin"]
-
-[[auth.role_bindings]]
-role = "agent-default"
-subjects = ["agent"]
-
 [result_storage]
 backend = "local"
 root_dir = "{results}"

@@ -124,6 +124,111 @@ pub trait UserWriterOps {
         user_id: &str,
         now: chrono::DateTime<chrono::Utc>,
     ) -> Result<bool, AppError>;
+    /// Insert or update user in transaction.
+    fn upsert_user_tx(&self, _user: &dbward_domain::entities::User) -> Result<(), AppError> {
+        Err(AppError::Internal("upsert_user_tx not implemented".into()))
+    }
+    /// Create token in transaction.
+    fn create_token_tx(&self, _token: &dbward_domain::entities::Token) -> Result<(), AppError> {
+        Err(AppError::Internal("create_token_tx not implemented".into()))
+    }
+    /// Add group membership in transaction.
+    fn add_group_member_tx(
+        &self,
+        _group_name: &str,
+        _user_id: &str,
+        _now: chrono::DateTime<chrono::Utc>,
+    ) -> Result<(), AppError> {
+        Err(AppError::Internal(
+            "add_group_member_tx not implemented".into(),
+        ))
+    }
+    /// Set roles in transaction.
+    fn set_roles_tx(&self, _user_id: &str, _roles: &[String]) -> Result<(), AppError> {
+        Err(AppError::Internal("set_roles_tx not implemented".into()))
+    }
+    /// Remove group membership in transaction.
+    fn remove_member_tx(&self, _group_name: &str, _user_id: &str) -> Result<(), AppError> {
+        Err(AppError::Internal(
+            "remove_member_tx not implemented".into(),
+        ))
+    }
+    /// Soft-delete a user in transaction.
+    fn soft_delete_tx(
+        &self,
+        _user_id: &str,
+        _now: chrono::DateTime<chrono::Utc>,
+    ) -> Result<(), AppError> {
+        Err(AppError::Internal("soft_delete_tx not implemented".into()))
+    }
+    /// Remove all group memberships for a user in transaction.
+    fn remove_all_memberships_tx(&self, _user_id: &str) -> Result<(), AppError> {
+        Err(AppError::Internal(
+            "remove_all_memberships_tx not implemented".into(),
+        ))
+    }
+    /// Count active users within transaction (for atomic plan limit check).
+    fn count_active_tx(&self) -> Result<u32, AppError> {
+        Err(AppError::Internal("not implemented".into()))
+    }
+    /// Check if user exists within transaction.
+    fn user_exists_tx(&self, user_id: &str) -> Result<bool, AppError> {
+        let _ = user_id;
+        Err(AppError::Internal("not implemented".into()))
+    }
+    /// Count users with admin role (for last-admin guard inside tx).
+    /// `admin_groups` is the list of group names whose config grants the admin role.
+    fn count_admins_tx(&self, admin_groups: &[String]) -> Result<u32, AppError> {
+        let _ = admin_groups;
+        Err(AppError::Internal("not implemented".into()))
+    }
+    /// Check if user has admin role in tx (direct or via group membership).
+    fn user_has_admin_tx(&self, user_id: &str, admin_groups: &[String]) -> Result<bool, AppError> {
+        let _ = (user_id, admin_groups);
+        Err(AppError::Internal("not implemented".into()))
+    }
+    /// Check if user is a member of a specific group within transaction.
+    fn user_in_group_tx(&self, user_id: &str, group_name: &str) -> Result<bool, AppError> {
+        let _ = (user_id, group_name);
+        Err(AppError::Internal(
+            "user_in_group_tx not implemented".into(),
+        ))
+    }
+    /// Set slack_user_id and source on a user within transaction.
+    fn set_slack_user_id_tx(
+        &self,
+        _user_id: &str,
+        _slack_user_id: &str,
+        _source: &str,
+    ) -> Result<(), AppError> {
+        Err(AppError::Internal(
+            "set_slack_user_id_tx not implemented".into(),
+        ))
+    }
+
+    /// Atomically claim an onboarding request as approved within the same transaction
+    /// that creates the user. Returns true if claimed (CAS: pending→approved).
+    fn claim_onboarding_approved_tx(
+        &self,
+        request_id: &str,
+        decided_by: &str,
+        decided_at: chrono::DateTime<chrono::Utc>,
+        approved_roles: &[String],
+        approved_groups: &[String],
+        decision_comment: Option<&str>,
+    ) -> Result<bool, AppError> {
+        let _ = (
+            request_id,
+            decided_by,
+            decided_at,
+            approved_roles,
+            approved_groups,
+            decision_comment,
+        );
+        Err(AppError::Internal(
+            "claim_onboarding_approved_tx not implemented".into(),
+        ))
+    }
 }
 
 /// Operations available on execution results within a transaction.

@@ -86,14 +86,14 @@ impl SyncDatabaseOps for SqliteTxScope<'_> {
 
 impl SyncUserOps for SqliteTxScope<'_> {
     fn upsert_user(&self, user: &User) -> Result<(), AppError> {
-        let groups_json = serde_json::to_string(&user.groups)
+        let roles_json = serde_json::to_string(&user.roles)
             .map_err(|e| AppError::Internal(format!("json: {e}")))?;
         self.conn.execute(
-            "INSERT INTO users (id, display_name, email, groups_json, status, created_at, updated_at) \
+            "INSERT INTO users (id, display_name, email, roles_json, status, created_at, updated_at) \
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7) \
-             ON CONFLICT(id) DO UPDATE SET display_name=?2, email=?3, groups_json=?4, updated_at=?7",
+             ON CONFLICT(id) DO UPDATE SET display_name=?2, email=?3, roles_json=?4, updated_at=?7",
             params![
-                user.id, user.display_name, user.email, groups_json,
+                user.id, user.display_name, user.email, roles_json,
                 match user.status {
                     dbward_domain::entities::UserStatus::Active => "active",
                     dbward_domain::entities::UserStatus::Suspended => "suspended",
@@ -229,14 +229,16 @@ impl SyncUserOps for SqliteTxScope<'_> {
 
 impl SyncGroupOps for SqliteTxScope<'_> {
     fn create_group(&self, name: &str, members: &[String], source: &str) -> Result<(), AppError> {
-        let members_json =
-            serde_json::to_string(members).map_err(|e| AppError::Internal(format!("json: {e}")))?;
+        // V25: groups table is name-only. members/source are ignored (legacy trait sig).
         let now = Utc::now().to_rfc3339();
-        self.conn.execute(
-            "INSERT INTO groups (name, members_json, source, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?4) \
-             ON CONFLICT(name) DO UPDATE SET members_json=?2, source=?3, updated_at=?4",
-            params![name, members_json, source, now],
-        ).map_err(db_err("sync: create_group"))?;
+        self.conn
+            .execute(
+                "INSERT INTO groups (name, created_at) VALUES (?1, ?2) \
+             ON CONFLICT(name) DO NOTHING",
+                params![name, now],
+            )
+            .map_err(db_err("sync: create_group"))?;
+        let _ = (members, source); // suppress unused warnings
         Ok(())
     }
 
@@ -244,7 +246,7 @@ impl SyncGroupOps for SqliteTxScope<'_> {
         if active_names.is_empty() {
             let n = self
                 .conn
-                .execute("DELETE FROM groups WHERE source = 'config'", [])
+                .execute("DELETE FROM groups", [])
                 .map_err(db_err("sync: delete_stale_groups"))?;
             return Ok(n as u64);
         }
@@ -252,8 +254,7 @@ impl SyncGroupOps for SqliteTxScope<'_> {
             .map(|i| format!("?{i}"))
             .collect::<Vec<_>>()
             .join(",");
-        let sql =
-            format!("DELETE FROM groups WHERE source = 'config' AND name NOT IN ({placeholders})");
+        let sql = format!("DELETE FROM groups WHERE name NOT IN ({placeholders})");
         let params: Vec<&dyn rusqlite::types::ToSql> = active_names
             .iter()
             .map(|s| s as &dyn rusqlite::types::ToSql)
@@ -262,55 +263,6 @@ impl SyncGroupOps for SqliteTxScope<'_> {
             .conn
             .execute(&sql, params.as_slice())
             .map_err(db_err("sync: delete_stale_groups"))?;
-        Ok(n as u64)
-    }
-}
-
-impl SyncRoleBindingOps for SqliteTxScope<'_> {
-    fn create_role_binding(
-        &self,
-        id: &str,
-        role: &str,
-        subjects: &[String],
-        groups: &[String],
-        source: &str,
-    ) -> Result<(), AppError> {
-        let subjects_json = serde_json::to_string(subjects)
-            .map_err(|e| AppError::Internal(format!("json: {e}")))?;
-        let groups_json =
-            serde_json::to_string(groups).map_err(|e| AppError::Internal(format!("json: {e}")))?;
-        let now = Utc::now().to_rfc3339();
-        self.conn.execute(
-            "INSERT INTO role_bindings (id, role, subjects_json, groups_json, source, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?6) \
-             ON CONFLICT(id) DO UPDATE SET role=?2, subjects_json=?3, groups_json=?4, source=?5, updated_at=?6",
-            params![id, role, subjects_json, groups_json, source, now],
-        ).map_err(db_err("sync: create_role_binding"))?;
-        Ok(())
-    }
-
-    fn delete_stale_config_role_bindings(&self, active_ids: &[String]) -> Result<u64, AppError> {
-        if active_ids.is_empty() {
-            let n = self
-                .conn
-                .execute("DELETE FROM role_bindings WHERE source = 'config'", [])
-                .map_err(db_err("sync: delete_stale_role_bindings"))?;
-            return Ok(n as u64);
-        }
-        let placeholders: String = (1..=active_ids.len())
-            .map(|i| format!("?{i}"))
-            .collect::<Vec<_>>()
-            .join(",");
-        let sql = format!(
-            "DELETE FROM role_bindings WHERE source = 'config' AND id NOT IN ({placeholders})"
-        );
-        let params: Vec<&dyn rusqlite::types::ToSql> = active_ids
-            .iter()
-            .map(|s| s as &dyn rusqlite::types::ToSql)
-            .collect();
-        let n = self
-            .conn
-            .execute(&sql, params.as_slice())
-            .map_err(db_err("sync: delete_stale_role_bindings"))?;
         Ok(n as u64)
     }
 }

@@ -64,7 +64,7 @@ default_role = "readonly"
 | Field | Type | Required | Default | Description |
 |---|---|---|---|---|
 | `mode` | String | | `"token"` if `[auth.oidc]` absent; `"both"` if `[auth.oidc]` present | Authentication mode: `"token"`, `"oidc"`, `"both"`. Requires Team license for `"oidc"`/`"both"`. |
-| `default_role` | String | | — | Role assigned when no binding matches. Unset = reject unmatched users (fail-closed). Required if not all token subjects have explicit `[[auth.role_bindings]]`. |
+| `default_role` | String | | — | Role assigned to users who have no explicit role (neither via `dbward user add --role` nor via group membership). Unset = reject unmatched users (fail-closed). |
 
 ### [auth.oidc]
 
@@ -101,22 +101,6 @@ role = "admin"
 | `value` | String | ✓ | — | Claim value that triggers the mapping. Exact match. |
 | `role` | String | ✓ | — | dbward role to assign when matched. |
 
-### [[auth.role_bindings]]
-
-Binds API token subjects or groups to roles. **Required** when using API token authentication — at least one binding (or `default_role`) must exist for token subjects to be authorized.
-
-```toml
-[[auth.role_bindings]]
-role = "admin"
-subjects = ["alice", "bob"]
-```
-
-| Field | Type | Required | Default | Description |
-|---|---|---|---|---|
-| `role` | String | ✓ | — | Role to assign. Must be a built-in or custom role. |
-| `subjects` | String[] | | `[]` | Token subject identifiers to bind. |
-| `groups` | String[] | | `[]` | Group names. All members receive this role. |
-
 ### [[auth.roles]] / [[auth.groups]]
 
 Define custom roles and groups in TOML.
@@ -128,7 +112,7 @@ permissions = ["request.create", "request.approve", "audit.view"]
 
 [[auth.groups]]
 name = "backend-team"
-members = ["alice", "bob", "carol"]
+roles = ["developer"]
 ```
 
 **[[auth.roles]]**
@@ -144,34 +128,8 @@ members = ["alice", "bob", "carol"]
 
 | Field | Type | Required | Default | Description |
 |---|---|---|---|---|
-| `name` | String | ✓ | — | Group identifier. Referenced in role_bindings and workflow approvers. |
-| `members` | String[] | ✓ | — | Token subject identifiers belonging to this group. |
-
-### [[users]]
-
-Pre-provision users and manage their lifecycle via config.
-
-```toml
-[[users]]
-id = "alice"
-status = "active"
-
-[[users]]
-id = "bob"
-status = "suspended"
-```
-
-| Field | Type | Required | Default | Description |
-|---|---|---|---|---|
-| `id` | String | ✓ | — | User identifier (must match the subject_id used in authentication). |
-| `status` | String | | `"active"` | User status: `"active"` or `"suspended"`. |
-
-**Behavior on sync (server start / reload):**
-
-- Setting `status = "suspended"` revokes all API tokens and cancels all pending requests for that user — equivalent to the API suspend endpoint.
-- Changing `status` back to `"active"` re-enables the user, but revoked tokens remain revoked. Issue new tokens after reactivation.
-- Removing a user from config revokes tokens, cancels requests, and deletes the user record.
-- If a user ID already exists with a different source (e.g., created via OIDC login), the config entry is skipped with a warning to prevent conflicts.
+| `name` | String | ✓ | — | Group identifier. Referenced in workflow approvers. |
+| `roles` | String[] | | `[]` | Roles inherited by all members of this group. |
 
 ### [[workflows]]
 
@@ -406,6 +364,23 @@ channel = "C0123ABC456"
 | `signing_secret` | String | ✓ | — | Slack signing secret for request verification. |
 | `channel` | String | | `"#db-approvals"` | Default channel (ID or name). |
 | `channels` | Map | | `{}` | Per-environment override. Key = env, value = channel. |
+
+### [slack.onboarding]
+
+Automatic user provisioning when a user first interacts via the `/dbward join` Slack command.
+
+```toml
+[slack.onboarding]
+enabled = true
+default_role = "developer"
+default_groups = ["backend-team"]
+```
+
+| Field | Type | Required | Default | Description |
+|---|---|---|---|---|
+| `enabled` | bool | | `false` | Enable Slack-based user onboarding. |
+| `default_role` | String | | — | Role assigned to users who join via Slack. Falls back to `[auth].default_role`. |
+| `default_groups` | String[] | | `[]` | Groups automatically assigned to users who join via Slack. |
 
 ### trusted_proxies
 

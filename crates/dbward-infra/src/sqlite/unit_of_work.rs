@@ -659,7 +659,7 @@ impl UserWriterOps for SqliteTxScope<'_> {
         let n = self
             .conn
             .execute(
-                "UPDATE users SET status = 'suspended', updated_at = ?1 WHERE id = ?2 AND status = 'active'",
+                "UPDATE users SET status = 'suspended', updated_at = ?1 WHERE id = ?2 AND status = 'active' AND lifecycle_state = 'active'",
                 params![now.to_rfc3339(), user_id],
             )
             .map_err(db_err("tx: suspend_user"))?;
@@ -670,11 +670,294 @@ impl UserWriterOps for SqliteTxScope<'_> {
         let n = self
             .conn
             .execute(
-                "UPDATE users SET status = 'active', updated_at = ?1 WHERE id = ?2 AND status = 'suspended'",
+                "UPDATE users SET status = 'active', updated_at = ?1 WHERE id = ?2 AND status = 'suspended' AND lifecycle_state = 'active'",
                 params![now.to_rfc3339(), user_id],
             )
             .map_err(db_err("tx: activate_user"))?;
         Ok(n > 0)
+    }
+
+    fn upsert_user_tx(&self, user: &dbward_domain::entities::User) -> Result<(), AppError> {
+        let roles_json = serde_json::to_string(&user.roles).unwrap_or_else(|_| "[]".into());
+        self.conn
+            .execute(
+                "INSERT INTO users (id, display_name, email, roles_json, status, source, created_at, updated_at) \
+                 VALUES (?1, ?2, ?3, ?4, ?5, 'api', ?6, ?7) \
+                 ON CONFLICT(id) DO UPDATE SET display_name=?2, email=?3, roles_json=?4, updated_at=?7",
+                params![
+                    user.id,
+                    user.display_name,
+                    user.email,
+                    roles_json,
+                    match user.status {
+                        dbward_domain::entities::UserStatus::Active => "active",
+                        dbward_domain::entities::UserStatus::Suspended => "suspended",
+                    },
+                    user.created_at.to_rfc3339(),
+                    user.updated_at.to_rfc3339(),
+                ],
+            )
+            .map_err(db_err("tx: upsert_user"))?;
+        Ok(())
+    }
+
+    fn create_token_tx(&self, token: &dbward_domain::entities::Token) -> Result<(), AppError> {
+        let scope_json = token
+            .scope_ceiling
+            .as_ref()
+            .map(|s| serde_json::to_string(s).unwrap_or_else(|_| "null".into()));
+        self.conn
+            .execute(
+                "INSERT INTO tokens (id, subject_type, subject_id, token_hash, token_prefix, scope_ceiling_json, name, status, expires_at, created_at) \
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 'active', ?8, ?9)",
+                params![
+                    token.id,
+                    match token.subject_type {
+                        dbward_domain::auth::SubjectType::User => "user",
+                        dbward_domain::auth::SubjectType::Agent => "agent",
+                    },
+                    token.subject_id,
+                    token.token_hash,
+                    token.token_prefix,
+                    scope_json,
+                    token.name,
+                    token.expires_at.map(|d| d.to_rfc3339()),
+                    token.created_at.to_rfc3339(),
+                ],
+            )
+            .map_err(db_err("tx: create_token"))?;
+        Ok(())
+    }
+
+    fn add_group_member_tx(
+        &self,
+        group_name: &str,
+        user_id: &str,
+        now: chrono::DateTime<chrono::Utc>,
+    ) -> Result<(), AppError> {
+        self.conn
+            .execute(
+                "INSERT OR IGNORE INTO group_members (group_name, user_id, added_at) VALUES (?1, ?2, ?3)",
+                params![group_name, user_id, now.to_rfc3339()],
+            )
+            .map_err(db_err("tx: add_group_member"))?;
+        Ok(())
+    }
+
+    fn set_roles_tx(&self, user_id: &str, roles: &[String]) -> Result<(), AppError> {
+        let roles_json = serde_json::to_string(roles).unwrap_or_else(|_| "[]".into());
+        self.conn
+            .execute(
+                "UPDATE users SET roles_json = ?1, updated_at = ?2 WHERE id = ?3",
+                params![roles_json, chrono::Utc::now().to_rfc3339(), user_id],
+            )
+            .map_err(db_err("tx: set_roles"))?;
+        Ok(())
+    }
+
+    fn remove_member_tx(&self, group_name: &str, user_id: &str) -> Result<(), AppError> {
+        self.conn
+            .execute(
+                "DELETE FROM group_members WHERE group_name = ?1 AND user_id = ?2",
+                params![group_name, user_id],
+            )
+            .map_err(db_err("tx: remove_member"))?;
+        Ok(())
+    }
+
+    fn soft_delete_tx(
+        &self,
+        user_id: &str,
+        now: chrono::DateTime<chrono::Utc>,
+    ) -> Result<(), AppError> {
+        self.conn
+            .execute(
+                "UPDATE users SET lifecycle_state = 'deleted', status = 'suspended', updated_at = ?1 WHERE id = ?2",
+                params![now.to_rfc3339(), user_id],
+            )
+            .map_err(db_err("tx: soft_delete"))?;
+        Ok(())
+    }
+
+    fn remove_all_memberships_tx(&self, user_id: &str) -> Result<(), AppError> {
+        self.conn
+            .execute(
+                "DELETE FROM group_members WHERE user_id = ?1",
+                params![user_id],
+            )
+            .map_err(db_err("tx: remove_all_memberships"))?;
+        Ok(())
+    }
+
+    fn count_active_tx(&self) -> Result<u32, AppError> {
+        let count: u32 = self
+            .conn
+            .query_row(
+                "SELECT COUNT(*) FROM users WHERE lifecycle_state = 'active'",
+                [],
+                |r| r.get(0),
+            )
+            .map_err(|e| AppError::Internal(format!("count_active_tx: {e}")))?;
+        Ok(count)
+    }
+
+    fn user_exists_tx(&self, user_id: &str) -> Result<bool, AppError> {
+        let exists: bool = self
+            .conn
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM users WHERE id = ?1)",
+                params![user_id],
+                |r| r.get(0),
+            )
+            .map_err(|e| AppError::Internal(format!("user_exists_tx: {e}")))?;
+        Ok(exists)
+    }
+
+    fn count_admins_tx(&self, admin_groups: &[String]) -> Result<u32, AppError> {
+        if admin_groups.is_empty() {
+            // Only direct admin role holders
+            let count: u32 = self
+                .conn
+                .query_row(
+                    "SELECT COUNT(*) FROM users WHERE lifecycle_state = 'active' AND status = 'active' AND EXISTS(SELECT 1 FROM json_each(roles_json) WHERE value = 'admin')",
+                    [],
+                    |r| r.get(0),
+                )
+                .map_err(|e| AppError::Internal(format!("count_admins_tx: {e}")))?;
+            return Ok(count);
+        }
+        // UNION direct admin holders with users who are admin via group membership
+        let placeholders: String = admin_groups
+            .iter()
+            .enumerate()
+            .map(|(i, _)| format!("?{}", i + 1))
+            .collect::<Vec<_>>()
+            .join(",");
+        let sql = format!(
+            "SELECT COUNT(DISTINCT id) FROM (\
+                SELECT id FROM users WHERE lifecycle_state = 'active' AND status = 'active' \
+                    AND EXISTS(SELECT 1 FROM json_each(roles_json) WHERE value = 'admin') \
+                UNION \
+                SELECT gm.user_id AS id FROM group_members gm \
+                    JOIN users u ON u.id = gm.user_id \
+                    WHERE gm.group_name IN ({placeholders}) \
+                    AND u.lifecycle_state = 'active' AND u.status = 'active'\
+            )"
+        );
+        let mut stmt = self
+            .conn
+            .prepare(&sql)
+            .map_err(|e| AppError::Internal(format!("count_admins_tx: {e}")))?;
+        let params: Vec<&dyn rusqlite::types::ToSql> = admin_groups
+            .iter()
+            .map(|s| s as &dyn rusqlite::types::ToSql)
+            .collect();
+        let count: u32 = stmt
+            .query_row(params.as_slice(), |r| r.get(0))
+            .map_err(|e| AppError::Internal(format!("count_admins_tx: {e}")))?;
+        Ok(count)
+    }
+
+    fn user_has_admin_tx(&self, user_id: &str, admin_groups: &[String]) -> Result<bool, AppError> {
+        // Check direct admin role
+        let has_direct: bool = self
+            .conn
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM users WHERE id = ?1 AND EXISTS(SELECT 1 FROM json_each(roles_json) WHERE value = 'admin'))",
+                params![user_id],
+                |r| r.get(0),
+            )
+            .map_err(|e| AppError::Internal(format!("user_has_admin_tx: {e}")))?;
+        if has_direct {
+            return Ok(true);
+        }
+        // Check admin via group membership
+        if !admin_groups.is_empty() {
+            let placeholders: String = admin_groups
+                .iter()
+                .enumerate()
+                .map(|(i, _)| format!("?{}", i + 2))
+                .collect::<Vec<_>>()
+                .join(",");
+            let sql = format!(
+                "SELECT EXISTS(SELECT 1 FROM group_members WHERE user_id = ?1 AND group_name IN ({placeholders}))"
+            );
+            let mut stmt = self
+                .conn
+                .prepare(&sql)
+                .map_err(|e| AppError::Internal(format!("user_has_admin_tx: {e}")))?;
+            let mut param_values: Vec<Box<dyn rusqlite::types::ToSql>> =
+                vec![Box::new(user_id.to_string())];
+            for g in admin_groups {
+                param_values.push(Box::new(g.clone()));
+            }
+            let param_refs: Vec<&dyn rusqlite::types::ToSql> =
+                param_values.iter().map(|b| b.as_ref()).collect();
+            let has_via_group: bool = stmt
+                .query_row(param_refs.as_slice(), |r| r.get(0))
+                .map_err(|e| AppError::Internal(format!("user_has_admin_tx: {e}")))?;
+            return Ok(has_via_group);
+        }
+        Ok(false)
+    }
+
+    fn user_in_group_tx(&self, user_id: &str, group_name: &str) -> Result<bool, AppError> {
+        let exists: bool = self
+            .conn
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM group_members WHERE user_id = ?1 AND group_name = ?2)",
+                params![user_id, group_name],
+                |r| r.get(0),
+            )
+            .map_err(|e| AppError::Internal(format!("user_in_group_tx: {e}")))?;
+        Ok(exists)
+    }
+
+    fn set_slack_user_id_tx(
+        &self,
+        user_id: &str,
+        slack_user_id: &str,
+        source: &str,
+    ) -> Result<(), AppError> {
+        self.conn
+            .execute(
+                "UPDATE users SET slack_user_id = ?1, source = ?2 WHERE id = ?3",
+                params![slack_user_id, source, user_id],
+            )
+            .map_err(db_err("tx: set_slack_user_id"))?;
+        Ok(())
+    }
+
+    fn claim_onboarding_approved_tx(
+        &self,
+        request_id: &str,
+        decided_by: &str,
+        decided_at: chrono::DateTime<chrono::Utc>,
+        approved_roles: &[String],
+        approved_groups: &[String],
+        decision_comment: Option<&str>,
+    ) -> Result<bool, AppError> {
+        let roles_json = serde_json::to_string(approved_roles)
+            .map_err(|e| AppError::Internal(format!("serialize: {e}")))?;
+        let groups_json = serde_json::to_string(approved_groups)
+            .map_err(|e| AppError::Internal(format!("serialize: {e}")))?;
+        let affected = self
+            .conn
+            .execute(
+                "UPDATE onboarding_requests SET status = 'approved', decided_by = ?1, decided_at = ?2, \
+                 approved_roles_json = ?3, approved_groups_json = ?4, decision_comment = ?5 \
+                 WHERE id = ?6 AND status = 'pending'",
+                params![
+                    decided_by,
+                    decided_at.to_rfc3339(),
+                    roles_json,
+                    groups_json,
+                    decision_comment,
+                    request_id,
+                ],
+            )
+            .map_err(db_err("tx: claim_onboarding_approved"))?;
+        Ok(affected > 0)
     }
 }
 

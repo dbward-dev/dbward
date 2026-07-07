@@ -9,7 +9,7 @@ use crate::ports::{Clock, LicenseChecker, SsrfValidator};
 
 use super::{
     DatabaseInput, ExecutionPolicyInput, GroupInput, NotificationPolicyInput, ResultPolicyInput,
-    RoleBindingInput, RoleInput, UserInput, WebhookInput, WorkflowInput,
+    RoleInput, UserInput, WebhookInput, WorkflowInput,
 };
 
 /// Generate a stable ID suffix from content via SHA-256 truncated to 12 hex chars.
@@ -63,6 +63,8 @@ pub(super) fn sync_databases(
 // users (AllowDangling)
 // ─────────────────────────────────────────────────────────────────────────
 
+// V25: users no longer synced from config. Kept for test_support until full removal.
+#[allow(dead_code)]
 pub(super) fn sync_users(
     scope: &dyn SyncScope,
     clock: &dyn Clock,
@@ -203,14 +205,14 @@ pub(super) fn sync_groups(
     scope: &dyn SyncScope,
     inputs: Vec<GroupInput>,
 ) -> Result<(u64, u64), AppError> {
-    let mut toml_ids = Vec::new();
+    let mut toml_names = Vec::new();
     let mut upserted = 0u64;
     for g in &inputs {
-        scope.create_group(&g.name, &g.members, "config")?;
-        toml_ids.push(g.name.clone());
+        scope.create_group(&g.name, &[], "config")?;
+        toml_names.push(g.name.clone());
         upserted += 1;
     }
-    let deleted = scope.delete_stale_config_groups(&toml_ids)?;
+    let deleted = scope.delete_stale_config_groups(&toml_names)?;
     Ok((deleted, upserted))
 }
 
@@ -281,22 +283,6 @@ pub(super) fn sync_roles(
 // ─────────────────────────────────────────────────────────────────────────
 // role_bindings (ValidatedInBatch)
 // ─────────────────────────────────────────────────────────────────────────
-
-pub(super) fn sync_role_bindings(
-    scope: &dyn SyncScope,
-    inputs: Vec<RoleBindingInput>,
-) -> Result<(u64, u64), AppError> {
-    let mut toml_ids = Vec::new();
-    let mut upserted = 0u64;
-    for rb in inputs.iter() {
-        let id = make_role_binding_id(&rb.role, &rb.subjects, &rb.groups);
-        scope.create_role_binding(&id, &rb.role, &rb.subjects, &rb.groups, "config")?;
-        toml_ids.push(id);
-        upserted += 1;
-    }
-    let deleted = scope.delete_stale_config_role_bindings(&toml_ids)?;
-    Ok((deleted, upserted))
-}
 
 // ─────────────────────────────────────────────────────────────────────────
 // webhooks (CancelDependents)
@@ -588,116 +574,4 @@ fn make_workflow_id(database: &str, environment: &str, operations: &[String]) ->
     sorted_ops.sort();
     let ops_str = sorted_ops.join(",");
     format!("wf:{}:{}:{}", database, environment, sha_suffix(&ops_str))
-}
-
-/// RoleBinding ID: `rb:{role}:{sha(sorted_subjects+sorted_groups)[..12]}`
-fn make_role_binding_id(role: &str, subjects: &[String], groups: &[String]) -> String {
-    let mut sorted_subjects = subjects.to_vec();
-    sorted_subjects.sort();
-    sorted_subjects.dedup();
-    let mut sorted_groups = groups.to_vec();
-    sorted_groups.sort();
-    sorted_groups.dedup();
-    let content = format!("{},{}", sorted_subjects.join(","), sorted_groups.join(","));
-    format!("rb:{}:{}", role, sha_suffix(&content))
-}
-
-// ---------------------------------------------------------------------------
-// Schema Guardrail: REFERENCE_MAP (CFG-24)
-// ---------------------------------------------------------------------------
-
-/// Category for how stale config entries interact with their dependents.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[allow(dead_code)]
-pub enum ReferenceCategory {
-    StrongRuntime,
-    CancelDependents,
-    ValidatedInBatch,
-    AllowDangling,
-}
-
-/// All known cross-table references (FK + logical) that affect config sync.
-/// CI test verifies this list stays in sync with schema.rs.
-#[allow(dead_code)]
-pub const REFERENCE_MAP: &[(&str, &str, ReferenceCategory)] = &[
-    (
-        "requests.database_id",
-        "databases",
-        ReferenceCategory::StrongRuntime,
-    ),
-    (
-        "webhook_deliveries.webhook_id",
-        "webhooks",
-        ReferenceCategory::CancelDependents,
-    ),
-    (
-        "notification_policies.webhooks_json",
-        "webhooks",
-        ReferenceCategory::ValidatedInBatch,
-    ),
-    (
-        "role_bindings.role",
-        "roles",
-        ReferenceCategory::ValidatedInBatch,
-    ),
-    (
-        "requests.requester",
-        "users",
-        ReferenceCategory::AllowDangling,
-    ),
-    (
-        "approvals.actor_id",
-        "users",
-        ReferenceCategory::AllowDangling,
-    ),
-];
-
-#[cfg(test)]
-mod reference_map_tests {
-    use super::*;
-
-    /// Ensure REFERENCE_MAP covers all REFERENCES clauses and known logical refs in schema.rs.
-    #[test]
-    fn reference_map_covers_all_fk_and_logical_refs() {
-        let schema_source = include_str!("../../../../dbward-infra/src/sqlite/schema.rs");
-
-        // All FK-referenced config-managed tables must appear as targets in REFERENCE_MAP
-        let config_tables = ["databases", "webhooks", "roles", "users"];
-        let map_targets: std::collections::HashSet<&str> =
-            REFERENCE_MAP.iter().map(|(_, target, _)| *target).collect();
-
-        for table in config_tables {
-            assert!(
-                map_targets.contains(table),
-                "config table '{table}' is referenced but not in REFERENCE_MAP"
-            );
-        }
-
-        // Known logical references must be present
-        let map_sources: std::collections::HashSet<&str> =
-            REFERENCE_MAP.iter().map(|(src, _, _)| *src).collect();
-        let logical_refs = [
-            "webhook_deliveries.webhook_id",
-            "notification_policies.webhooks_json",
-        ];
-        for src in logical_refs {
-            assert!(
-                map_sources.contains(src),
-                "logical reference '{src}' not in REFERENCE_MAP"
-            );
-        }
-
-        // No stale entries: all tables referenced in REFERENCE_MAP must exist in schema
-        for (src, target, _) in REFERENCE_MAP {
-            let src_table = src.split('.').next().unwrap();
-            assert!(
-                schema_source.contains(&format!("CREATE TABLE IF NOT EXISTS {src_table}")),
-                "REFERENCE_MAP source table '{src_table}' not found in schema"
-            );
-            assert!(
-                schema_source.contains(&format!("CREATE TABLE IF NOT EXISTS {target}")),
-                "REFERENCE_MAP target table '{target}' not found in schema"
-            );
-        }
-    }
 }

@@ -44,6 +44,7 @@ fn builtin_roles() -> Vec<(String, ResolvedRole)> {
                     Permission::ResultView,
                     Permission::WorkflowRead,
                     Permission::TokenRevokeOwn,
+                    Permission::UserRead,
                 ]
                 .into_iter()
                 .collect(),
@@ -252,8 +253,15 @@ impl RoleResolver for ConfigRoleResolver {
         }
     }
 
-    fn config_groups_for(&self, subject_id: &str) -> Option<&Vec<String>> {
-        self.subject_groups.get(subject_id)
+    fn groups_for_subject(&self, subject_id: &str) -> Vec<String> {
+        self.subject_groups
+            .get(subject_id)
+            .cloned()
+            .unwrap_or_default()
+    }
+
+    fn default_role(&self) -> Option<String> {
+        self.default_role.clone()
     }
 }
 

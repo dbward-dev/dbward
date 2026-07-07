@@ -335,7 +335,7 @@ fn unknown_user_status_is_treated_as_suspended() {
 
     // Insert user with unknown status via raw SQL
     conn.lock().execute(
-        "INSERT INTO users (id, groups_json, status, created_at, updated_at) VALUES ('corrupted', '[]', 'garbage', '2024-01-01T00:00:00Z', '2024-01-01T00:00:00Z')",
+        "INSERT INTO users (id, roles_json, status, created_at, updated_at) VALUES ('corrupted', '[]', 'garbage', '2024-01-01T00:00:00Z', '2024-01-01T00:00:00Z')",
         [],
     ).unwrap();
 
@@ -354,7 +354,7 @@ fn user_status_is_case_sensitive() {
 
     // "ACTIVE" (uppercase) is NOT "active" — should be treated as suspended
     conn.lock().execute(
-        "INSERT INTO users (id, groups_json, status, created_at, updated_at) VALUES ('upper', '[]', 'ACTIVE', '2024-01-01T00:00:00Z', '2024-01-01T00:00:00Z')",
+        "INSERT INTO users (id, roles_json, status, created_at, updated_at) VALUES ('upper', '[]', 'ACTIVE', '2024-01-01T00:00:00Z', '2024-01-01T00:00:00Z')",
         [],
     ).unwrap();
 
@@ -370,7 +370,7 @@ fn activate_from_unknown_status() {
 
     // Insert user with corrupted status
     conn.lock().execute(
-        "INSERT INTO users (id, groups_json, status, created_at, updated_at) VALUES ('broken', '[]', 'garbage', '2024-01-01T00:00:00Z', '2024-01-01T00:00:00Z')",
+        "INSERT INTO users (id, roles_json, status, created_at, updated_at) VALUES ('broken', '[]', 'garbage', '2024-01-01T00:00:00Z', '2024-01-01T00:00:00Z')",
         [],
     ).unwrap();
 
@@ -386,7 +386,7 @@ fn suspend_from_unknown_status() {
 
     // Insert user with corrupted status
     conn.lock().execute(
-        "INSERT INTO users (id, groups_json, status, created_at, updated_at) VALUES ('broken2', '[]', 'garbage', '2024-01-01T00:00:00Z', '2024-01-01T00:00:00Z')",
+        "INSERT INTO users (id, roles_json, status, created_at, updated_at) VALUES ('broken2', '[]', 'garbage', '2024-01-01T00:00:00Z', '2024-01-01T00:00:00Z')",
         [],
     ).unwrap();
 
@@ -407,12 +407,14 @@ fn count_active_excludes_suspended() {
     repo.ensure_exists("carol").unwrap();
     repo.suspend("bob", Utc::now()).unwrap();
 
-    assert_eq!(repo.count_active().unwrap(), 2);
+    // count_active counts all non-deleted users (lifecycle_state='active'), including suspended
+    assert_eq!(repo.count_active().unwrap(), 3);
+    // list_active_ids also includes suspended (lifecycle_state='active')
     let ids = repo.list_active_ids().unwrap();
-    assert_eq!(ids.len(), 2);
+    assert_eq!(ids.len(), 3);
     assert!(ids.contains(&"alice".to_string()));
+    assert!(ids.contains(&"bob".to_string()));
     assert!(ids.contains(&"carol".to_string()));
-    assert!(!ids.contains(&"bob".to_string()));
 }
 
 #[test]

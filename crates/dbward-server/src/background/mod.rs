@@ -111,6 +111,12 @@ fn build_task_defs(retention: Arc<RetentionConfig>) -> Vec<TaskDef> {
                 Box::pin(preflight::preflight_cleanup_loop(state, shutdown))
             }),
         },
+        TaskDef {
+            name: "onboarding_expiry",
+            spawn_fn: Box::new(|state, shutdown| {
+                Box::pin(onboarding::onboarding_expiry_loop(state, shutdown))
+            }),
+        },
     ];
 
     // Panic injection for E2E testing (only when env var is set)
@@ -269,6 +275,7 @@ mod dry_run;
 mod expiry;
 mod lease;
 mod license;
+mod onboarding;
 mod preflight;
 mod webhook;
 

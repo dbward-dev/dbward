@@ -53,7 +53,7 @@ curl -X POST http://localhost:3000/api/tokens \
 |-------|------|-------------|
 | `subject_id` | string | **Required.** User or service identifier. |
 | `subject_type` | string | `user` or `agent`. Default: `user`. |
-| `scope_ceiling` | object | Max roles this token can activate. Format: `{"roles": ["role1", "role2"]}`. Effective roles = intersection of `scope_ceiling.roles` and role bindings. Set `null` for agent tokens (`--no-scope-ceiling`) to inherit all bound roles. **Required** for `user` tokens. |
+| `scope_ceiling` | object | Max roles this token can activate. Format: `{"roles": ["role1", "role2"]}`. Effective roles = intersection of `scope_ceiling.roles` and the user's assigned roles (direct + group-derived). Set `null` for agent tokens (`--no-scope-ceiling`) to inherit all assigned roles. **Required** for `user` tokens. |
 | `name` | string | Human-readable label. |
 | `expires_at` | datetime | Absolute expiry (RFC 3339). Unset = no expiration. |
 
@@ -99,9 +99,15 @@ token = "${DBWARD_TOKEN}"
 
 ### Role resolution
 
-Tokens do not embed roles directly. The server resolves roles dynamically at request time using `[[auth.role_bindings]]` and intersects with the token's `scope_ceiling`.
+Tokens do not embed roles directly. The server resolves roles dynamically at request time:
 
-For details on role bindings and permissions, see [Authorization Reference](../reference/authorization.md).
+1. **Direct roles:** Roles assigned to the user via `dbward user add --role` or `dbward user update --role`
+2. **Group-derived roles:** Roles inherited from group membership (`[[auth.groups]]` with `roles` field in config)
+3. **Default role:** Falls back to `[auth].default_role` if no roles found
+
+The token's `scope_ceiling` intersects with the resolved roles to produce effective permissions.
+
+For details on roles and permissions, see [Authorization Reference](../reference/authorization.md).
 
 ### Inspecting tokens
 
@@ -202,38 +208,42 @@ role = "developer"
 
 ## User management
 
-### Config-managed users
+### CLI-managed users
 
-Pre-provision users and control their status in `server.toml`:
+Users are managed via the `dbward user` CLI commands:
 
-```toml
-[[users]]
-id = "alice"
-status = "active"
+```bash
+# Add a user with a role
+dbward user add alice --role developer
+
+# Add a user to a group (inherits group roles)
+dbward user add bob --role dba --group backend-team
+
+# Suspend a user (revokes tokens, cancels pending requests)
+dbward user suspend alice --reason "offboarding"
+
+# Reactivate
+dbward user activate alice
+
+# Remove entirely
+dbward user rm alice
 ```
 
-On server start or config reload, the server reconciles user status:
-- **Suspend:** Revokes all tokens + cancels all pending requests (same effect as the API suspend endpoint).
-- **Reactivate:** Sets status to active. Revoked tokens remain revoked — issue new ones.
-- **Remove from config:** Revokes tokens, cancels requests, and deletes the user record.
-
-This is the recommended way to offboard users in token-only deployments.
+Roles are assigned directly to users via `dbward user add --role` or inherited from group membership (`groups.roles` in config).
 
 ### OIDC users
 
-OIDC users are created with `source = "oidc"` and cannot be managed via `[[users]]` config (the source guard skips them). To disable an OIDC user:
+OIDC users are created automatically on first login with `source = "oidc"`. To disable an OIDC user:
 
-1. **API suspend**: `POST /api/users/{id}/suspend` — immediately blocks all requests (the server checks `is_suspended` on every request, even with a valid JWT).
-2. **IdP-side disable**: Prevents new JWT issuance. Existing JWTs are still checked against `is_suspended` per-request, so API suspend is effective regardless of JWT lifetime.
+1. **CLI suspend**: `dbward user suspend <id>` — immediately blocks all requests (the server checks `is_suspended` on every request, even with a valid JWT).
+2. **IdP-side disable**: Prevents new JWT issuance. Existing JWTs are still checked against `is_suspended` per-request, so suspend is effective regardless of JWT lifetime.
 
-### API suspend vs config suspend
+### API suspend vs CLI suspend
 
 | Method | Effect | Persistence |
 |--------|--------|-------------|
-| `POST /api/users/{id}/suspend` | Immediate suspend + revoke | Reverts to config value on restart |
-| `status = "suspended"` in config | Suspend + revoke on restart/reload | Permanent until config changes |
-
-For config-managed users, prefer config changes for permanent status changes.
+| `POST /api/users/{id}/suspend` | Immediate suspend + revoke | Persistent in DB |
+| `dbward user suspend <id>` | Immediate suspend + revoke | Persistent in DB |
 
 ---
 
@@ -307,7 +317,7 @@ Agents use API tokens with `subject_type = "agent"` and typically `--no-scope-ce
 dbward token create --subject prod-agent --subject-type agent --no-scope-ceiling
 ```
 
-The `--no-scope-ceiling` flag removes the scope ceiling restriction, allowing the agent token to activate all roles assigned via role bindings. This is the recommended setup for agents since their permissions are fully controlled via `[[auth.role_bindings]]`.
+The `--no-scope-ceiling` flag removes the scope ceiling restriction, allowing the agent token to activate all roles assigned to the agent user. This is the recommended setup for agents since their permissions are fully controlled via user roles.
 
 > **Note:** `--no-scope-ceiling` conflicts with `--scope-roles` — they cannot be used together.
 
