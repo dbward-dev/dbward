@@ -85,5 +85,6 @@ For finer-grained control (different events per database), use the API-managed n
 
 ## See also
 
-- [Notifications](../notifications.md) — webhook setup and Slack integration
+- [Notifications](../notifications.md) — webhook setup
+- [Slack Integration](../slack.md) — interactive Slack (buttons, modals, onboarding)
 - [Policies Overview](overview.md) — how all four policies relate

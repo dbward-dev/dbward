@@ -1,11 +1,13 @@
 ---
 title: Notifications
-description: Set up webhook notifications and Slack integration for dbward events
+description: Set up webhook notifications for dbward events
 ---
 
 # Notifications
 
-dbward can notify external systems when events occur — new requests, approvals, failures, emergency access. This page covers how to set up the delivery mechanisms. For controlling *which* events fire on *which* databases, see [Notification Policies](policies/notification-policies.md).
+dbward can notify external systems when events occur — new requests, approvals, failures, emergency access. This page covers webhook-based delivery. For interactive Slack integration (buttons, modals, onboarding), see [Slack Integration](slack.md).
+
+For controlling *which* events fire on *which* databases, see [Notification Policies](policies/notification-policies.md).
 
 ---
 
@@ -29,6 +31,30 @@ events = ["request.created", "request.approved", "execution.completed", "request
 | `format` | String | `"generic"` | Payload format: `generic` or `slack` |
 | `secret` | String | — | HMAC-SHA256 signing key |
 | `events` | String[] | `[]` (all) | Filter events (empty = all events) |
+
+### Available events
+
+| Event | Category | Description |
+|-------|----------|-------------|
+| `request.created` | approval | New request submitted |
+| `request.break_glass` | approval | Emergency request (bypass approval) |
+| `request.auto_approved` | approval | Auto-approved by policy |
+| `step.approved` | approval | Approval step completed |
+| `request.approved` | approval | Fully approved (all steps) |
+| `request.rejected` | approval | Request rejected |
+| `request.cancelled` | approval | Request cancelled by requester |
+| `request.dispatched` | approval | Request dispatched to agent |
+| `request.expired` | approval | Request TTL expired |
+| `request.dispatch_timeout` | approval | No agent claimed within timeout |
+| `execution.started` | execution | Agent started execution |
+| `execution.completed` | execution | Execution succeeded |
+| `execution.failed` | execution | Execution failed |
+| `execution.lost` | agent | Agent connection lost during execution |
+| `user.created` | user | New user created |
+| `user.updated` | user | User updated |
+| `user.deleted` | user | User soft-deleted |
+| `user.suspended` | user | User suspended |
+| `user.activated` | user | User re-activated |
 
 ### Payload format (generic)
 
@@ -74,145 +100,35 @@ assert hmac.compare_digest(expected, actual)
 
 ### SQL redaction
 
-SQL in webhook payloads is redacted by default:
+SQL in webhook payloads is automatically redacted — string and numeric literals are replaced with `?`:
+
+```
+SELECT * FROM users WHERE email = ? AND age > ?
+```
+
+This is applied unconditionally to all webhook deliveries. Full SQL (unredacted) is never sent via webhooks.
+
+---
+
+## Slack Webhook Format
+
+Use `format = "slack"` to send Block Kit-formatted messages via Incoming Webhook:
 
 ```toml
-[audit]
-redaction = "literals"   # Replace literals with ? (default)
-# redaction = "none"     # Send full SQL
-# redaction = "full"     # Send hash only
+[[webhooks]]
+url = "https://hooks.slack.com/services/T.../B.../xxx"
+format = "slack"
+secret = "${WEBHOOK_SECRET}"
 ```
 
----
+This is a **passive, outbound-only** integration. For interactive features (approve/reject buttons, modals, slash commands), use the [Slack Integration](slack.md).
 
-## Outbound: Slack Notifications
+### SQL visibility in Slack webhooks
 
-Slack integration uses a dedicated `[slack]` config section for richer formatting and approve/reject buttons.
+The `format = "slack"` webhook displays redacted SQL (literals replaced with `?`) directly in the channel message. If you don't want SQL visible in Slack:
 
-### 1. Create a Slack App
-
-```bash
-dbward slack init --server-url https://your-server.com
-```
-
-This generates a Slack App Manifest with all required scopes, Interactivity URL, and Slash Command pre-configured. Open the output URL to create the app in one click.
-
-<details>
-<summary>Manual setup (without CLI)</summary>
-
-1. Go to [https://api.slack.com/apps](https://api.slack.com/apps) → **Create New App** → **From scratch**
-2. Add **Bot Token Scopes**: `chat:write`, `channels:join`, `channels:read`, `groups:read`, `commands`, `users:read`, `users:read.email`
-3. Enable **Interactivity** → Request URL: `https://your-server.com/api/slack/interactions`
-4. Add **Slash Command** `/dbward` → URL: `https://your-server.com/api/slack/commands`
-5. **Install to Workspace** → copy Bot Token (`xoxb-...`)
-6. Copy **Signing Secret** from Basic Information
-</details>
-
-### 2. Configure server
-
-```toml
-[slack]
-bot_token = "xoxb-..."       # Bot User OAuth Token
-signing_secret = "abc123..."  # Signing Secret from Basic Information
-channel = "C0123ABC456"      # Default channel ID
-```
-
-Per-environment channels (optional):
-
-```toml
-[slack.channels]
-production = "C0123ABC456"
-staging = "C0456DEF789"
-```
-
-### 3. Invite the bot and verify
-
-```
-/invite @dbward
-```
-
-Then run:
-
-```bash
-dbward doctor --server server.toml
-```
-
-This checks token validity, signing secret format, channel existence, and bot membership. Channel validation requires channel IDs (`C...` / `G...`); channels configured by name (e.g. `#general`) are skipped with a hint.
-
-### Message format
-
-Slack messages include:
-- Requester, database, environment, operation
-- Risk level (🔴 High / 🟡 Medium / 🟢 Low)
-- Required approvers (with mentions)
-- **Review Request** button
-
-Messages update in-place as the request progresses through its lifecycle.
-
-**Security:** SQL is never shown in channel messages — only in the approval Modal (after authorization check).
-
----
-
-## Inbound: Slack Interactions
-
-Slack buttons and slash commands are configured automatically by `dbward slack init`. No additional setup is required if you created the app via Manifest.
-
-### Approval flow
-
-1. Approver clicks **Review Request**
-2. Modal opens with: full SQL, risk details, EXPLAIN output
-3. Approver selects Approve/Reject + adds comment
-4. Request state updates, Slack message updates
-
-<p align="center">
-  <img src="../../demo/slack-demo.gif" alt="Slack approval flow — requester view" width="100%">
-</p>
-
-> The demo above shows the requester's perspective (create → approve → resume → result). Approvers follow the same flow via the **Review Request** button in their notifications.
-
-### Slash command
-
-| Command | Action |
-|---|---|
-| `/dbward execute` | Open SQL submission modal |
-| `/dbward join` | Request onboarding (requires admin approval) |
-| `/dbward help` | Show usage |
-
-**Authentication:** Both `/api/slack/commands` and `/api/slack/interactions` are verified using the [Slack Signing Secret](https://api.slack.com/authentication/verifying-requests-from-slack) (HMAC-SHA256). Only requests signed by Slack are accepted.
-
-### Account linking
-
-Each user links their Slack account:
-
-```bash
-dbward user update --slack-user-id U02CR3TMKKJ
-```
-
-Find your Member ID: Profile → **⋮** → **Copy member ID**.
-
-Users without linked accounts can still approve via CLI/API.
-
----
-
-## Troubleshooting
-
-Run `dbward doctor --server server.toml` first — it validates Slack bot token, signing secret, channel access, and webhook URLs in one pass.
-
-| Issue | Solution |
-|---|---|
-| No notifications sent | Check `[[webhooks]]` or `[slack]` config + env vars |
-| `not_in_channel` | Invite bot: `/invite @dbward` or add `channels:join` scope |
-| Signature mismatch | Verify secret matches between config and receiver |
-| Button click error | Check Interactivity URL is correct and publicly accessible |
-| "Account not linked" | Run `dbward user update --slack-user-id YOUR_ID` |
-| `/dbward` shows "not a valid command" | Register Slash Command in Slack App settings |
-| "No databases available" | User needs `request.query` or `request.execute` permission |
-
----
-
-## Webhook vs Interactive: Choosing the Right Integration
-
-dbward offers two independent Slack notification paths. They can be used alone or together.
+1. **Use Interactive Slack instead** — SQL is only shown inside the Review Modal
+2. **Use `format = "generic"`** — receive raw JSON and format it yourself
 
 | | Webhook (`format = "slack"`) | Interactive (`[slack]`) |
 |---|---|---|
@@ -223,27 +139,27 @@ dbward offers two independent Slack notification paths. They can be used alone o
 | **Thread replies** | ❌ Single message per event | ✅ Thread + message updates |
 | **Mentions** | ❌ | ✅ @user notifications |
 
-**Both enabled?** Both fire simultaneously. This is safe — webhook delivers a passive summary while interactive provides full button support.
+Both can be enabled simultaneously.
 
-### SQL visibility
+---
 
-The `format = "slack"` webhook displays redacted SQL directly in the channel message. This is by design — since Incoming Webhooks don't support buttons, the approver needs to see what they're approving from the notification alone.
+## Troubleshooting
 
-If you don't want SQL visible in the Slack channel:
+Run `dbward doctor --server server.toml` first — it validates webhook URLs, Slack config, and connectivity.
 
-1. **Use Interactive only** — SQL is shown only inside the Review Modal (after authorization check)
-2. **Use `format = "generic"`** — receive the raw JSON and format it yourself, omitting `detail`
-3. **Set `redaction = "full"`** — replaces SQL with a hash (applies to both formats)
+| Issue | Solution |
+|---|---|
+| No notifications sent | Check `[[webhooks]]` config, env vars, and `events` filter |
+| Signature mismatch | Verify `secret` matches between config and receiver |
+| Webhook not delivered | Check endpoint is reachable, returns 2xx within 10s |
+| Slack webhook shows raw JSON | Set `format = "slack"` |
 
-```toml
-# Option 3: Hash-only redaction
-[audit]
-redaction = "full"
-```
+For Slack-specific troubleshooting (buttons, slash commands, account linking), see [Slack Integration: Troubleshooting](slack.md#troubleshooting).
 
 ---
 
 ## See also
 
+- [Slack Integration](slack.md) — interactive Slack setup (buttons, modals, onboarding)
 - [Notification Policies](policies/notification-policies.md) — control which events fire per database
 - [Security Hardening](../security/hardening.md) — webhook security best practices
