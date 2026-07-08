@@ -57,18 +57,16 @@ environments = ["staging", "production"]
 
 ```toml
 [auth]
-mode = "both"
 default_role = "readonly"
 ```
 
 | Field | Type | Required | Default | Description |
 |---|---|---|---|---|
-| `mode` | String | | `"token"` if `[auth.oidc]` absent; `"both"` if `[auth.oidc]` present | Authentication mode: `"token"`, `"oidc"`, `"both"`. Requires Team license for `"oidc"`/`"both"`. |
 | `default_role` | String | | — | Role assigned to users who have no explicit role (neither via `dbward user add --role` nor via group membership). Unset = reject unmatched users (fail-closed). |
 
 ### [auth.oidc]
 
-Requires `auth.mode = "oidc"` or `"both"` (explicit or implicit). Requires Team license.
+OIDC is enabled automatically when this section is present. Requires Team license.
 
 ```toml
 [auth.oidc]

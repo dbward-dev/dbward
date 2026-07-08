@@ -218,7 +218,7 @@ Managed via `dbward token create/list/revoke (via API)`. Used when OIDC is not p
 
 ```toml
 [auth]
-mode = "both"  # "oidc", "token", "both"
+# OIDC enabled automatically when [auth.oidc] is present
 
 [auth.oidc]
 issuer = "https://accounts.google.com"

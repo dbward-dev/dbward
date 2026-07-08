@@ -143,7 +143,7 @@ fn real_state() -> AppState {
             dbward_infra::rusqlite::Connection::open_in_memory().unwrap(),
         )),
         db_role_resolver: None,
-        auth_mode: "token".into(),
+        accept_oidc: false,
         max_persist_bytes: 10 * 1024 * 1024,
         storage_backend: "local".into(),
         mcp_enabled: false,

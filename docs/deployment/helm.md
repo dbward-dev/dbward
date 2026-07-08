@@ -71,7 +71,6 @@ server:
   config: |
     state_dir = "/data"
     [auth]
-    mode = "token"
     [[databases]]
     name = "app"
     environments = ["production"]

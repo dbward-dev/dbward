@@ -27,7 +27,6 @@ pub async fn run_dev(database_url: &str, port: u16) -> Result<(), CliError> {
         r#"state_dir = "{state_dir}"
 
 [auth]
-mode = "token"
 default_role = "developer"
 
 [result_storage]

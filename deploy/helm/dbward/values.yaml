@@ -25,7 +25,6 @@ server:
     state_dir = "/data"
 
     [auth]
-    mode = "token"
 
     [[databases]]
     name = "app"
