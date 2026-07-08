@@ -73,6 +73,16 @@ pub(crate) async fn post_mcp(
     }
     let session_arc = session.arc();
 
+    // MCP-Protocol-Version header validation (2025-06-18 spec: required on post-initialize requests)
+    if let Some(ref s) = session_arc
+        && let Some(hdr) = headers
+            .get("mcp-protocol-version")
+            .and_then(|v| v.to_str().ok())
+        && hdr != s.negotiated_version
+    {
+        return (StatusCode::BAD_REQUEST, "MCP-Protocol-Version mismatch").into_response();
+    }
+
     // Parse message
     let msg = match parse_message(&body) {
         Ok(m) => m,
@@ -83,6 +93,21 @@ pub(crate) async fn post_mcp(
             return json_response(StatusCode::OK, &err_resp);
         }
     };
+
+    // Reject batch requests when negotiated version is 2025-06-18 (batch removed from spec)
+    if matches!(&msg, JsonRpcMessage::Batch(_))
+        && let Some(ref s) = session_arc
+        && s.negotiated_version == "2025-06-18"
+    {
+        return json_response(
+            StatusCode::OK,
+            &JsonRpcResponse::error(
+                None,
+                INVALID_REQUEST,
+                "Batch requests are not supported in protocol version 2025-06-18",
+            ),
+        );
+    }
 
     // Build backend
     let audit_ctx = super::extract_audit_context(
@@ -594,8 +619,20 @@ async fn handle_initialize_request(
         return json_response(StatusCode::OK, &resp);
     }
 
+    // Extract negotiated version from response
+    let negotiated_version = resp
+        .result
+        .as_ref()
+        .and_then(|r| r["protocolVersion"].as_str())
+        .unwrap_or(dbward_mcp::protocol::PROTOCOL_VERSION)
+        .to_string();
+
     let store = state.session_store();
-    let session = match store.create(user.clone(), supports_elicitation) {
+    let session = match store.create(
+        user.clone(),
+        supports_elicitation,
+        negotiated_version.clone(),
+    ) {
         Some(s) => {
             state
                 .metrics
@@ -619,6 +656,9 @@ async fn handle_initialize_request(
     response
         .headers_mut()
         .insert("mcp-session-id", session.id.parse().unwrap());
+    response
+        .headers_mut()
+        .insert("mcp-protocol-version", negotiated_version.parse().unwrap());
     response
 }
 

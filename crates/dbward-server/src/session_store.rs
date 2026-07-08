@@ -25,11 +25,17 @@ impl SessionStore {
         &self,
         user: AuthUser,
         supports_elicitation: bool,
+        negotiated_version: String,
     ) -> Option<Arc<SessionRuntime>> {
         // Generate ID first, then use entry API to atomically check + insert.
         // If we exceed max_sessions after insert, remove immediately.
         let id = uuid::Uuid::new_v4().to_string();
-        let session = Arc::new(SessionRuntime::new(id.clone(), user, supports_elicitation));
+        let session = Arc::new(SessionRuntime::new(
+            id.clone(),
+            user,
+            supports_elicitation,
+            negotiated_version,
+        ));
         self.sessions.insert(id.clone(), session.clone());
 
         // Post-insert enforcement: if over limit, undo
@@ -146,7 +152,7 @@ mod tests {
     #[test]
     fn create_and_get() {
         let store = SessionStore::new(3600, 100);
-        let session = store.create(user(), false).unwrap();
+        let session = store.create(user(), false, "2025-06-18".into()).unwrap();
         let got = store.get(&session.id).unwrap();
         assert_eq!(got.id, session.id);
     }
@@ -154,15 +160,15 @@ mod tests {
     #[test]
     fn max_sessions_enforced() {
         let store = SessionStore::new(3600, 2);
-        store.create(user(), false).unwrap();
-        store.create(user(), false).unwrap();
-        assert!(store.create(user(), false).is_none());
+        store.create(user(), false, "2025-06-18".into()).unwrap();
+        store.create(user(), false, "2025-06-18".into()).unwrap();
+        assert!(store.create(user(), false, "2025-06-18".into()).is_none());
     }
 
     #[test]
     fn remove_works() {
         let store = SessionStore::new(3600, 100);
-        let session = store.create(user(), false).unwrap();
+        let session = store.create(user(), false, "2025-06-18".into()).unwrap();
         let id = session.id.clone();
         store.remove(&id);
         assert!(store.get(&id).is_none());
@@ -171,7 +177,7 @@ mod tests {
     #[test]
     fn cleanup_removes_expired() {
         let store = SessionStore::new(0, 100); // TTL = 0s → everything expires immediately
-        let session = store.create(user(), false).unwrap();
+        let session = store.create(user(), false, "2025-06-18".into()).unwrap();
         let id = session.id.clone();
         // Force last_active to be in the past
         std::thread::sleep(Duration::from_millis(10));
@@ -182,7 +188,7 @@ mod tests {
     #[test]
     fn cleanup_prunes_completed_streams() {
         let store = SessionStore::new(3600, 100);
-        let session = store.create(user(), false).unwrap();
+        let session = store.create(user(), false, "2025-06-18".into()).unwrap();
         let id = session.id.clone();
 
         // Add a completed stream with old completed_at
@@ -205,7 +211,7 @@ mod tests {
     #[test]
     fn cleanup_prunes_resolved_elicitations() {
         let store = SessionStore::new(3600, 100);
-        let session = store.create(user(), false).unwrap();
+        let session = store.create(user(), false, "2025-06-18".into()).unwrap();
 
         // Add a resolved elicitation from 120s ago (exceeds 60s cutoff)
         session

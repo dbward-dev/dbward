@@ -356,8 +356,12 @@ pub fn build_router(state: AppState) -> Router {
                         // Phase 2: session management + SSE resumption
                         "mcp-session-id".parse().unwrap(),
                         "last-event-id".parse().unwrap(),
+                        "mcp-protocol-version".parse().unwrap(),
                     ]))
-                    .expose_headers(ExposeHeaders::list(["mcp-session-id".parse().unwrap()])),
+                    .expose_headers(ExposeHeaders::list([
+                        "mcp-session-id".parse().unwrap(),
+                        "mcp-protocol-version".parse().unwrap(),
+                    ])),
             )
         };
 

@@ -25,7 +25,7 @@ fn user() -> AuthUser {
 #[test]
 fn session_store_user_isolation() {
     let store = SessionStore::new(3600, 100);
-    let session = store.create(user(), false).unwrap();
+    let session = store.create(user(), false, "2025-06-18".into()).unwrap();
     // Different user cannot access
     let got = store.get(&session.id).unwrap();
     assert_eq!(got.user.subject_id, "u1");
@@ -35,7 +35,7 @@ fn session_store_user_isolation() {
 
 #[test]
 fn session_phase_transitions() {
-    let session = SessionRuntime::new("s1".into(), user(), true);
+    let session = SessionRuntime::new("s1".into(), user(), true, "2025-06-18".into());
     assert_eq!(session.phase(), PHASE_INITIALIZING);
 
     session.phase.store(PHASE_ACTIVE, Ordering::SeqCst);
@@ -45,7 +45,7 @@ fn session_phase_transitions() {
 
 #[test]
 fn session_touch_updates_last_active() {
-    let session = SessionRuntime::new("s1".into(), user(), false);
+    let session = SessionRuntime::new("s1".into(), user(), false, "2025-06-18".into());
     let first = *session.last_active.read();
     std::thread::sleep(Duration::from_millis(5));
     session.touch();
@@ -55,7 +55,7 @@ fn session_touch_updates_last_active() {
 
 #[test]
 fn session_active_request_count_atomic() {
-    let session = SessionRuntime::new("s1".into(), user(), false);
+    let session = SessionRuntime::new("s1".into(), user(), false, "2025-06-18".into());
     assert_eq!(session.active_request_count.load(Ordering::Relaxed), 0);
     session.active_request_count.fetch_add(1, Ordering::Relaxed);
     assert_eq!(session.active_request_count.load(Ordering::Relaxed), 1);
@@ -69,7 +69,12 @@ fn session_active_request_count_atomic() {
 async fn http_elicitation_supported_only_when_active() {
     use dbward_server::http_elicitation::HttpElicitation;
 
-    let session = Arc::new(SessionRuntime::new("s1".into(), user(), true));
+    let session = Arc::new(SessionRuntime::new(
+        "s1".into(),
+        user(),
+        true,
+        "2025-06-18".into(),
+    ));
     let (tx, _rx) = mpsc::channel(32);
     let stream = Arc::new(StreamRuntime::new("stream1".into(), tx, 100));
 
@@ -92,7 +97,12 @@ async fn http_elicitation_supported_only_when_active() {
 async fn http_elicitation_not_supported_without_client_capability() {
     use dbward_server::http_elicitation::HttpElicitation;
 
-    let session = Arc::new(SessionRuntime::new("s1".into(), user(), false)); // no elicitation
+    let session = Arc::new(SessionRuntime::new(
+        "s1".into(),
+        user(),
+        false,
+        "2025-06-18".into(),
+    )); // no elicitation
     session.phase.store(PHASE_ACTIVE, Ordering::SeqCst);
     let (tx, _rx) = mpsc::channel(32);
     let stream = Arc::new(StreamRuntime::new("stream1".into(), tx, 100));
@@ -111,7 +121,12 @@ async fn http_elicitation_ask_emits_event_and_registers_waiter() {
     use dbward_mcp::ports::ElicitationTransport;
     use dbward_server::http_elicitation::HttpElicitation;
 
-    let session = Arc::new(SessionRuntime::new("s1".into(), user(), true));
+    let session = Arc::new(SessionRuntime::new(
+        "s1".into(),
+        user(),
+        true,
+        "2025-06-18".into(),
+    ));
     session.phase.store(PHASE_ACTIVE, Ordering::SeqCst);
     let (tx, _rx) = mpsc::channel(32);
     let stream = Arc::new(StreamRuntime::new("stream1".into(), tx, 100));
@@ -154,7 +169,12 @@ async fn http_elicitation_ask_resolves_on_response() {
     use dbward_mcp::ports::ElicitationTransport;
     use dbward_server::http_elicitation::HttpElicitation;
 
-    let session = Arc::new(SessionRuntime::new("s1".into(), user(), true));
+    let session = Arc::new(SessionRuntime::new(
+        "s1".into(),
+        user(),
+        true,
+        "2025-06-18".into(),
+    ));
     session.phase.store(PHASE_ACTIVE, Ordering::SeqCst);
     let (tx, _rx) = mpsc::channel(32);
     let stream = Arc::new(StreamRuntime::new("stream1".into(), tx, 100));
@@ -236,6 +256,7 @@ async fn elicitation_fails_fast_when_stream_dead() {
             token_id: None,
         },
         true,
+        "2025-06-18".into(),
     ));
     session
         .phase
