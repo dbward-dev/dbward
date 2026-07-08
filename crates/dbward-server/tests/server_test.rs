@@ -437,6 +437,12 @@ impl dbward_app::ports::OnboardingRequestRepo for StubOnboardingRepo {
     ) -> Result<dbward_app::ports::ClaimResult, AppError> {
         Ok(dbward_app::ports::ClaimResult { claimed: false })
     }
+    fn expire_pending(
+        &self,
+        _: chrono::DateTime<chrono::Utc>,
+    ) -> Result<Vec<dbward_app::ports::onboarding::ExpiredOnboardingNotification>, AppError> {
+        Ok(vec![])
+    }
 }
 
 struct StubTokenRepo;

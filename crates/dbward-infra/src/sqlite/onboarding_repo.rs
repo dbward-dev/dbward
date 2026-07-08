@@ -3,7 +3,8 @@ use rusqlite::params;
 
 use dbward_app::error::AppError;
 use dbward_app::ports::onboarding::{
-    ClaimResult, CreateOnboardingInput, OnboardingRequest, OnboardingRequestRepo,
+    ClaimResult, CreateOnboardingInput, ExpiredOnboardingNotification, OnboardingRequest,
+    OnboardingRequestRepo,
 };
 
 use super::DbConn;
@@ -151,5 +152,47 @@ impl OnboardingRequestRepo for SqliteOnboardingRequestRepo {
         Ok(ClaimResult {
             claimed: affected > 0,
         })
+    }
+
+    fn expire_pending(
+        &self,
+        now: DateTime<Utc>,
+    ) -> Result<Vec<ExpiredOnboardingNotification>, AppError> {
+        let conn = self.conn.lock();
+        let now_str = now.to_rfc3339();
+
+        // Atomic: UPDATE + SELECT in explicit transaction
+        let tx = conn
+            .unchecked_transaction()
+            .map_err(db_err("expire_pending: begin"))?;
+
+        tx.execute(
+            "UPDATE onboarding_requests SET status = 'expired', decided_at = ?1 \
+             WHERE status = 'pending' AND expires_at <= ?1",
+            params![now_str],
+        )
+        .map_err(db_err("expire_pending: update"))?;
+
+        let results: Vec<ExpiredOnboardingNotification> = {
+            let mut stmt = tx
+                .prepare(
+                    "SELECT slack_user_id, message_ts FROM onboarding_requests \
+                     WHERE status = 'expired' AND decided_at = ?1",
+                )
+                .map_err(db_err("expire_pending: prepare"))?;
+
+            stmt.query_map(params![now_str], |r| {
+                Ok(ExpiredOnboardingNotification {
+                    slack_user_id: r.get(0)?,
+                    message_ts: r.get(1)?,
+                })
+            })
+            .map_err(db_err("expire_pending: query"))?
+            .filter_map(|r| r.ok())
+            .collect()
+        };
+
+        tx.commit().map_err(db_err("expire_pending: commit"))?;
+        Ok(results)
     }
 }

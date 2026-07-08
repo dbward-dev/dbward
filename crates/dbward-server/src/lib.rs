@@ -42,37 +42,50 @@ use dbward_domain::values::{DatabaseName, Environment};
 /// Convert a TOML RoleConfig into a domain RoleDefinition.
 fn build_role_definition(
     rc: &dbward_config::server::RoleConfig,
-) -> dbward_domain::auth::RoleDefinition {
+) -> Result<dbward_domain::auth::RoleDefinition, String> {
     let perms: Vec<dbward_domain::auth::Permission> = rc
         .permissions
         .iter()
         .map(|s| {
             s.parse()
-                .unwrap_or_else(|_| panic!("invalid permission '{}' in role '{}'", s, rc.name))
+                .map_err(|_| format!("role '{}': invalid permission '{}'", rc.name, s))
         })
-        .collect();
+        .collect::<Result<Vec<_>, _>>()?;
     let databases = if rc.databases.is_empty() {
-        vec![DatabaseName::new("*").unwrap()]
+        vec![
+            DatabaseName::new("*")
+                .map_err(|e| format!("role '{}': wildcard database: {e}", rc.name))?,
+        ]
     } else {
         rc.databases
             .iter()
-            .map(|d| DatabaseName::new(d).unwrap())
-            .collect()
+            .map(|d| {
+                DatabaseName::new(d)
+                    .map_err(|e| format!("role '{}': invalid database '{}': {}", rc.name, d, e))
+            })
+            .collect::<Result<Vec<_>, _>>()?
     };
     let environments = if rc.environments.is_empty() {
-        vec![Environment::new("*").unwrap()]
+        vec![
+            Environment::new("*")
+                .map_err(|e| format!("role '{}': wildcard environment: {e}", rc.name))?,
+        ]
     } else {
         rc.environments
             .iter()
-            .map(|e| Environment::new(e).unwrap())
-            .collect()
+            .map(|e| {
+                Environment::new(e).map_err(|err| {
+                    format!("role '{}': invalid environment '{}': {}", rc.name, e, err)
+                })
+            })
+            .collect::<Result<Vec<_>, _>>()?
     };
-    dbward_domain::auth::RoleDefinition {
+    Ok(dbward_domain::auth::RoleDefinition {
         name: rc.name.clone(),
         permissions: perms,
         databases,
         environments,
-    }
+    })
 }
 use state::AppState;
 use tokio::time::Duration;
@@ -384,7 +397,13 @@ pub async fn run_from_args(
                 }
             }
         }
-        let role_defs: Vec<_> = cfg.auth.roles.iter().map(build_role_definition).collect();
+        let role_defs: Vec<_> = cfg
+            .auth
+            .roles
+            .iter()
+            .map(build_role_definition)
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| format!("role config: {e}"))?;
         Arc::new(
             dbward_infra::auth::DbRoleResolver::new(
                 db_path.to_str().unwrap_or("dbward.db"),
@@ -802,35 +821,48 @@ pub async fn run_from_args(
                                         "config reload rejected: would leave zero admin users"
                                     );
                                 } else {
-                                    resolver.reload_config(
-                                        new_group_roles,
-                                        new_cfg
-                                            .auth
-                                            .roles
-                                            .iter()
-                                            .map(build_role_definition)
-                                            .collect(),
-                                        new_cfg.auth.default_role.clone(),
-                                    );
-                                    tracing::info!(
-                                        "config reload: DbRoleResolver updated (group_roles + role_definitions + default_role)"
-                                    );
-                                    // Only update reloadable config when admin guard passes
-                                    let role_resolver: Arc<dyn dbward_app::ports::RoleResolver> =
-                                        match reload_state.db_role_resolver.clone() {
-                                            Some(r) => r,
-                                            None => {
-                                                reload_state.reloadable.load().role_resolver.clone()
-                                            }
-                                        };
-                                    let new_r = state::ReloadableConfig {
-                                        role_resolver,
-                                        default_approval_ttl_secs: Some(
-                                            new_cfg.retention.approval_ttl_secs,
-                                        ),
-                                    };
-                                    reload_state.reloadable.store(Arc::new(new_r));
-                                    tracing::info!("config reloaded successfully");
+                                    let role_defs_result: Result<Vec<_>, _> = new_cfg
+                                        .auth
+                                        .roles
+                                        .iter()
+                                        .map(build_role_definition)
+                                        .collect();
+                                    match role_defs_result {
+                                        Err(e) => {
+                                            tracing::warn!(
+                                                "config reload rejected: invalid role definition: {e}"
+                                            );
+                                        }
+                                        Ok(role_defs) => {
+                                            resolver.reload_config(
+                                                new_group_roles,
+                                                role_defs,
+                                                new_cfg.auth.default_role.clone(),
+                                            );
+                                            tracing::info!(
+                                                "config reload: DbRoleResolver updated (group_roles + role_definitions + default_role)"
+                                            );
+                                            // Only update reloadable config when admin guard passes
+                                            let role_resolver: Arc<
+                                                dyn dbward_app::ports::RoleResolver,
+                                            > = match reload_state.db_role_resolver.clone() {
+                                                Some(r) => r,
+                                                None => reload_state
+                                                    .reloadable
+                                                    .load()
+                                                    .role_resolver
+                                                    .clone(),
+                                            };
+                                            let new_r = state::ReloadableConfig {
+                                                role_resolver,
+                                                default_approval_ttl_secs: Some(
+                                                    new_cfg.retention.approval_ttl_secs,
+                                                ),
+                                            };
+                                            reload_state.reloadable.store(Arc::new(new_r));
+                                            tracing::info!("config reloaded successfully");
+                                        }
+                                    }
                                 }
                             }
                         }

@@ -128,35 +128,9 @@ impl RequestWriterOps for SqliteTxScope<'_> {
         let share_with_json = serde_json::to_string(&req.share_with)
             .map_err(|e| AppError::Internal(format!("json: {e}")))?;
 
-        self.conn
-            .execute(
-                "INSERT INTO requests (id, requester, operation, database_id, detail, status, emergency, reason, idempotency_key, metadata_json, share_with_json, no_store, workflow_snapshot_json, decision_trace_json, execution_plan_json, cancelled_by, cancel_reason, created_at, updated_at, resolved_at, expires_at)
-                 VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20,?21)",
-                params![
-                    req.id,
-                    req.requester,
-                    req.operation.as_str(),
-                    db_id,
-                    req.detail,
-                    req.status.as_str(),
-                    req.emergency as i64,
-                    req.reason,
-                    req.idempotency_key,
-                    req.metadata_json,
-                    share_with_json,
-                    req.no_result_store as i64,
-                    req.workflow_snapshot_json,
-                    req.decision_trace_json,
-                    req.execution_plan_json,
-                    req.cancelled_by,
-                    req.cancel_reason,
-                    req.created_at.to_rfc3339(),
-                    req.updated_at.to_rfc3339(),
-                    req.resolved_at.map(|t| t.to_rfc3339()),
-                    req.expires_at.map(|t| t.to_rfc3339()),
-                ],
-            )
-            .map_err(db_err("tx: insert_request"))?;
+        let result =
+            super::request_repo::insert_request_row(self.conn, req, &db_id, &share_with_json);
+        super::request_repo::map_request_insert_error(result, req, "tx: insert_request")?;
 
         // Populate pending_approvers for view-permission resolution
         if req.status == RequestStatus::Pending {

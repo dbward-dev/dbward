@@ -35,6 +35,13 @@ pub struct ClaimResult {
     pub claimed: bool,
 }
 
+/// Notification data for an expired onboarding request.
+#[derive(Debug, Clone)]
+pub struct ExpiredOnboardingNotification {
+    pub slack_user_id: String,
+    pub message_ts: Option<String>,
+}
+
 /// Port trait for onboarding request persistence.
 pub trait OnboardingRequestRepo: Send + Sync {
     /// Check if a pending request exists for this Slack user.
@@ -57,4 +64,11 @@ pub trait OnboardingRequestRepo: Send + Sync {
         decided_at: DateTime<Utc>,
         decision_comment: Option<&str>,
     ) -> Result<ClaimResult, AppError>;
+
+    /// Atomically expire all pending requests past their TTL and return
+    /// notification data for the just-expired requests.
+    fn expire_pending(
+        &self,
+        now: DateTime<Utc>,
+    ) -> Result<Vec<ExpiredOnboardingNotification>, AppError>;
 }
