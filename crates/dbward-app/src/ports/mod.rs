@@ -13,7 +13,8 @@ pub use authorizer::{
 pub use clock::{Clock, IdGenerator, TokenValueGenerator};
 pub use crypto::{AuditSigner, AuditVerifier};
 pub use onboarding::{
-    ClaimResult, CreateOnboardingInput, OnboardingRequest, OnboardingRequestRepo,
+    ClaimResult, CreateOnboardingInput, ExpiredOnboardingNotification, OnboardingRequest,
+    OnboardingRequestRepo,
 };
 pub use repos::{
     AgentRepo, ApprovalRepo, AuditFilter, AuditLogger, AuditRepo, AuditVerifyFailure,

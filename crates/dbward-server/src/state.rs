@@ -111,7 +111,8 @@ pub struct AppState {
     pub(crate) slack_client: Option<Arc<dyn dbward_infra::slack::SlackClient>>,
     pub(crate) slack_onboarding: Option<dbward_config::server::SlackOnboardingConfig>,
 
-    // Raw DB connection for low-level ops (onboarding etc.)
+    // Raw DB connection for low-level ops (retained for future use / test compatibility)
+    #[allow(dead_code)]
     pub(crate) db_conn: dbward_infra::sqlite::DbConn,
 
     // DbRoleResolver (shared, long-lived — DashMap cache survives config reloads)
@@ -582,6 +583,7 @@ impl AppState {
         &self.onboarding_repo
     }
 
+    #[allow(dead_code)]
     pub(crate) fn db_conn(&self) -> &dbward_infra::sqlite::DbConn {
         &self.db_conn
     }

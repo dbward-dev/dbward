@@ -5,7 +5,10 @@ use dbward_app::error::AppError;
 use dbward_app::ports::RequestWriter;
 use dbward_domain::entities::{Request, RequestStatus};
 
-use super::{SqliteRequestRepo, database_id, populate_pending_approvers};
+use super::{
+    SqliteRequestRepo, database_id, insert_request_row, map_request_insert_error,
+    populate_pending_approvers,
+};
 use crate::sqlite::error::{db_err, json_err};
 
 impl RequestWriter for SqliteRequestRepo {
@@ -18,41 +21,9 @@ impl RequestWriter for SqliteRequestRepo {
         let share_with_json =
             serde_json::to_string(&req.share_with).map_err(json_err("request: insert"))?;
 
-        let insert_result = tx.execute(
-            "INSERT INTO requests (id, requester, operation, database_id, detail, status, emergency, reason, idempotency_key, idempotency_fingerprint, metadata_json, share_with_json, no_store, workflow_snapshot_json, decision_trace_json, execution_plan_json, cancelled_by, cancel_reason, created_at, updated_at, resolved_at, expires_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22)",
-            params![
-                req.id,
-                req.requester,
-                req.operation.as_str(),
-                db_id,
-                req.detail,
-                req.status.as_str(),
-                req.emergency as i64,
-                req.reason,
-                req.idempotency_key,
-                req.idempotency_fingerprint,
-                req.metadata_json,
-                share_with_json,
-                req.no_result_store as i64,
-                req.workflow_snapshot_json,
-                req.decision_trace_json,
-                req.execution_plan_json,
-                req.cancelled_by,
-                req.cancel_reason,
-                req.created_at.to_rfc3339(),
-                req.updated_at.to_rfc3339(),
-                req.resolved_at.map(|t| t.to_rfc3339()),
-                req.expires_at.map(|t| t.to_rfc3339()),
-            ],
-        );
-        if let Err(rusqlite::Error::SqliteFailure(err, _)) = &insert_result
-            && err.code == rusqlite::ffi::ErrorCode::ConstraintViolation
-            && req.idempotency_key.is_some()
-        {
-            return Err(AppError::Conflict("idempotency_key".into()));
-        }
-        insert_result.map_err(db_err("request: insert"))?;
+        let result = insert_request_row(&tx, req, &db_id, &share_with_json);
+        map_request_insert_error(result, req, "request: insert")?;
+
         if req.status == RequestStatus::Pending {
             populate_pending_approvers(&tx, &req.id, &req.workflow_snapshot_json, 0)?;
         }
@@ -68,41 +39,8 @@ impl RequestWriter for SqliteRequestRepo {
         let share_with_json = serde_json::to_string(&req.share_with)
             .map_err(json_err("request: create_and_dispatch"))?;
 
-        let insert_result = tx.execute(
-            "INSERT INTO requests (id, requester, operation, database_id, detail, status, emergency, reason, idempotency_key, idempotency_fingerprint, metadata_json, share_with_json, no_store, workflow_snapshot_json, decision_trace_json, execution_plan_json, cancelled_by, cancel_reason, created_at, updated_at, resolved_at, expires_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22)",
-            params![
-                req.id,
-                req.requester,
-                req.operation.as_str(),
-                db_id,
-                req.detail,
-                req.status.as_str(),
-                req.emergency as i64,
-                req.reason,
-                req.idempotency_key,
-                req.idempotency_fingerprint,
-                req.metadata_json,
-                share_with_json,
-                req.no_result_store as i64,
-                req.workflow_snapshot_json,
-                req.decision_trace_json,
-                req.execution_plan_json,
-                req.cancelled_by,
-                req.cancel_reason,
-                req.created_at.to_rfc3339(),
-                req.updated_at.to_rfc3339(),
-                req.resolved_at.map(|t| t.to_rfc3339()),
-                req.expires_at.map(|t| t.to_rfc3339()),
-            ],
-        );
-        if let Err(rusqlite::Error::SqliteFailure(err, _)) = &insert_result
-            && err.code == rusqlite::ffi::ErrorCode::ConstraintViolation
-            && req.idempotency_key.is_some()
-        {
-            return Err(AppError::Conflict("idempotency_key".into()));
-        }
-        insert_result.map_err(db_err("request: create_and_dispatch"))?;
+        let result = insert_request_row(&tx, req, &db_id, &share_with_json);
+        map_request_insert_error(result, req, "request: create_and_dispatch")?;
 
         tx.execute(
             "UPDATE requests SET status = 'dispatched', updated_at = ?2 WHERE id = ?1",

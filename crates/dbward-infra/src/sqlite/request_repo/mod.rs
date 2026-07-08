@@ -37,6 +37,69 @@ pub(crate) fn database_id(db: &DatabaseName, env: &Environment) -> String {
     format!("{}:{}", db.as_str(), env.as_str())
 }
 
+/// Low-level INSERT helper for requests table. Caller handles TX and error mapping.
+/// Returns the raw rusqlite::Result so callers can distinguish ConstraintViolation.
+pub(crate) fn insert_request_row(
+    conn: &rusqlite::Connection,
+    req: &Request,
+    db_id: &str,
+    share_with_json: &str,
+) -> rusqlite::Result<()> {
+    conn.execute(
+        "INSERT INTO requests (id, requester, operation, database_id, detail, status, emergency, reason, idempotency_key, idempotency_fingerprint, metadata_json, share_with_json, no_store, workflow_snapshot_json, decision_trace_json, execution_plan_json, cancelled_by, cancel_reason, created_at, updated_at, resolved_at, expires_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22)",
+        rusqlite::params![
+            req.id,
+            req.requester,
+            req.operation.as_str(),
+            db_id,
+            req.detail,
+            req.status.as_str(),
+            req.emergency as i64,
+            req.reason,
+            req.idempotency_key,
+            req.idempotency_fingerprint,
+            req.metadata_json,
+            share_with_json,
+            req.no_result_store as i64,
+            req.workflow_snapshot_json,
+            req.decision_trace_json,
+            req.execution_plan_json,
+            req.cancelled_by,
+            req.cancel_reason,
+            req.created_at.to_rfc3339(),
+            req.updated_at.to_rfc3339(),
+            req.resolved_at.map(|t| t.to_rfc3339()),
+            req.expires_at.map(|t| t.to_rfc3339()),
+        ],
+    )?;
+    Ok(())
+}
+
+/// Map a ConstraintViolation from insert_request_row to AppError::Conflict when
+/// idempotency_key is present and the violation is on the idempotency index;
+/// otherwise map to a generic DB error.
+pub(crate) fn map_request_insert_error(
+    result: rusqlite::Result<()>,
+    req: &Request,
+    context: &'static str,
+) -> Result<(), AppError> {
+    match result {
+        Ok(()) => Ok(()),
+        Err(rusqlite::Error::SqliteFailure(err, ref msg))
+            if err.code == rusqlite::ffi::ErrorCode::ConstraintViolation
+                && req.idempotency_key.is_some()
+                && msg
+                    .as_ref()
+                    .map(|m| m.contains("idempotency"))
+                    .unwrap_or(true) =>
+        {
+            Err(AppError::Conflict("idempotency_key".into()))
+        }
+        Err(e) => Err(db_err(context)(e)),
+    }
+}
+
 pub(crate) fn populate_pending_approvers(
     conn: &rusqlite::Connection,
     request_id: &str,
