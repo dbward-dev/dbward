@@ -39,7 +39,7 @@ struct ResolverSnapshot {
 }
 
 /// DB-backed role resolver with per-subject DashMap cache.
-/// Replaces ConfigRoleResolver — reads roles from users.roles_json + group_members.
+/// Reads roles from users.roles_json + group_members.
 pub struct DbRoleResolver {
     pool: r2d2::Pool<r2d2_sqlite::SqliteConnectionManager>,
     cache: DashMap<String, CachedEntry>,

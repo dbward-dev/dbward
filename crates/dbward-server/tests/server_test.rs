@@ -770,7 +770,7 @@ impl PolicyEvaluator for StubPolicyEvaluator {
     }
 }
 
-fn test_state() -> AppState {
+fn test_state_builder() -> AppStateBuilder {
     AppStateBuilder {
         token_verifier: Arc::new(MockTokenVerifier),
         reloadable: Arc::new(arc_swap::ArcSwap::from_pointee(
@@ -831,7 +831,7 @@ fn test_state() -> AppState {
         )),
         db_role_resolver: None,
         max_persist_bytes: 10 * 1024 * 1024,
-        auth_mode: "both".to_string(),
+        accept_oidc: true,
         storage_backend: "local".into(),
         mcp_enabled: false,
         mcp_allowed_origins: vec![],
@@ -843,7 +843,10 @@ fn test_state() -> AppState {
             3600, 100,
         )),
     }
-    .build()
+}
+
+fn test_state() -> AppState {
+    test_state_builder().build()
 }
 
 #[tokio::test]
@@ -1354,4 +1357,26 @@ async fn user_token_with_mismatched_ceiling_returns_403() {
         .unwrap();
     let resp = app.oneshot(req).await.unwrap();
     assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+}
+
+#[tokio::test]
+async fn jwt_rejected_when_oidc_not_configured() {
+    // Build state with accept_oidc: false (no OIDC verifier)
+    let mut builder = test_state_builder();
+    builder.accept_oidc = false;
+    let state = builder.build();
+    let app = build_app(state, vec![]);
+
+    // Send a JWT-like token (starts with "eyJ")
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/requests")
+                .header("authorization", "Bearer eyJhbGciOiJSUzI1NiJ9.fake.token")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
 }

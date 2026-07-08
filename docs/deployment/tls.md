@@ -115,7 +115,7 @@ dbward CLI and Agent enforce transport security:
 
 - **Agent**: refuses to start if `[server].url` is external HTTP (non-private IP, non-localhost). Set `allow_insecure = true` to override for API-token-only setups.
 - **CLI**: prints a warning for external HTTP connections. Use `--allow-insecure` or `[server] allow_insecure = true` to suppress.
-- **OIDC mode**: HTTP is always rejected regardless of `allow_insecure`.
+- **When [auth.oidc] is configured**: HTTP is always rejected regardless of `allow_insecure`.
 
 See `dbward doctor` for a TLS connectivity check.
 

@@ -303,8 +303,8 @@ echo "$AUDIT_BODY" | jq -e '[.events[] | select(.event_type == "user.deleted")] 
 echo ""
 echo "=== 32. Integration ==="
 
-# In token-only mode, OIDC tests are N/A
-skip "32.1 OIDC provider down — auth mode is token-only in dev"
+# OIDC not configured in dev environment — skip OIDC-specific tests
+skip "32.1 OIDC provider down — OIDC not configured in dev"
 
 # ============================================================
 summary

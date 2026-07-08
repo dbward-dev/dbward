@@ -437,7 +437,7 @@ url = "${DATABASE_URL_ANALYTICS}"
 state_dir = "/data"
 
 [auth]
-mode = "token"  # "oidc", "token", or "both"
+# OIDC enabled when [auth.oidc] section is present
 
 [[webhooks]]
 url = "https://hooks.slack.com/services/..."

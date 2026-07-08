@@ -94,7 +94,7 @@ pub struct AppState {
 
     // Config — pub(crate)
     pub(crate) max_persist_bytes: usize,
-    pub(crate) auth_mode: String,
+    pub(crate) accept_oidc: bool,
     pub(crate) storage_backend: String,
 
     // Shutdown — pub(crate)
@@ -759,7 +759,7 @@ pub struct AppStateBuilder {
     pub audit_verifier: Arc<dyn dbward_app::ports::crypto::AuditVerifier>,
     pub metrics: Arc<Metrics>,
     pub max_persist_bytes: usize,
-    pub auth_mode: String,
+    pub accept_oidc: bool,
     pub storage_backend: String,
     pub draining: Arc<AtomicBool>,
     pub preflight_job_repo: Arc<dyn PreflightJobRepo>,
@@ -827,7 +827,7 @@ impl AppStateBuilder {
             audit_verifier: self.audit_verifier,
             metrics: self.metrics,
             max_persist_bytes: self.max_persist_bytes,
-            auth_mode: self.auth_mode,
+            accept_oidc: self.accept_oidc,
             storage_backend: self.storage_backend,
             draining: self.draining,
             preflight_job_repo: self.preflight_job_repo,

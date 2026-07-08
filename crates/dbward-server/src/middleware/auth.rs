@@ -95,12 +95,10 @@ pub async fn auth_middleware(
                 .to_string(),
         ))?;
 
-    // H-17: Enforce auth_mode
+    // H-17: Reject JWTs when OIDC is not active
     let is_jwt = token.starts_with("eyJ");
-    match state.auth_mode.as_str() {
-        "token" if is_jwt => return Err(auth_error_response(AuthError::OidcNotConfigured)),
-        "oidc" if !is_jwt => return Err(auth_error_response(AuthError::InvalidToken)),
-        _ => {}
+    if is_jwt && !state.accept_oidc {
+        return Err(auth_error_response(AuthError::OidcNotConfigured));
     }
 
     let mut user = if is_jwt {

@@ -917,7 +917,6 @@ mode = "always"
         let cfg = server_cfg(
             r#"
 [auth]
-mode = "token"
 default_role = "developer"
 
 [[auth.groups]]
@@ -939,7 +938,6 @@ roles = ["admin"]
         let cfg = server_cfg(
             r#"
 [auth]
-mode = "token"
 
 [[auth.roles]]
 name = "dba"

@@ -8,7 +8,6 @@ secrets:
 server:
   config: |
     [auth]
-    mode = "token"
     [[databases]]
     name = "app"
     environments = ["production"]

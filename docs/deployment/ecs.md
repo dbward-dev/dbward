@@ -91,7 +91,6 @@ Store server config in SSM instead of inline to avoid heredoc issues and enable 
 aws ssm put-parameter --name /dbward/server-config --type SecureString --value '
 state_dir = "/data"
 [auth]
-mode = "token"
 [[databases]]
 name = "app"
 environments = ["production"]

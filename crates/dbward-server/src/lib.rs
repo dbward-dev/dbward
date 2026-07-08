@@ -159,17 +159,6 @@ pub async fn run_from_args(
     // Auth
     let mut token_verifier_impl = dbward_infra::auth::ApiTokenVerifier::new(token_repo.clone());
 
-    // token_verifier is finalized after OIDC injection below
-    // initial_reloadable is built after OIDC injection determines final effective_auth_mode
-    let pre_reloadable = build_reloadable_config_with(
-        &cfg,
-        cfg.effective_auth_mode(),
-        None,
-        Some(policy_repo.clone()),
-        None, // user_repo not available yet (pre-bootstrap)
-    )
-    .map_err(|e| format!("config: {e}"))?;
-    let role_resolver = pre_reloadable.role_resolver.clone();
     let authorizer: Arc<dyn dbward_app::ports::Authorizer> =
         Arc::new(dbward_infra::auth::RbacAuthorizer);
 
@@ -253,44 +242,6 @@ pub async fn run_from_args(
         }
     });
 
-    let slack_notifier: Option<Arc<dyn dbward_app::ports::Notifier>> =
-        slack_config.as_ref().map(|sc| {
-            let slack_client = Arc::new(dbward_infra::slack::SlackHttpClient::new(
-                sc.bot_token.clone(),
-            ));
-            let slack_msg_repo = Arc::new(dbward_infra::sqlite::SqliteSlackMessageRepo::new(
-                conn.clone(),
-            ));
-            let user_resolver = Arc::new(dbward_infra::slack::SlackUserResolver::new(
-                slack_client.clone(),
-                user_repo.clone(),
-            ));
-
-            // Background warm-up: resolve Slack UIDs for all known subjects
-            let warmup_resolver = user_resolver.clone();
-            let warmup_user_repo: Arc<dyn dbward_app::ports::UserRepo> = user_repo.clone();
-            tokio::spawn(async move {
-                let subjects: Vec<String> = warmup_user_repo
-                    .list()
-                    .unwrap_or_default()
-                    .into_iter()
-                    .map(|u| u.id)
-                    .collect();
-                warmup_resolver.warm_up(subjects).await;
-            });
-
-            Arc::new(dbward_infra::slack::SlackNotifier::new(
-                slack_client.clone(),
-                slack_msg_repo,
-                context_repo.clone(),
-                request_repo.clone(),
-                request_repo.clone(),
-                user_resolver,
-                role_resolver.clone(),
-                sc.clone(),
-            )) as Arc<dyn dbward_app::ports::Notifier>
-        });
-
     let slack_client_for_state: Option<Arc<dyn dbward_infra::slack::SlackClient>> =
         slack_config.as_ref().map(|sc| {
             Arc::new(dbward_infra::slack::SlackHttpClient::new(
@@ -298,15 +249,7 @@ pub async fn run_from_args(
             )) as Arc<dyn dbward_infra::slack::SlackClient>
         });
 
-    // Composite notifier: webhook dispatcher + optional Slack notifier
-    let notifier: Arc<dyn dbward_app::ports::Notifier> = if let Some(ref sn) = slack_notifier {
-        Arc::new(CompositeNotifier {
-            webhook: notifier,
-            slack: sn.clone(),
-        })
-    } else {
-        notifier
-    };
+    // Composite notifier: built after db_role_resolver is available (below)
 
     let ssrf_validator: Arc<dyn dbward_app::ports::SsrfValidator> = if cfg.allow_private_networks {
         Arc::new(dbward_infra::webhook::PermissiveSsrfGuard)
@@ -394,27 +337,12 @@ pub async fn run_from_args(
     };
 
     // C-10: Inject OIDC verifier (requires commercial feature + Team license)
-    let mut effective_auth_mode = cfg.effective_auth_mode().to_string();
+    let mut oidc_active = false;
 
     #[cfg(feature = "commercial")]
-    if (effective_auth_mode == "oidc" || effective_auth_mode == "both")
-        && let Some(ref oidc_cfg) = cfg.auth.oidc
-    {
+    if let Some(ref oidc_cfg) = cfg.auth.oidc {
         if license_checker.effective_plan() == "free" {
-            if cfg.auth.mode.is_some() {
-                return Err(format!(
-                    "auth.mode = \"{}\" requires a Team license. \
-                     Either provide a valid license or change auth.mode to \"token\".",
-                    effective_auth_mode
-                )
-                .into());
-            } else {
-                tracing::warn!(
-                    "OIDC configured but Team license not available. \
-                     Effective auth mode: token-only."
-                );
-                effective_auth_mode = "token".to_string();
-            }
+            tracing::warn!("OIDC configured but Team license not available. OIDC disabled.");
         } else {
             let oidc = dbward_commercial_oidc::OidcVerifier::new(
                 oidc_cfg.issuer_url.trim().to_string(),
@@ -429,39 +357,24 @@ pub async fn run_from_args(
                 oidc_cfg.jwks_uri.as_deref().map(|s| s.trim().to_string()),
             );
             token_verifier_impl = token_verifier_impl.with_oidc(Arc::new(oidc));
+            oidc_active = true;
         }
     }
     #[cfg(not(feature = "commercial"))]
-    if effective_auth_mode == "oidc" || effective_auth_mode == "both" {
-        if cfg.auth.mode.is_some() {
-            return Err(format!(
-                "auth.mode = \"{}\" requires the commercial feature (Team license). \
-                 Change auth.mode to \"token\" or use a commercial build.",
-                effective_auth_mode
-            )
-            .into());
-        } else {
-            tracing::warn!(
-                "OIDC configured but commercial feature not available. \
-                 Effective auth mode: token-only."
-            );
-            effective_auth_mode = "token".to_string();
-        }
+    if cfg.auth.oidc.is_some() {
+        tracing::warn!("OIDC configured but commercial feature not available. OIDC disabled.");
     }
 
-    tracing::info!(auth_mode = %effective_auth_mode, "Authentication configured");
+    tracing::info!(oidc_active = oidc_active, "Authentication configured");
 
-    // Rebuild initial_reloadable with the final effective_auth_mode
-    // (may differ from cfg.effective_auth_mode() due to license fallback)
-    // V25: Use DbRoleResolver (DashMap + TTL 5s) instead of ConfigRoleResolver bridge
+    // Rebuild initial_reloadable with the final oidc_active state
+    // V25: Use DbRoleResolver (DashMap + TTL 5s)
     let db_role_resolver = {
         let mut group_roles: HashMap<String, Vec<String>> = HashMap::new();
         for gc in &cfg.auth.groups {
             group_roles.insert(gc.name.clone(), gc.roles.clone());
         }
-        if (effective_auth_mode == "oidc" || effective_auth_mode == "both")
-            && let Some(ref oidc) = cfg.auth.oidc
-        {
+        if oidc_active && let Some(ref oidc) = cfg.auth.oidc {
             for mapping in &oidc.role_mappings {
                 if mapping.claim == "groups" {
                     group_roles
@@ -487,6 +400,56 @@ pub async fn run_from_args(
     let initial_reloadable = state::ReloadableConfig {
         role_resolver: db_role_resolver.clone() as Arc<dyn dbward_app::ports::RoleResolver>,
         default_approval_ttl_secs: Some(cfg.retention.approval_ttl_secs),
+    };
+
+    // Slack notifier: built here so it uses the final db_role_resolver
+    // (which correctly excludes OIDC role_mappings when oidc_active=false)
+    let slack_notifier: Option<Arc<dyn dbward_app::ports::Notifier>> =
+        slack_config.as_ref().map(|sc| {
+            let slack_client = Arc::new(dbward_infra::slack::SlackHttpClient::new(
+                sc.bot_token.clone(),
+            ));
+            let slack_msg_repo = Arc::new(dbward_infra::sqlite::SqliteSlackMessageRepo::new(
+                conn.clone(),
+            ));
+            let user_resolver = Arc::new(dbward_infra::slack::SlackUserResolver::new(
+                slack_client.clone(),
+                user_repo.clone(),
+            ));
+
+            // Background warm-up: resolve Slack UIDs for all known subjects
+            let warmup_resolver = user_resolver.clone();
+            let warmup_user_repo: Arc<dyn dbward_app::ports::UserRepo> = user_repo.clone();
+            tokio::spawn(async move {
+                let subjects: Vec<String> = warmup_user_repo
+                    .list()
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(|u| u.id)
+                    .collect();
+                warmup_resolver.warm_up(subjects).await;
+            });
+
+            Arc::new(dbward_infra::slack::SlackNotifier::new(
+                slack_client.clone(),
+                slack_msg_repo,
+                context_repo.clone(),
+                request_repo.clone(),
+                request_repo.clone(),
+                user_resolver,
+                db_role_resolver.clone() as Arc<dyn dbward_app::ports::RoleResolver>,
+                sc.clone(),
+            )) as Arc<dyn dbward_app::ports::Notifier>
+        });
+
+    // Composite notifier: webhook dispatcher + optional Slack notifier
+    let notifier: Arc<dyn dbward_app::ports::Notifier> = if let Some(ref sn) = slack_notifier {
+        Arc::new(CompositeNotifier {
+            webhook: notifier,
+            slack: sn.clone(),
+        })
+    } else {
+        notifier
     };
 
     let token_verifier: Arc<dyn dbward_app::ports::TokenVerifier> = Arc::new(token_verifier_impl);
@@ -552,7 +515,7 @@ pub async fn run_from_args(
         )),
         metrics: Arc::new(metrics::Metrics::new()),
         max_persist_bytes: cfg.result_storage.max_persist_bytes,
-        auth_mode: effective_auth_mode.clone(),
+        accept_oidc: oidc_active,
         storage_backend: cfg.result_storage.backend.clone(),
         draining: draining.clone(),
         preflight_job_repo: Arc::new(dbward_infra::sqlite::SqlitePreflightJobRepo::new(
@@ -662,9 +625,7 @@ pub async fn run_from_args(
         let reload_config_path = config_path.to_string();
         let reload_ssrf_validator = reload_ssrf.clone();
         let allow_private = cfg.allow_private_networks;
-        let startup_auth_mode = effective_auth_mode.clone();
-        // For reload comparison: use config-level effective mode (before license fallback)
-        let startup_config_auth_mode = cfg.effective_auth_mode().to_string();
+        let startup_oidc_active = oidc_active;
         // Snapshot OIDC connection settings for change detection
         let startup_oidc_issuer = cfg
             .auth
@@ -712,17 +673,14 @@ pub async fn run_from_args(
                         continue;
                     }
                 };
-                let new_cfg = match config::ServerConfig::parse_for_reload(
-                    &raw,
-                    &reload_config_path,
-                    &startup_auth_mode,
-                ) {
-                    Ok(c) => c,
-                    Err(e) => {
-                        tracing::warn!("config reload failed (parse): {e}");
-                        continue;
-                    }
-                };
+                let new_cfg =
+                    match config::ServerConfig::parse_for_reload(&raw, &reload_config_path) {
+                        Ok(c) => c,
+                        Err(e) => {
+                            tracing::warn!("config reload failed (parse): {e}");
+                            continue;
+                        }
+                    };
 
                 // Detect auth connection changes (compare config-level values,
                 // not runtime fallback — avoids permanent mismatch when license forces fallback)
@@ -748,20 +706,19 @@ pub async fn run_from_args(
                     .as_ref()
                     .and_then(|o| o.jwks_uri.as_deref())
                     .map(|s| s.trim().to_string());
-                // When startup fell back (e.g., "both" → "token" due to license),
-                // only OIDC connection field changes are restart-worthy.
-                // auth.mode changes to/from the fallback value are expected.
-                let auth_changed = new_oidc_issuer != startup_oidc_issuer
+                // Detect OIDC connection changes (restart-worthy)
+                let oidc_connection_changed = new_oidc_issuer != startup_oidc_issuer
                     || new_oidc_audience != startup_oidc_audience
                     || new_oidc_client_id != startup_oidc_client_id
-                    || new_oidc_jwks != startup_oidc_jwks
-                    || (startup_auth_mode == startup_config_auth_mode
-                        && new_cfg.effective_auth_mode() != startup_config_auth_mode);
+                    || new_oidc_jwks != startup_oidc_jwks;
+                // Detect OIDC section added/removed
+                let oidc_presence_changed = cfg.auth.oidc.is_some() != new_cfg.auth.oidc.is_some();
+                let auth_changed = oidc_connection_changed || oidc_presence_changed;
                 if auth_changed {
                     tracing::warn!(
-                        configured = %new_cfg.effective_auth_mode(),
-                        active = %startup_auth_mode,
-                        "auth.mode change detected but requires restart to take effect"
+                        oidc_configured = new_cfg.auth.oidc.is_some(),
+                        oidc_active = startup_oidc_active,
+                        "OIDC configuration change detected but requires restart to take effect"
                     );
                 }
 
@@ -796,9 +753,7 @@ pub async fn run_from_args(
                                 for gc in &new_cfg.auth.groups {
                                     new_group_roles.insert(gc.name.clone(), gc.roles.clone());
                                 }
-                                if (startup_auth_mode == "oidc" || startup_auth_mode == "both")
-                                    && let Some(ref oidc) = new_cfg.auth.oidc
-                                {
+                                if startup_oidc_active && let Some(ref oidc) = new_cfg.auth.oidc {
                                     for mapping in &oidc.role_mappings {
                                         if mapping.claim == "groups" {
                                             new_group_roles
@@ -827,9 +782,8 @@ pub async fn run_from_args(
                                                 })
                                     });
                                 // OIDC role_mappings can also grant admin at login time
-                                // (only relevant when auth mode supports OIDC)
-                                let oidc_can_grant_admin = (startup_auth_mode == "oidc"
-                                    || startup_auth_mode == "both")
+                                // (only relevant when OIDC was active at startup)
+                                let oidc_can_grant_admin = startup_oidc_active
                                     && new_cfg
                                         .auth
                                         .oidc
@@ -1160,65 +1114,6 @@ fn build_sync_inputs_and_run(
     .map_err(|e| -> Box<dyn std::error::Error> { e.to_string().into() })
 }
 
-fn build_reloadable_config_with(
-    cfg: &config::ServerConfig,
-    effective_auth_mode: &str,
-    override_role_mappings: Option<&[dbward_config::server::OidcRoleMapping]>,
-    policy_repo: Option<Arc<dyn dbward_app::ports::PolicyRepo>>,
-    user_repo: Option<&Arc<dyn dbward_app::ports::UserRepo>>,
-) -> Result<state::ReloadableConfig, Box<dyn std::error::Error>> {
-    // Build group_roles from config [[auth.groups]].roles
-    let mut group_roles: HashMap<String, Vec<String>> = HashMap::new();
-    for gc in &cfg.auth.groups {
-        group_roles.insert(gc.name.clone(), gc.roles.clone());
-    }
-
-    // Include OIDC role_mappings (claim=groups → group_roles entry)
-    if effective_auth_mode == "oidc" || effective_auth_mode == "both" {
-        let mappings: &[dbward_config::server::OidcRoleMapping] = match override_role_mappings {
-            Some(m) => m,
-            None => cfg.auth.oidc.as_ref().map_or(&[], |o| &o.role_mappings),
-        };
-        for mapping in mappings {
-            if mapping.claim == "groups" {
-                group_roles
-                    .entry(mapping.value.clone())
-                    .or_default()
-                    .push(mapping.role.clone());
-            }
-        }
-    }
-
-    let role_definitions: Vec<_> = cfg.auth.roles.iter().map(build_role_definition).collect();
-
-    // V25: Read user→roles from DB for ConfigRoleResolver bridge
-    let user_bindings: HashMap<String, Vec<String>> = match user_repo {
-        Some(repo) => repo
-            .list()
-            .unwrap_or_default()
-            .into_iter()
-            .filter(|u| !u.roles.is_empty())
-            .map(|u| (u.id, u.roles))
-            .collect(),
-        None => HashMap::new(),
-    };
-
-    let resolver = dbward_infra::auth::ConfigRoleResolver::with_policy_repo(
-        role_definitions,
-        group_roles,
-        user_bindings,
-        cfg.auth.default_role.clone(),
-        policy_repo,
-    )
-    .with_group_members(HashMap::new());
-    let role_resolver: Arc<dyn dbward_app::ports::RoleResolver> = Arc::new(resolver);
-
-    Ok(state::ReloadableConfig {
-        role_resolver,
-        default_approval_ttl_secs: Some(cfg.retention.approval_ttl_secs),
-    })
-}
-
 #[cfg(test)]
 mod safety_guard_tests {
     use super::*;
@@ -1228,7 +1123,6 @@ mod safety_guard_tests {
             r#"
             state_dir = "/tmp"
             [auth]
-            mode = "token"
             "#,
         )
         .unwrap()
@@ -1281,7 +1175,6 @@ mod safety_guard_tests {
             r#"
             state_dir = "/tmp"
             [auth]
-            mode = "token"
             [[workflows]]
             database = "db"
             environment = "prod"

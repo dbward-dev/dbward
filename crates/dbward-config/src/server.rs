@@ -74,52 +74,32 @@ impl ServerConfig {
     }
 
     /// Parse from TOML string without full auth-connection validation (for reload).
-    pub fn parse_for_reload(
-        input: &str,
-        source: &str,
-        active_auth_mode: &str,
-    ) -> Result<Self, ConfigError> {
+    pub fn parse_for_reload(input: &str, source: &str) -> Result<Self, ConfigError> {
         let expanded = expand_env_vars(input)?;
         check_deprecated_fields(&expanded, source)?;
         let cfg: Self = toml::from_str(&expanded).map_err(|e| ConfigError::Parse {
             path: source.to_string(),
             message: e.to_string(),
         })?;
-        cfg.validate_for_reload(active_auth_mode)?;
+        cfg.validate_for_reload()?;
         Ok(cfg)
     }
 
-    /// Resolve effective auth mode based on explicit setting and OIDC presence.
+    /// Resolve effective auth mode based on OIDC presence.
     pub fn effective_auth_mode(&self) -> &str {
-        match &self.auth.mode {
-            Some(m) => m.as_str(),
-            None => {
-                if self.auth.oidc.is_some() {
-                    "both"
-                } else {
-                    "token"
-                }
-            }
+        if self.auth.oidc.is_some() {
+            "both"
+        } else {
+            "token"
         }
     }
 
-    /// Reload validation: skips auth connection settings (restart-only).
-    /// Still validates auth.mode values and role_mappings for active auth mode.
-    pub fn validate_for_reload(&self, active_auth_mode: &str) -> Result<(), ConfigError> {
+    /// Reload validation: skips OIDC connection checks (restart-only).
+    /// Validates role_mappings when [auth.oidc] is present (config correctness always enforced).
+    pub fn validate_for_reload(&self) -> Result<(), ConfigError> {
         self.validate_common()?;
-        // Reject invalid auth.mode values even on reload
-        if let Some(ref m) = self.auth.mode {
-            match m.as_str() {
-                "token" | "oidc" | "both" => {}
-                other => {
-                    return Err(ConfigError::Validation(format!(
-                        "auth.mode: unknown value '{other}' (expected: token, oidc, both)"
-                    )));
-                }
-            }
-        }
-        // Validate role_mappings when active mode uses OIDC (these are reloadable)
-        if active_auth_mode == "oidc" || active_auth_mode == "both" {
+        // Validate role_mappings when OIDC section is present
+        if self.auth.oidc.is_some() {
             self.validate_oidc_role_mappings()?;
         }
         Ok(())
@@ -128,39 +108,15 @@ impl ServerConfig {
     fn validate(&self) -> Result<(), ConfigError> {
         self.validate_common()?;
         self.validate_auth_connection()?;
-        let effective = self.effective_auth_mode();
-        if effective == "oidc" || effective == "both" {
+        if self.auth.oidc.is_some() {
             self.validate_oidc_role_mappings()?;
         }
         Ok(())
     }
 
     fn validate_auth_connection(&self) -> Result<(), ConfigError> {
-        // auth.mode value validation
-        if let Some(ref m) = self.auth.mode {
-            match m.as_str() {
-                "token" | "oidc" | "both" => {}
-                other => {
-                    return Err(ConfigError::Validation(format!(
-                        "auth.mode: unknown value '{other}' (expected: token, oidc, both)"
-                    )));
-                }
-            }
-        }
-
-        let effective = self.effective_auth_mode();
-
-        // mode requiring OIDC must have [auth.oidc]
-        if (effective == "oidc" || effective == "both") && self.auth.oidc.is_none() {
-            return Err(ConfigError::Validation(format!(
-                "auth.mode = \"{effective}\" requires [auth.oidc] configuration section"
-            )));
-        }
-
-        // OIDC config field validation (only when effective mode uses OIDC)
-        if (effective == "oidc" || effective == "both")
-            && let Some(ref oidc) = self.auth.oidc
-        {
+        // OIDC config field validation (only when section is present)
+        if let Some(ref oidc) = self.auth.oidc {
             let issuer = oidc.issuer_url.trim();
             if issuer.is_empty() {
                 return Err(ConfigError::Validation(
@@ -569,9 +525,6 @@ fn default_approval_ttl() -> u64 {
 
 #[derive(Debug, Deserialize, Default)]
 pub struct AuthConfig {
-    /// None = omitted (default resolved by context), Some = explicitly set.
-    #[serde(default)]
-    pub mode: Option<String>,
     #[serde(default)]
     pub oidc: Option<OidcConfig>,
     pub default_role: Option<String>,
@@ -1442,7 +1395,6 @@ role = "admin"
 min = 1
 
 [auth]
-mode = "token"
 
 [result_storage]
 root_dir = "/tmp/r"
@@ -1635,14 +1587,13 @@ mod auth_mode_tests {
     }
 
     #[test]
-    fn mode_omitted_no_oidc_defaults_to_token() {
+    fn no_oidc_effective_mode_is_token() {
         let cfg = parse("").unwrap();
         assert_eq!(cfg.effective_auth_mode(), "token");
-        assert!(cfg.auth.mode.is_none());
     }
 
     #[test]
-    fn mode_omitted_with_oidc_defaults_to_both() {
+    fn oidc_present_effective_mode_is_both() {
         let cfg = parse(
             r#"
 [auth.oidc]
@@ -1655,35 +1606,15 @@ audience = "dbward"
     }
 
     #[test]
-    fn mode_token_explicit_ok() {
+    fn mode_field_is_silently_ignored() {
         let cfg = parse("[auth]\nmode = \"token\"\n").unwrap();
         assert_eq!(cfg.effective_auth_mode(), "token");
-    }
-
-    #[test]
-    fn mode_invalid_rejected() {
-        let err = parse("[auth]\nmode = \"invalid\"\n").unwrap_err();
-        assert!(err.to_string().contains("unknown value 'invalid'"));
-    }
-
-    #[test]
-    fn mode_oidc_without_section_rejected() {
-        let err = parse("[auth]\nmode = \"oidc\"\n").unwrap_err();
-        assert!(err.to_string().contains("requires [auth.oidc]"));
-    }
-
-    #[test]
-    fn mode_both_without_section_rejected() {
-        let err = parse("[auth]\nmode = \"both\"\n").unwrap_err();
-        assert!(err.to_string().contains("requires [auth.oidc]"));
     }
 
     #[test]
     fn oidc_issuer_empty_rejected() {
         let err = parse(
             r#"
-[auth]
-mode = "oidc"
 [auth.oidc]
 issuer_url = ""
 audience = "dbward"
@@ -1697,8 +1628,6 @@ audience = "dbward"
     fn oidc_issuer_bad_scheme_rejected() {
         let err = parse(
             r#"
-[auth]
-mode = "oidc"
 [auth.oidc]
 issuer_url = "ftp://example.com"
 audience = "dbward"
@@ -1712,8 +1641,6 @@ audience = "dbward"
     fn oidc_audience_and_client_id_both_empty_rejected() {
         let err = parse(
             r#"
-[auth]
-mode = "oidc"
 [auth.oidc]
 issuer_url = "https://auth.example.com"
 audience = ""
@@ -1731,8 +1658,6 @@ client_id = ""
     fn oidc_jwks_uri_whitespace_rejected() {
         let err = parse(
             r#"
-[auth]
-mode = "oidc"
 [auth.oidc]
 issuer_url = "https://auth.example.com"
 audience = "dbward"
@@ -1747,8 +1672,6 @@ jwks_uri = "   "
     fn oidc_jwks_uri_bad_scheme_rejected() {
         let err = parse(
             r#"
-[auth]
-mode = "oidc"
 [auth.oidc]
 issuer_url = "https://auth.example.com"
 audience = "dbward"
@@ -1763,26 +1686,9 @@ jwks_uri = "ftp://keys.example.com"
     }
 
     #[test]
-    fn oidc_valid_config_accepted() {
+    fn oidc_section_with_valid_config_accepted() {
         let cfg = parse(
             r#"
-[auth]
-mode = "oidc"
-[auth.oidc]
-issuer_url = "https://auth.example.com/realms/test"
-audience = "dbward"
-"#,
-        )
-        .unwrap();
-        assert_eq!(cfg.effective_auth_mode(), "oidc");
-    }
-
-    #[test]
-    fn both_mode_with_oidc_valid() {
-        let cfg = parse(
-            r#"
-[auth]
-mode = "both"
 [auth.oidc]
 issuer_url = "https://auth.example.com/realms/test"
 audience = "dbward"
@@ -1793,39 +1699,36 @@ audience = "dbward"
     }
 
     #[test]
-    fn token_mode_with_oidc_section_accepted() {
-        // OIDC config present but mode=token → OIDC ignored, no validation on OIDC fields
-        let cfg = parse(
-            r#"
-[auth]
-mode = "token"
+    fn validate_for_reload_validates_role_mappings_when_oidc_present() {
+        let full = r#"
+state_dir = "/tmp"
 [auth.oidc]
-issuer_url = "not-a-url"
-audience = ""
-"#,
-        )
-        .unwrap();
+issuer_url = "https://auth.example.com"
+audience = "dbward"
+[[auth.oidc.role_mappings]]
+claim = "groups"
+value = "admins"
+role = "nonexistent_role"
+"#;
+        let expanded = crate::expand::expand_env_vars(full).unwrap();
+        let cfg: ServerConfig = toml::from_str(&expanded).unwrap();
+        let err = cfg.validate_for_reload().unwrap_err();
+        assert!(err.to_string().contains("nonexistent_role"));
+    }
+
+    #[test]
+    fn validate_for_reload_skips_role_mappings_when_no_oidc() {
+        let full = "state_dir = \"/tmp\"\n[auth]\ndefault_role = \"readonly\"\n";
+        let expanded = crate::expand::expand_env_vars(full).unwrap();
+        let cfg: ServerConfig = toml::from_str(&expanded).unwrap();
+        assert!(cfg.validate_for_reload().is_ok());
+    }
+
+    #[test]
+    fn parse_for_reload_ignores_mode_field() {
+        let full = "state_dir = \"/tmp\"\n[auth]\nmode = \"token\"\n";
+        let cfg = ServerConfig::parse_for_reload(full, "test").unwrap();
         assert_eq!(cfg.effective_auth_mode(), "token");
-    }
-
-    #[test]
-    fn validate_for_reload_rejects_invalid_mode() {
-        let full = "state_dir = \"/tmp\"\n[auth]\nmode = \"bogus\"\n";
-        let expanded = crate::expand::expand_env_vars(full).unwrap();
-        let cfg: ServerConfig = toml::from_str(&expanded).unwrap();
-        let err = cfg.validate_for_reload("token").unwrap_err();
-        assert!(err.to_string().contains("unknown value 'bogus'"));
-    }
-
-    #[test]
-    fn validate_for_reload_skips_oidc_connection_check() {
-        // mode=oidc without [auth.oidc] → validate_for_reload should NOT fail
-        // (auth connection is restart-only)
-        let full = "state_dir = \"/tmp\"\n[auth]\nmode = \"oidc\"\n";
-        let expanded = crate::expand::expand_env_vars(full).unwrap();
-        let cfg: ServerConfig = toml::from_str(&expanded).unwrap();
-        // active mode is "token" so role_mappings check is skipped
-        assert!(cfg.validate_for_reload("token").is_ok());
     }
 }
 

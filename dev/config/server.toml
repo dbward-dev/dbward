@@ -7,7 +7,6 @@ trusted_proxies = ["172.16.0.0/12", "127.0.0.1"]
 allow_private_networks = true
 
 [auth]
-mode = "token"
 # E2E: subjects without explicit bindings resolve to readonly (minimum privilege)
 default_role = "readonly"
 

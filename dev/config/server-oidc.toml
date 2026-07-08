@@ -1,7 +1,6 @@
 state_dir = "/data"
 allow_private_networks = true
 [auth]
-mode = "both"
 
 [auth.oidc]
 issuer = "http://localhost:8080/realms/dbward"

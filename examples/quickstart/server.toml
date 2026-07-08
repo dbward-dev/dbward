@@ -1,7 +1,6 @@
 state_dir = "/data"
 
 [auth]
-mode = "token"
 default_role = "developer"
 
 [[databases]]

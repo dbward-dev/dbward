@@ -7,18 +7,14 @@ description: Configure OIDC and API token auth
 
 dbward supports two authentication methods: **API tokens** (simple, self-hosted) and **OIDC** (SSO with your identity provider). You can use either or both.
 
-## Authentication modes
+## Authentication
 
-```toml
-[auth]
-mode = "token"   # "token" | "oidc" | "both"
-```
+dbward supports two authentication methods that work simultaneously:
 
-| Mode | Use case |
-|------|----------|
-| `token` | Small teams, CI/CD, agents. No IdP needed. |
-| `oidc` | Teams with Google/Okta/Keycloak SSO. |
-| `both` | OIDC for humans, API tokens for agents and CI. |
+- **API Tokens** (`dbw_...`): Always accepted. Used by CLI, agents, and CI/CD.
+- **OIDC JWTs** (`eyJ...`): Accepted when `[auth.oidc]` is configured and a Team license is active.
+
+When `[auth.oidc]` is present, both methods are accepted. When absent, only API tokens work.
 
 ---
 
@@ -130,9 +126,6 @@ curl http://localhost:3000/api/tokens/$TOKEN_ID/inspect \
 ### Server configuration
 
 ```toml
-[auth]
-mode = "oidc"    # or "both" to also allow API tokens
-
 [auth.oidc]
 issuer = "https://accounts.google.com"
 client_id = "123456789.apps.googleusercontent.com"
@@ -321,9 +314,8 @@ The `--no-scope-ceiling` flag removes the scope ceiling restriction, allowing th
 
 > **Note:** `--no-scope-ceiling` conflicts with `--scope-roles` — they cannot be used together.
 
-In OIDC mode (`mode = "oidc"`), agents are the only entities allowed to use API tokens. Human users must authenticate via OIDC.
+When [auth.oidc] is configured, both API tokens and OIDC JWTs are accepted. Agents always use API tokens.
 
-In `mode = "both"`, both API tokens and OIDC JWTs are accepted for all users.
 
 ---
 
@@ -333,7 +325,7 @@ In `mode = "both"`, both API tokens and OIDC JWTs are accepted for all users.
 2. **Use OIDC for humans** — Avoid sharing long-lived tokens between team members.
 3. **Separate agent tokens** — One token per agent. Revoke individually if compromised.
 4. **Short JWT lifetime** — Configure your IdP to issue tokens with 5–15 minute expiry.
-5. **Use `mode = "both"`** — OIDC for humans, API tokens for agents. Best of both worlds.
+5. **Configure [auth.oidc]** — OIDC for humans, API tokens for agents. Best of both worlds.
 
 ---
 
@@ -343,7 +335,7 @@ In `mode = "both"`, both API tokens and OIDC JWTs are accepted for all users.
 |---------|-------|-----|
 | `401 invalid token` | Token revoked or wrong | Check `dbward token list` |
 | `401 token expired` | TTL exceeded | Create a new token |
-| `401 OIDC not configured` | JWT sent but `mode = "token"` | Change to `mode = "oidc"` or `"both"` |
+| `401 OIDC not configured` | JWT sent but [auth.oidc] not configured | Add [auth.oidc] section to server.toml |
 | `JWT verification failed` | Wrong issuer/audience/expired | Check `issuer` and `client_id` match IdP |
 | JWKS fetch timeout | Server can't reach IdP | Check network, or set `jwks_uri` override |
 

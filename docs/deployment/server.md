@@ -26,7 +26,6 @@ trusted_proxies = ["10.0.0.0/8"]  # Trust X-Forwarded-For from these CIDRs
 
 ```toml
 [auth]
-mode = "token"                    # "token" | "oidc" | "both"
 # break_glass: any user with --emergency flag  # Roles allowed to use --emergency
 ```
 

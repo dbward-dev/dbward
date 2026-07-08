@@ -1,5 +1,11 @@
 # Changelog
 
+## [Unreleased]
+
+### Breaking Changes
+
+- **`auth.mode` removed**: The `auth.mode` configuration field is no longer supported. OIDC is now enabled automatically when `[auth.oidc]` section is present and a Team license is active. API tokens are always accepted. Existing configs with `mode` field will have it silently ignored.
+
 ## [0.1.6] — 2026-06-18
 
 ### Breaking Changes

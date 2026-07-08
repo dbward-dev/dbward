@@ -23,7 +23,6 @@ echo "--- 8.4 Deprecated [[users]] field ---"
 cat > /tmp/server-bad-users.toml << 'EOF'
 state_dir = "/data"
 [auth]
-mode = "token"
 default_role = "readonly"
 [[users]]
 id = "alice"
@@ -42,7 +41,6 @@ echo "--- 8.5 Deprecated [[auth.role_bindings]] ---"
 cat > /tmp/server-bad-rb.toml << 'EOF'
 state_dir = "/data"
 [auth]
-mode = "token"
 default_role = "readonly"
 [[auth.role_bindings]]
 subjects = ["alice"]
@@ -61,7 +59,6 @@ echo "--- 8.6 Deprecated [[auth.groups]].members ---"
 cat > /tmp/server-bad-members.toml << 'EOF'
 state_dir = "/data"
 [auth]
-mode = "token"
 default_role = "readonly"
 [[auth.groups]]
 name = "team"
@@ -81,7 +78,6 @@ echo "--- 8.7 Undefined role in groups.roles ---"
 cat > /tmp/server-bad-groles.toml << 'EOF'
 state_dir = "/data"
 [auth]
-mode = "token"
 default_role = "readonly"
 [[auth.groups]]
 name = "team"
@@ -120,7 +116,6 @@ echo "--- 26.3 Undefined default_role ---"
 cat > /tmp/server-bad-default.toml << 'EOF'
 state_dir = "/data"
 [auth]
-mode = "token"
 default_role = "nonexistent_default_role"
 [[databases]]
 name = "app"
