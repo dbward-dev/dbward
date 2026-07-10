@@ -24,6 +24,7 @@ pub struct CheckResult {
     pub status: Status,
     pub message: String,
     pub hint: Option<String>,
+    pub details: Vec<String>,
 }
 
 pub(super) struct DoctorContext {
@@ -202,6 +203,9 @@ fn print_human(ctx: &DoctorContext) {
         if let Some(ref hint) = r.hint {
             println!("    {}", hint);
         }
+        for line in &r.details {
+            println!("    {line}");
+        }
     }
 
     let (pass, warn, fail, skip) = count_results(ctx);
@@ -228,6 +232,9 @@ fn print_json(ctx: &DoctorContext) {
             });
             if let Some(ref hint) = r.hint {
                 obj["hint"] = serde_json::Value::String(hint.clone());
+            }
+            if !r.details.is_empty() {
+                obj["details"] = serde_json::json!(r.details);
             }
             obj
         })

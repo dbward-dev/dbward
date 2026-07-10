@@ -13,12 +13,14 @@ pub(super) async fn run_server_mode(ctx: &mut DoctorContext, path: &std::path::P
                 status: Status::Pass,
                 message: "all resolved".into(),
                 hint: None,
+                details: vec![],
             });
             ctx.record(CheckResult {
                 id: "config_parse",
                 status: Status::Pass,
                 message: path.display().to_string(),
                 hint: None,
+                details: vec![],
             });
             c
         }
@@ -28,6 +30,7 @@ pub(super) async fn run_server_mode(ctx: &mut DoctorContext, path: &std::path::P
                 status: Status::Fail,
                 message: format!("undefined environment variable: ${{{var}}}"),
                 hint: Some(format!("Set {var} or remove the reference")),
+                details: vec![],
             });
             return;
         }
@@ -37,6 +40,7 @@ pub(super) async fn run_server_mode(ctx: &mut DoctorContext, path: &std::path::P
                 status: Status::Fail,
                 message: e.to_string(),
                 hint: None,
+                details: vec![],
             });
             return;
         }
@@ -60,12 +64,6 @@ pub(super) async fn run_server_mode(ctx: &mut DoctorContext, path: &std::path::P
     // S9: notification_webhook_refs
     check_notification_webhook_refs(ctx, &cfg);
 
-    // S12: token_binding_check — V25: role_bindings removed, check skipped
-    // check_token_binding(ctx, &cfg);
-
-    // S13: active token scan (read DB directly if state_dir is accessible)
-    check_active_tokens(ctx, &cfg);
-
     // S11: slack connectivity
     check_slack(ctx, &cfg).await;
 }
@@ -77,6 +75,7 @@ fn check_workflow_validity(ctx: &mut DoctorContext, cfg: &dbward_config::ServerC
             status: Status::Fail,
             message: "no workflows defined — all requests will be rejected (fail-closed)".into(),
             hint: Some("Add [[workflows]] sections".into()),
+            details: vec![],
         });
         return;
     }
@@ -137,6 +136,7 @@ fn check_workflow_validity(ctx: &mut DoctorContext, cfg: &dbward_config::ServerC
             status: Status::Pass,
             message: format!("{} workflows, all valid", cfg.workflows.len()),
             hint: None,
+            details: vec![],
         });
     } else if dead.len() == cfg.workflows.len() {
         ctx.record(CheckResult {
@@ -147,6 +147,7 @@ fn check_workflow_validity(ctx: &mut DoctorContext, cfg: &dbward_config::ServerC
                 dead.len()
             ),
             hint: Some("Add [[databases]] for referenced databases".into()),
+            details: vec![],
         });
     } else {
         ctx.record(CheckResult {
@@ -154,6 +155,7 @@ fn check_workflow_validity(ctx: &mut DoctorContext, cfg: &dbward_config::ServerC
             status: Status::Warn,
             message: format!("{} dead: {}", dead.len(), dead.join("; ")),
             hint: None,
+            details: vec![],
         });
     }
 }
@@ -188,6 +190,7 @@ fn check_workflow_step_validity(ctx: &mut DoctorContext, cfg: &dbward_config::Se
                             "workflows[{wf_idx}].steps[{step_idx}]: unknown mode '{other}'"
                         ),
                         hint: None,
+                        details: vec![],
                     });
                     parse_error = true;
                     continue;
@@ -209,6 +212,7 @@ fn check_workflow_step_validity(ctx: &mut DoctorContext, cfg: &dbward_config::Se
                                     u32::MAX
                                 ),
                                 hint: None,
+                                details: vec![],
                             });
                             parse_error = true;
                             continue;
@@ -230,6 +234,7 @@ fn check_workflow_step_validity(ctx: &mut DoctorContext, cfg: &dbward_config::Se
                                 hint: Some(
                                     "Each approver must have 'role', 'group', or 'user' key".into(),
                                 ),
+                                details: vec![],
                             });
                             parse_error = true;
                             continue;
@@ -263,6 +268,7 @@ fn check_workflow_step_validity(ctx: &mut DoctorContext, cfg: &dbward_config::Se
                 status,
                 message: format!("workflows[{wf_idx}]: {}", issue.message),
                 hint: None,
+                details: vec![],
             });
         }
     }
@@ -276,51 +282,151 @@ fn check_workflow_step_validity(ctx: &mut DoctorContext, cfg: &dbward_config::Se
                 status: Status::Pass,
                 message: format!("{non_auto} workflows with steps, all valid"),
                 hint: None,
+                details: vec![],
             });
         }
     }
 }
 
 /// S4: Reverse lint — check if each registered DB×env has at least one matching workflow.
+/// Produces a coverage table showing which workflow covers each (db, env) pair.
 fn check_workflow_coverage(ctx: &mut DoctorContext, cfg: &dbward_config::ServerConfig) {
+    use crate::display::{display_width, sanitize_table_cell, truncate_table_cell};
+
     if cfg.databases.is_empty() || cfg.workflows.is_empty() {
         return; // S3 already covers these cases
     }
 
-    let mut gaps = Vec::new();
+    const COL_MAX: usize = 20;
+
+    struct CoverageRow {
+        database: String,
+        environment: String,
+        workflow: String,
+        auto_approve: String,
+    }
+
+    let mut rows: Vec<CoverageRow> = Vec::new();
+    let mut gap_count = 0usize;
     let mut total_pairs = 0usize;
     let mut wildcard_skipped = false;
 
     for db in &cfg.databases {
-        // Skip wildcard database names (can't enumerate concrete pairs)
         if db.name == "*" {
             wildcard_skipped = true;
             continue;
         }
         for env in &db.environments {
-            // Skip wildcard environments (can't expand) but note it
             if env == "*" {
                 wildcard_skipped = true;
                 continue;
             }
             total_pairs += 1;
-            // Check if any workflow matches this (db, env) pair
-            let covered = cfg.workflows.iter().any(|wf| {
-                workflow_covers_scope(
-                    wf.database.as_str(),
-                    wf.environment.as_str(),
-                    db.name.as_str(),
-                    env.as_str(),
-                )
+
+            // Find best matching workflow using specificity score (same as runtime).
+            // Higher specificity wins: exact env = +4, exact db = +2.
+            // Note: operations axis is intentionally ignored (see S4 design doc).
+            let matched = cfg
+                .workflows
+                .iter()
+                .filter(|wf| {
+                    workflow_covers_scope(
+                        wf.database.as_str(),
+                        wf.environment.as_str(),
+                        db.name.as_str(),
+                        env.as_str(),
+                    )
+                })
+                .max_by_key(|wf| {
+                    let mut score = 0u8;
+                    if wf.environment != "*" && wf.environment == *env {
+                        score += 4;
+                    }
+                    if wf.database != "*" && wf.database == db.name {
+                        score += 2;
+                    }
+                    score
+                });
+
+            let (workflow_label, auto_approve_label) = match matched {
+                Some(wf) => {
+                    let wf_label = format!("({},{})", wf.database, wf.environment);
+                    let aa_label = match &wf.auto_approve {
+                        Some(dbward_config::server::AutoApproveDef::Always) => "always".to_string(),
+                        Some(dbward_config::server::AutoApproveDef::RiskBased { risk, .. }) => {
+                            format!("risk_based({risk})")
+                        }
+                        None => "—".to_string(),
+                    };
+                    (wf_label, aa_label)
+                }
+                None => {
+                    gap_count += 1;
+                    ("✗ NO COVERAGE".to_string(), "—".to_string())
+                }
+            };
+
+            rows.push(CoverageRow {
+                database: sanitize_table_cell(&db.name),
+                environment: sanitize_table_cell(env),
+                workflow: workflow_label,
+                auto_approve: auto_approve_label,
             });
-            if !covered {
-                let msg = format!("{}:{} → no workflow (fail-closed)", db.name, env);
-                gaps.push(msg);
-            }
         }
     }
 
-    if gaps.is_empty() {
+    // Build table lines
+    let details = if !rows.is_empty() {
+        let headers = ["Database", "Environment", "Workflow", "Auto-Approve"];
+
+        // Compute column widths (capped at COL_MAX)
+        let mut widths: [usize; 4] = [
+            display_width(headers[0]),
+            display_width(headers[1]),
+            display_width(headers[2]),
+            display_width(headers[3]),
+        ];
+        for r in &rows {
+            widths[0] = widths[0].max(display_width(&r.database)).min(COL_MAX);
+            widths[1] = widths[1].max(display_width(&r.environment)).min(COL_MAX);
+            widths[2] = widths[2].max(display_width(&r.workflow)).min(COL_MAX);
+            widths[3] = widths[3].max(display_width(&r.auto_approve)).min(COL_MAX);
+        }
+
+        let mut lines = Vec::new();
+        // Header
+        lines.push(format!(
+            "{}  {}  {}  {}",
+            pad_col(headers[0], widths[0]),
+            pad_col(headers[1], widths[1]),
+            pad_col(headers[2], widths[2]),
+            pad_col(headers[3], widths[3]),
+        ));
+        // Separator
+        lines.push(format!(
+            "{}  {}  {}  {}",
+            "-".repeat(widths[0]),
+            "-".repeat(widths[1]),
+            "-".repeat(widths[2]),
+            "-".repeat(widths[3]),
+        ));
+        // Data rows
+        for r in &rows {
+            lines.push(format!(
+                "{}  {}  {}  {}",
+                pad_col(&truncate_table_cell(&r.database, COL_MAX), widths[0]),
+                pad_col(&truncate_table_cell(&r.environment, COL_MAX), widths[1]),
+                pad_col(&truncate_table_cell(&r.workflow, COL_MAX), widths[2]),
+                pad_col(&truncate_table_cell(&r.auto_approve, COL_MAX), widths[3]),
+            ));
+        }
+        lines
+    } else {
+        vec![]
+    };
+
+    // Record result
+    if gap_count == 0 {
         let mut msg = format!("{total_pairs} DB×env pairs, all covered");
         if wildcard_skipped {
             msg.push_str(" (wildcard registrations skipped — verify with 'dbward policy resolve')");
@@ -334,22 +440,32 @@ fn check_workflow_coverage(ctx: &mut DoctorContext, cfg: &dbward_config::ServerC
             },
             message: msg,
             hint: None,
+            details,
         });
-    } else if gaps.len() == total_pairs && total_pairs > 0 {
+    } else if gap_count == total_pairs && total_pairs > 0 {
         ctx.record(CheckResult {
             id: "workflow_coverage",
             status: Status::Fail,
-            message: format!("all {} DB×env pairs have no workflow", gaps.len()),
+            message: format!("all {} DB×env pairs have no workflow", gap_count),
             hint: Some("Add [[workflows]] matching your databases".into()),
+            details,
         });
     } else {
         ctx.record(CheckResult {
             id: "workflow_coverage",
             status: Status::Warn,
-            message: format!("{} gap(s): {}", gaps.len(), gaps.join("; ")),
-            hint: Some("These DB×env pairs will reject all requests (fail-closed)".into()),
+            message: format!("{gap_count} of {total_pairs} DB×env pairs have no workflow"),
+            hint: Some("Uncovered pairs will reject all requests (fail-closed)".into()),
+            details,
         });
     }
+}
+
+/// Pad a string to the given width (left-aligned).
+fn pad_col(value: &str, width: usize) -> String {
+    use crate::display::display_width;
+    let padding = width.saturating_sub(display_width(value));
+    format!("{value}{}", " ".repeat(padding))
 }
 
 fn check_role_resolution(ctx: &mut DoctorContext, cfg: &dbward_config::ServerConfig) {
@@ -380,6 +496,7 @@ fn check_role_resolution(ctx: &mut DoctorContext, cfg: &dbward_config::ServerCon
             status: Status::Pass,
             message: "all referenced roles are defined".into(),
             hint: None,
+            details: vec![],
         });
     } else {
         undefined.sort();
@@ -392,6 +509,7 @@ fn check_role_resolution(ctx: &mut DoctorContext, cfg: &dbward_config::ServerCon
                 undefined.join(", ")
             ),
             hint: Some("Define them in [[auth.roles]] in server.toml".into()),
+            details: vec![],
         });
     }
 }
@@ -410,6 +528,7 @@ fn check_built_in_role_collision(ctx: &mut DoctorContext, cfg: &dbward_config::S
             status: Status::Pass,
             message: "no collisions with built-in roles".into(),
             hint: None,
+            details: vec![],
         });
     } else {
         ctx.record(CheckResult {
@@ -417,6 +536,7 @@ fn check_built_in_role_collision(ctx: &mut DoctorContext, cfg: &dbward_config::S
             status: Status::Fail,
             message: format!("collides with built-in: {}", collisions.join(", ")),
             hint: Some("Choose different names for custom roles".into()),
+            details: vec![],
         });
     }
 }
@@ -438,6 +558,7 @@ fn check_notification_webhook_refs(ctx: &mut DoctorContext, cfg: &dbward_config:
             status: Status::Pass,
             message: "all webhook references valid".into(),
             hint: None,
+            details: vec![],
         });
     } else {
         ctx.record(CheckResult {
@@ -445,126 +566,8 @@ fn check_notification_webhook_refs(ctx: &mut DoctorContext, cfg: &dbward_config:
             status: Status::Fail,
             message: format!("{} undefined: {}", missing.len(), missing.join("; ")),
             hint: Some("Define referenced webhooks in [[webhooks]]".into()),
+            details: vec![],
         });
-    }
-}
-
-fn check_active_tokens(ctx: &mut DoctorContext, cfg: &dbward_config::ServerConfig) {
-    let db_path = std::path::Path::new(&cfg.state_dir).join("dbward.db");
-    if !db_path.exists() {
-        ctx.record(CheckResult {
-            id: "active_tokens",
-            status: Status::Skip,
-            message: format!("DB not found at {} (first startup?)", db_path.display()),
-            hint: None,
-        });
-        return;
-    }
-
-    let conn = match rusqlite::Connection::open_with_flags(
-        &db_path,
-        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
-    ) {
-        Ok(c) => c,
-        Err(e) => {
-            ctx.record(CheckResult {
-                id: "active_tokens",
-                status: Status::Skip,
-                message: format!("cannot open DB: {e}"),
-                hint: None,
-            });
-            return;
-        }
-    };
-
-    // Query active tokens
-    let mut stmt = match conn.prepare(
-        "SELECT id, subject_type, subject_id, token_prefix, scope_ceiling_json FROM tokens WHERE status = 'active'",
-    ) {
-        Ok(s) => s,
-        Err(_) => {
-            ctx.record(CheckResult {
-                id: "active_tokens",
-                status: Status::Skip,
-                message: "tokens table not found (pre-migration?)".into(),
-                hint: None,
-            });
-            return;
-        }
-    };
-
-    let mut warnings = Vec::new();
-    let rows = stmt
-        .query_map([], |row| {
-            Ok((
-                row.get::<_, String>(0)?,
-                row.get::<_, String>(1)?,
-                row.get::<_, String>(2)?,
-                row.get::<_, String>(3)?,
-                row.get::<_, Option<String>>(4)?,
-            ))
-        })
-        .unwrap_or_else(|_| panic!("query failed"));
-
-    for row in rows.flatten() {
-        let (_id, subject_type, subject_id, prefix, ceiling_json) = row;
-
-        // Check: user token with NULL ceiling → always 403
-        if subject_type == "user" && ceiling_json.is_none() {
-            warnings.push(format!(
-                "prefix={} subject='{}' (user) has scope_ceiling=NULL → will be rejected (403)",
-                prefix, subject_id
-            ));
-            continue;
-        }
-
-        // V25: roles are resolved from DB at runtime. Skip static resolution check.
-        let resolved_roles: Vec<String> = cfg.auth.default_role.iter().cloned().collect();
-
-        // Check: subject has no default_role configured → may rely on DB roles
-        if subject_type == "user" && resolved_roles.is_empty() {
-            // Not a real error in V25 — roles are in DB. Skip warning.
-            continue;
-        }
-
-        // Check: scope_ceiling ∩ resolved_roles = empty → 403
-        if let Some(ref json_str) = ceiling_json {
-            let ceiling_roles = serde_json::from_str::<serde_json::Value>(json_str)
-                .ok()
-                .and_then(|v| v.get("roles")?.as_array().cloned());
-            if let Some(roles_arr) = ceiling_roles {
-                let ceiling_strs: Vec<&str> = roles_arr.iter().filter_map(|v| v.as_str()).collect();
-                let has_overlap = resolved_roles
-                    .iter()
-                    .any(|r| ceiling_strs.contains(&r.as_str()));
-                if !has_overlap {
-                    warnings.push(format!(
-                        "prefix={} subject='{}' scope_ceiling={:?} has no overlap with resolved roles {:?} → will fail (403)",
-                        prefix, subject_id, ceiling_strs, resolved_roles
-                    ));
-                }
-            }
-        }
-    }
-
-    if warnings.is_empty() {
-        ctx.record(CheckResult {
-            id: "active_tokens",
-            status: Status::Pass,
-            message: "all active tokens will authenticate successfully after upgrade".into(),
-            hint: None,
-        });
-    } else {
-        for w in &warnings {
-            ctx.record(CheckResult {
-                id: "active_tokens",
-                status: Status::Warn,
-                message: w.clone(),
-                hint: Some(
-                    "Revoke and recreate with --scope-roles, or run --force-bootstrap".into(),
-                ),
-            });
-        }
     }
 }
 
@@ -587,6 +590,7 @@ async fn check_slack(ctx: &mut DoctorContext, cfg: &dbward_config::ServerConfig)
             status: Status::Fail,
             message: missing.into(),
             hint: Some("Set values in [slack] section of server.toml".into()),
+            details: vec![],
         });
         return;
     }
@@ -595,6 +599,7 @@ async fn check_slack(ctx: &mut DoctorContext, cfg: &dbward_config::ServerConfig)
         status: Status::Pass,
         message: "bot_token + signing_secret present".into(),
         hint: None,
+        details: vec![],
     });
 
     // S-slack2: bot_token format
@@ -604,6 +609,7 @@ async fn check_slack(ctx: &mut DoctorContext, cfg: &dbward_config::ServerConfig)
             status: Status::Fail,
             message: "invalid prefix (expected xoxb-)".into(),
             hint: Some("Copy the Bot User OAuth Token from Slack App settings".into()),
+            details: vec![],
         });
         return;
     }
@@ -612,6 +618,7 @@ async fn check_slack(ctx: &mut DoctorContext, cfg: &dbward_config::ServerConfig)
         status: Status::Pass,
         message: "xoxb-... (valid prefix)".into(),
         hint: None,
+        details: vec![],
     });
 
     // S-slack3: signing_secret format (32 lowercase alphanumeric chars)
@@ -626,6 +633,7 @@ async fn check_slack(ctx: &mut DoctorContext, cfg: &dbward_config::ServerConfig)
             status: Status::Fail,
             message: "invalid format (expected 32 alphanumeric chars)".into(),
             hint: Some("Copy from Basic Information → App Credentials → Signing Secret".into()),
+            details: vec![],
         });
         return;
     }
@@ -634,6 +642,7 @@ async fn check_slack(ctx: &mut DoctorContext, cfg: &dbward_config::ServerConfig)
         status: Status::Pass,
         message: "32-char alphanumeric".into(),
         hint: None,
+        details: vec![],
     });
 
     // S-slack4: auth.test API call
@@ -649,6 +658,7 @@ async fn check_slack(ctx: &mut DoctorContext, cfg: &dbward_config::ServerConfig)
                 status: Status::Fail,
                 message: format!("failed to create HTTP client: {e}"),
                 hint: None,
+                details: vec![],
             });
             return;
         }
@@ -674,6 +684,7 @@ async fn check_slack(ctx: &mut DoctorContext, cfg: &dbward_config::ServerConfig)
                 status: Status::Fail,
                 message: format!("connection failed ({msg})"),
                 hint: Some("Check network/firewall settings".into()),
+                details: vec![],
             });
             return;
         }
@@ -684,6 +695,7 @@ async fn check_slack(ctx: &mut DoctorContext, cfg: &dbward_config::ServerConfig)
                     status: Status::Fail,
                     message: format!("invalid response: {e}"),
                     hint: None,
+                    details: vec![],
                 });
                 return;
             }
@@ -695,6 +707,7 @@ async fn check_slack(ctx: &mut DoctorContext, cfg: &dbward_config::ServerConfig)
                         status: Status::Fail,
                         message: format!("Slack API returned: {error}"),
                         hint: Some("Verify bot_token is correct and app is installed".into()),
+                        details: vec![],
                     });
                     return;
                 }
@@ -707,6 +720,7 @@ async fn check_slack(ctx: &mut DoctorContext, cfg: &dbward_config::ServerConfig)
                     status: Status::Pass,
                     message: format!("team={team} ({team_id}), bot={bot} ({bot_id})"),
                     hint: None,
+                    details: vec![],
                 });
             }
         },
@@ -724,6 +738,7 @@ async fn check_slack(ctx: &mut DoctorContext, cfg: &dbward_config::ServerConfig)
                 status: Status::Skip,
                 message: format!("({label}): not configured"),
                 hint: None,
+                details: vec![],
             });
             continue;
         }
@@ -737,6 +752,7 @@ async fn check_slack(ctx: &mut DoctorContext, cfg: &dbward_config::ServerConfig)
                     "{channel_id} ({label}): use channel ID (C.../G...) for full validation"
                 ),
                 hint: None,
+                details: vec![],
             });
             continue;
         }
@@ -754,6 +770,7 @@ async fn check_slack(ctx: &mut DoctorContext, cfg: &dbward_config::ServerConfig)
                     "Channel IDs start with C (public) or G (private) followed by alphanumeric"
                         .into(),
                 ),
+                details: vec![],
             });
             continue;
         }
@@ -772,6 +789,7 @@ async fn check_slack(ctx: &mut DoctorContext, cfg: &dbward_config::ServerConfig)
                     status: Status::Fail,
                     message: format!("{channel_id} ({label}): connection failed"),
                     hint: None,
+                    details: vec![],
                 });
             }
             Ok(resp) => match resp.json::<serde_json::Value>().await {
@@ -781,6 +799,7 @@ async fn check_slack(ctx: &mut DoctorContext, cfg: &dbward_config::ServerConfig)
                         status: Status::Fail,
                         message: format!("{channel_id} ({label}): invalid response"),
                         hint: None,
+                        details: vec![],
                     });
                 }
                 Ok(body) => {
@@ -791,6 +810,7 @@ async fn check_slack(ctx: &mut DoctorContext, cfg: &dbward_config::ServerConfig)
                             status: Status::Fail,
                             message: format!("{channel_id} ({label}): {error}"),
                             hint: Some("Verify the channel ID exists".into()),
+                            details: vec![],
                         });
                     } else {
                         let is_member = body["channel"]["is_member"].as_bool().unwrap_or(false);
@@ -800,6 +820,7 @@ async fn check_slack(ctx: &mut DoctorContext, cfg: &dbward_config::ServerConfig)
                                 status: Status::Pass,
                                 message: format!("{channel_id} ({label}) — bot is member"),
                                 hint: None,
+                                details: vec![],
                             });
                         } else {
                             ctx.record(CheckResult {
@@ -807,6 +828,7 @@ async fn check_slack(ctx: &mut DoctorContext, cfg: &dbward_config::ServerConfig)
                                 status: Status::Warn,
                                 message: format!("{channel_id} ({label}) — bot not a member"),
                                 hint: Some("Run: /invite @dbward in the channel".into()),
+                                details: vec![],
                             });
                         }
                     }
@@ -1080,5 +1102,247 @@ channel = "#nonexistent"
                 .iter()
                 .any(|r| r.id == "slack_channel" && r.status == Status::Skip)
         );
+    }
+
+    // --- DOC-W2: workflow coverage table tests ---
+
+    #[test]
+    fn workflow_coverage_all_covered_wildcard() {
+        let mut ctx = DoctorContext {
+            results: Vec::new(),
+            json_output: false,
+            timeout: Duration::from_secs(5),
+        };
+        let cfg = server_cfg(
+            r#"
+[[databases]]
+name = "app"
+environments = ["production", "staging"]
+
+[[workflows]]
+database = "*"
+environment = "*"
+
+[workflows.auto_approve]
+mode = "always"
+"#,
+        );
+        check_workflow_coverage(&mut ctx, &cfg);
+        let r = ctx
+            .results
+            .iter()
+            .find(|r| r.id == "workflow_coverage")
+            .unwrap();
+        assert_eq!(r.status, Status::Pass);
+        assert!(r.message.contains("2 DB×env pairs, all covered"));
+        // Table should have header + separator + 2 data rows = 4 lines
+        assert_eq!(r.details.len(), 4);
+        assert!(r.details[2].contains("app"));
+        assert!(r.details[2].contains("production"));
+        assert!(r.details[2].contains("always"));
+    }
+
+    #[test]
+    fn workflow_coverage_partial_gap() {
+        let mut ctx = DoctorContext {
+            results: Vec::new(),
+            json_output: false,
+            timeout: Duration::from_secs(5),
+        };
+        let cfg = server_cfg(
+            r#"
+[[databases]]
+name = "app"
+environments = ["production", "staging"]
+
+[[workflows]]
+database = "*"
+environment = "production"
+
+[workflows.auto_approve]
+mode = "risk_based"
+risk = "low"
+
+[[workflows.steps]]
+type = "approval"
+[[workflows.steps.approvers]]
+role = "dba"
+min = 1
+"#,
+        );
+        check_workflow_coverage(&mut ctx, &cfg);
+        let r = ctx
+            .results
+            .iter()
+            .find(|r| r.id == "workflow_coverage")
+            .unwrap();
+        assert_eq!(r.status, Status::Warn);
+        assert!(r.message.contains("1 of 2"));
+        // Table should show one covered, one gap
+        assert_eq!(r.details.len(), 4); // header + sep + 2 rows
+        let prod_row = &r.details[2];
+        assert!(prod_row.contains("production"));
+        assert!(prod_row.contains("risk_based(low)"));
+        let staging_row = &r.details[3];
+        assert!(staging_row.contains("staging"));
+        assert!(staging_row.contains("NO COVERAGE"));
+    }
+
+    #[test]
+    fn workflow_coverage_all_gaps() {
+        let mut ctx = DoctorContext {
+            results: Vec::new(),
+            json_output: false,
+            timeout: Duration::from_secs(5),
+        };
+        let cfg = server_cfg(
+            r#"
+[[databases]]
+name = "app"
+environments = ["production"]
+
+[[workflows]]
+database = "other"
+environment = "*"
+
+[workflows.auto_approve]
+mode = "always"
+"#,
+        );
+        check_workflow_coverage(&mut ctx, &cfg);
+        let r = ctx
+            .results
+            .iter()
+            .find(|r| r.id == "workflow_coverage")
+            .unwrap();
+        assert_eq!(r.status, Status::Fail);
+        assert!(r.message.contains("all 1 DB×env pairs have no workflow"));
+        assert!(r.details[2].contains("NO COVERAGE"));
+    }
+
+    #[test]
+    fn workflow_coverage_most_specific_wins() {
+        let mut ctx = DoctorContext {
+            results: Vec::new(),
+            json_output: false,
+            timeout: Duration::from_secs(5),
+        };
+        // More specific workflow (app,production) should be picked over wildcard (*,*)
+        let cfg = server_cfg(
+            r#"
+[[databases]]
+name = "app"
+environments = ["production"]
+
+[[workflows]]
+database = "app"
+environment = "production"
+
+[[workflows.steps]]
+type = "approval"
+[[workflows.steps.approvers]]
+role = "dba"
+min = 1
+
+[[workflows]]
+database = "*"
+environment = "*"
+
+[workflows.auto_approve]
+mode = "always"
+"#,
+        );
+        check_workflow_coverage(&mut ctx, &cfg);
+        let r = ctx
+            .results
+            .iter()
+            .find(|r| r.id == "workflow_coverage")
+            .unwrap();
+        assert_eq!(r.status, Status::Pass);
+        // Should match the more specific (app,production) not wildcard (*,*)
+        let data_row = &r.details[2];
+        assert!(data_row.contains("(app,production)"));
+        // No auto_approve in first workflow
+        assert!(data_row.contains("—"));
+    }
+
+    #[test]
+    fn workflow_coverage_specificity_beats_definition_order() {
+        let mut ctx = DoctorContext {
+            results: Vec::new(),
+            json_output: false,
+            timeout: Duration::from_secs(5),
+        };
+        // Wildcard workflow is defined FIRST, but specific should still win
+        let cfg = server_cfg(
+            r#"
+[[databases]]
+name = "app"
+environments = ["production"]
+
+[[workflows]]
+database = "*"
+environment = "*"
+
+[workflows.auto_approve]
+mode = "always"
+
+[[workflows]]
+database = "app"
+environment = "production"
+
+[[workflows.steps]]
+type = "approval"
+[[workflows.steps.approvers]]
+role = "dba"
+min = 1
+"#,
+        );
+        check_workflow_coverage(&mut ctx, &cfg);
+        let r = ctx
+            .results
+            .iter()
+            .find(|r| r.id == "workflow_coverage")
+            .unwrap();
+        assert_eq!(r.status, Status::Pass);
+        // Specificity wins: (app,production) score=6 beats (*,*) score=0
+        let data_row = &r.details[2];
+        assert!(data_row.contains("(app,production)"));
+        // The specific workflow has no auto_approve (needs approval)
+        assert!(data_row.contains("—"));
+    }
+
+    #[test]
+    fn workflow_coverage_wildcard_env_skipped() {
+        let mut ctx = DoctorContext {
+            results: Vec::new(),
+            json_output: false,
+            timeout: Duration::from_secs(5),
+        };
+        let cfg = server_cfg(
+            r#"
+[[databases]]
+name = "app"
+environments = ["production", "*"]
+
+[[workflows]]
+database = "*"
+environment = "*"
+
+[workflows.auto_approve]
+mode = "always"
+"#,
+        );
+        check_workflow_coverage(&mut ctx, &cfg);
+        let r = ctx
+            .results
+            .iter()
+            .find(|r| r.id == "workflow_coverage")
+            .unwrap();
+        // wildcard env skipped → status is Warn
+        assert_eq!(r.status, Status::Warn);
+        assert!(r.message.contains("wildcard"));
+        // Only 1 concrete pair (production), wildcard skipped
+        assert!(r.message.contains("1 DB×env pairs, all covered"));
     }
 }

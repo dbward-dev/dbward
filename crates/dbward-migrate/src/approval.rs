@@ -158,7 +158,7 @@ fn hash_migrations_dir(dir: &Path) -> Result<String, MigrateError> {
         manifest_hasher.update(filename.as_bytes());
         manifest_hasher.update([0]);
         manifest_hasher.update(file_hash.as_bytes());
-        manifest_hasher.update([b'\n']);
+        manifest_hasher.update(*b"\n");
     }
 
     Ok(format!("{:x}", manifest_hasher.finalize()))
