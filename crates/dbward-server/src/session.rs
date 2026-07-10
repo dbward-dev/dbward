@@ -35,6 +35,7 @@ pub struct SessionRuntime {
     pub created_at: Instant,
     pub last_active: RwLock<Instant>,
     pub client_supports_elicitation: AtomicBool,
+    pub negotiated_version: String,
 
     pub streams: DashMap<String, std::sync::Arc<StreamRuntime>>,
     pub requests: DashMap<String, RequestRuntime>,
@@ -45,7 +46,12 @@ pub struct SessionRuntime {
 }
 
 impl SessionRuntime {
-    pub fn new(id: String, user: AuthUser, supports_elicitation: bool) -> Self {
+    pub fn new(
+        id: String,
+        user: AuthUser,
+        supports_elicitation: bool,
+        negotiated_version: String,
+    ) -> Self {
         let now = Instant::now();
         Self {
             id,
@@ -54,6 +60,7 @@ impl SessionRuntime {
             created_at: now,
             last_active: RwLock::new(now),
             client_supports_elicitation: AtomicBool::new(supports_elicitation),
+            negotiated_version,
             streams: DashMap::new(),
             requests: DashMap::new(),
             active_request_count: AtomicU64::new(0),
@@ -264,7 +271,7 @@ mod tests {
 
     #[test]
     fn shutdown_clears_all() {
-        let session = SessionRuntime::new("sess1".into(), test_user(), true);
+        let session = SessionRuntime::new("sess1".into(), test_user(), true, "2025-06-18".into());
 
         // Add a pending elicitation
         let (tx, _rx) = oneshot::channel();
@@ -303,7 +310,7 @@ mod tests {
 
     #[test]
     fn shutdown_marks_all_streams_completed() {
-        let session = SessionRuntime::new("sess1".into(), test_user(), true);
+        let session = SessionRuntime::new("sess1".into(), test_user(), true, "2025-06-18".into());
 
         let (tx1, _rx1) = mpsc::channel(1);
         let stream1 = std::sync::Arc::new(StreamRuntime::new("s1".into(), tx1, 100));

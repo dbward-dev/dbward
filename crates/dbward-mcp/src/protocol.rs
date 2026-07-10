@@ -1,9 +1,12 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-pub const PROTOCOL_VERSION: &str = "2025-03-26";
+pub const PROTOCOL_VERSION: &str = "2025-06-18";
 pub const SERVER_NAME: &str = "dbward";
 pub const SERVER_VERSION: &str = env!("CARGO_PKG_VERSION");
+
+/// Supported MCP protocol versions (newest first). Shared by CLI and server.
+pub const SUPPORTED_PROTOCOL_VERSIONS: &[&str] = &["2025-06-18", "2025-03-26", "2024-11-05"];
 
 // --- JSON-RPC message types (Phase 2) ---
 
@@ -249,8 +252,6 @@ pub struct ServerInfo {
 
 /// Handle initialize request. Negotiates version (fallback to latest supported).
 pub fn handle_initialize(id: Option<Value>, params: Value) -> JsonRpcResponse {
-    const SUPPORTED: &[&str] = &["2025-03-26"];
-
     let parsed: InitializeParams = match serde_json::from_value(params) {
         Ok(p) => p,
         Err(e) => {
@@ -260,10 +261,10 @@ pub fn handle_initialize(id: Option<Value>, params: Value) -> JsonRpcResponse {
 
     // Negotiate: use client's version if supported, otherwise fall back to latest.
     // Per MCP spec, server returns its supported version and client decides whether to continue.
-    let negotiated = SUPPORTED
+    let negotiated = SUPPORTED_PROTOCOL_VERSIONS
         .iter()
         .find(|&&v| v == parsed.protocol_version)
-        .unwrap_or(&SUPPORTED[0]);
+        .unwrap_or(&SUPPORTED_PROTOCOL_VERSIONS[0]);
 
     let result = InitializeResult {
         protocol_version: (*negotiated).into(),
@@ -300,11 +301,11 @@ mod tests {
     fn initialize_success() {
         let resp = handle_initialize(
             Some(json!(1)),
-            json!({"protocolVersion": "2025-03-26", "capabilities": {}, "clientInfo": {"name": "test"}}),
+            json!({"protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "test"}}),
         );
         assert!(resp.error.is_none());
         let result = resp.result.unwrap();
-        assert_eq!(result["protocolVersion"], "2025-03-26");
+        assert_eq!(result["protocolVersion"], "2025-06-18");
         assert_eq!(result["serverInfo"]["name"], "dbward");
     }
 
@@ -312,12 +313,12 @@ mod tests {
     fn initialize_unsupported_version_falls_back() {
         let resp = handle_initialize(
             Some(json!(1)),
-            json!({"protocolVersion": "2024-11-05", "capabilities": {}}),
+            json!({"protocolVersion": "2024-01-01", "capabilities": {}}),
         );
         // Should succeed with fallback to latest supported
         assert!(resp.error.is_none());
         let result = resp.result.unwrap();
-        assert_eq!(result["protocolVersion"], "2025-03-26");
+        assert_eq!(result["protocolVersion"], "2025-06-18");
     }
 
     #[test]
@@ -424,5 +425,24 @@ mod tests {
         let body = br#"{"jsonrpc":"2.0","id":true,"method":"tools/list"}"#;
         let err = parse_message(body).unwrap_err();
         assert_eq!(err.error.unwrap().code, INVALID_REQUEST);
+    }
+
+    #[test]
+    fn initialize_older_supported_versions_echo_back() {
+        for version in &["2025-03-26", "2024-11-05"] {
+            let resp = handle_initialize(
+                Some(json!(1)),
+                json!({"protocolVersion": version, "capabilities": {}}),
+            );
+            assert!(resp.error.is_none());
+            let result = resp.result.unwrap();
+            assert_eq!(result["protocolVersion"], *version);
+        }
+    }
+
+    #[test]
+    fn supported_protocol_versions_newest_first() {
+        assert_eq!(SUPPORTED_PROTOCOL_VERSIONS[0], "2025-06-18");
+        assert!(SUPPORTED_PROTOCOL_VERSIONS.len() >= 3);
     }
 }

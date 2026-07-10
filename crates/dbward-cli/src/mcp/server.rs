@@ -299,14 +299,12 @@ pub async fn run_stdio(
     Ok(())
 }
 
-const SUPPORTED_PROTOCOL_VERSIONS: &[&str] = &["2025-06-18", "2025-03-26", "2024-11-05"];
-
 pub(crate) fn handle_initialize(params: &Value, id: Option<Value>) -> Value {
     let client_version = params["protocolVersion"].as_str().unwrap_or("2024-11-05");
-    let negotiated = SUPPORTED_PROTOCOL_VERSIONS
+    let negotiated = dbward_mcp::protocol::SUPPORTED_PROTOCOL_VERSIONS
         .iter()
         .find(|&&v| v == client_version)
-        .unwrap_or(&SUPPORTED_PROTOCOL_VERSIONS[0]);
+        .unwrap_or(&dbward_mcp::protocol::SUPPORTED_PROTOCOL_VERSIONS[0]);
 
     json!({
         "jsonrpc": "2.0",
