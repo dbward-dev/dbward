@@ -101,6 +101,16 @@ pub(crate) async fn run_record_purge_once(
     {
         Ok(expired) => {
             for (result_id, storage_key) in expired {
+                // Stream-only results have empty storage_key — skip storage delete
+                if storage_key.is_empty() {
+                    if let Err(e) = state.background().agent_repo().delete_result(&result_id) {
+                        error!(task = "record_purge", result_id = %result_id, error = %e, "db delete failed for stream-only result");
+                        result.failed += 1;
+                    } else {
+                        result.processed += 1;
+                    }
+                    continue;
+                }
                 match state.background().result_store().delete(&storage_key).await {
                     Ok(()) => {
                         // Storage deleted successfully → safe to remove DB record

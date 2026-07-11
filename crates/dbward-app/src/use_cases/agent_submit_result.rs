@@ -169,24 +169,26 @@ impl AgentSubmitResult {
                 }
                 data_len = data.len() as u64;
                 let checksum = hex::encode(sha2::Sha256::digest(data));
-                if should_store {
-                    let stored_at = self.clock.now();
-                    result_manifest = Some(ExecutionResult {
-                        id: format!("res-{}", execution.id),
-                        request_id: execution.request_id.clone(),
-                        execution_id: execution.id.clone(),
-                        storage_backend: self.storage_backend.clone(),
-                        storage_key,
-                        content_length: data_len,
-                        checksum_sha256: checksum,
-                        retention_days,
-                        status: dbward_domain::entities::ResultStatus::Stored,
-                        truncated: false,
-                        truncation_reason: None,
-                        stored_at,
-                        expires_at: stored_at + chrono::Duration::days(retention_days as i64),
-                    });
-                }
+                let stored_at = self.clock.now();
+                result_manifest = Some(ExecutionResult {
+                    id: format!("res-{}", execution.id),
+                    request_id: execution.request_id.clone(),
+                    execution_id: execution.id.clone(),
+                    storage_backend: self.storage_backend.clone(),
+                    storage_key: if should_store {
+                        storage_key
+                    } else {
+                        String::new()
+                    },
+                    content_length: data_len,
+                    checksum_sha256: checksum,
+                    retention_days,
+                    status: dbward_domain::entities::ResultStatus::Stored,
+                    truncated: false,
+                    truncation_reason: None,
+                    stored_at,
+                    expires_at: stored_at + chrono::Duration::days(retention_days as i64),
+                });
             }
         } else if !input.success {
             // Store failure info
