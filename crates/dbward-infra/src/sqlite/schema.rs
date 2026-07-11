@@ -625,6 +625,10 @@ pub fn initialize(conn: &Connection) -> Result<(), rusqlite::Error> {
         if current < 26 {
             conn.execute_batch(MIGRATION_V26)?;
         }
+        // Idempotent index additions (safe for any schema version)
+        conn.execute_batch(
+            "CREATE INDEX IF NOT EXISTS idx_approvals_actor ON approvals(actor_id);",
+        )?;
         conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
     }
     Ok(())

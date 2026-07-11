@@ -53,7 +53,8 @@ impl McpBackend for CliMcpBackend {
             | dbward_api_types::requests::RequestStatus::AutoApproved
             | dbward_api_types::requests::RequestStatus::BreakGlass
             | dbward_api_types::requests::RequestStatus::Dispatched
-            | dbward_api_types::requests::RequestStatus::Running => RequestStatus::Approved,
+            | dbward_api_types::requests::RequestStatus::Running
+            | dbward_api_types::requests::RequestStatus::ExecutionLost => RequestStatus::Approved,
             dbward_api_types::requests::RequestStatus::Rejected => RequestStatus::Rejected,
             _ => RequestStatus::Failed,
         };
