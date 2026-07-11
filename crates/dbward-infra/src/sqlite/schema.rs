@@ -712,6 +712,7 @@ CREATE TABLE IF NOT EXISTS approvals (
     created_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_approvals_request_id ON approvals(request_id);
+CREATE INDEX IF NOT EXISTS idx_approvals_actor ON approvals(actor_id);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_approvals_no_dup_approve
   ON approvals(request_id, actor_id, step_index) WHERE action = 'approve';
 

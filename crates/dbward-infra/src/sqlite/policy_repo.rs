@@ -721,9 +721,9 @@ impl PolicyRepo for SqlitePolicyRepo {
             .collect();
         let envs_str = serde_json::to_string(&envs_json).unwrap_or_else(|_| "[\"*\"]".to_string());
         conn.execute(
-            "INSERT INTO roles (name, permissions_json, databases_json, environments_json, built_in, config_synced)
-             VALUES (?1, ?2, ?3, ?4, 0, 1)
-             ON CONFLICT(name) DO UPDATE SET permissions_json = ?2, databases_json = ?3, environments_json = ?4, config_synced = 1
+            "INSERT INTO roles (name, permissions_json, databases_json, environments_json, built_in, config_synced, source)
+             VALUES (?1, ?2, ?3, ?4, 0, 1, 'config')
+             ON CONFLICT(name) DO UPDATE SET permissions_json = ?2, databases_json = ?3, environments_json = ?4, config_synced = 1, source = 'config'
              WHERE config_synced = 1 OR built_in = 0",
             rusqlite::params![role.name, perms_json, dbs_str, envs_str],
         )

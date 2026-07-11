@@ -36,10 +36,9 @@ impl Token {
     /// Extract the lookup prefix from a raw token string.
     /// Token format: "dbw_" + hex chars; prefix is chars 4..12 (first 8 hex chars).
     pub fn extract_prefix(raw_token: &str) -> String {
-        if raw_token.len() >= 12 {
-            raw_token[4..12].to_string()
-        } else {
-            raw_token.chars().take(8).collect()
-        }
+        raw_token
+            .get(4..12)
+            .map(str::to_string)
+            .unwrap_or_else(|| raw_token.chars().take(8).collect())
     }
 }

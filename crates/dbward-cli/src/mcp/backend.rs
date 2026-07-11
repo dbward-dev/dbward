@@ -49,7 +49,11 @@ impl McpBackend for CliMcpBackend {
 
         let status = match cr.status {
             dbward_api_types::requests::RequestStatus::Pending => RequestStatus::Pending,
-            dbward_api_types::requests::RequestStatus::Approved => RequestStatus::Approved,
+            dbward_api_types::requests::RequestStatus::Approved
+            | dbward_api_types::requests::RequestStatus::AutoApproved
+            | dbward_api_types::requests::RequestStatus::BreakGlass
+            | dbward_api_types::requests::RequestStatus::Dispatched
+            | dbward_api_types::requests::RequestStatus::Running => RequestStatus::Approved,
             dbward_api_types::requests::RequestStatus::Rejected => RequestStatus::Rejected,
             _ => RequestStatus::Failed,
         };

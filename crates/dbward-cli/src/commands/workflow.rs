@@ -15,6 +15,7 @@ pub enum Outcome {
         approvers: Vec<String>,
     },
     /// Request is approved but not yet resumed (caller should resume or inform user).
+    #[allow(dead_code)]
     Approved { request_id: String },
 }
 
@@ -94,9 +95,16 @@ pub async fn submit_and_orchestrate(
                 result,
             })
         }
-        RequestStatus::Approved | RequestStatus::AutoApproved => Ok(Outcome::Approved {
-            request_id: cr.request_id,
-        }),
+        RequestStatus::Approved | RequestStatus::AutoApproved => {
+            sc.resume(&cr.request_id)
+                .await
+                .map_err(|e| CliError::Server(e.body.clone()))?;
+            let result = wait_and_resolve(sc, &cr.request_id, verbose).await?;
+            Ok(Outcome::Completed {
+                request_id: cr.request_id,
+                result,
+            })
+        }
         RequestStatus::Pending => Ok(Outcome::Pending {
             request_id: cr.request_id,
             approvers: cr.approvers,

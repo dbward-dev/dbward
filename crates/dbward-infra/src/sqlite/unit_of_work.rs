@@ -287,7 +287,7 @@ impl RequestWriterOps for SqliteTxScope<'_> {
         let mut stmt = self
             .conn
             .prepare(
-                "SELECT id FROM requests WHERE requester = ?1 AND status IN ('pending', 'dispatched', 'approved')",
+                "SELECT id FROM requests WHERE requester = ?1 AND status IN ('pending','approved','auto_approved','break_glass','dispatched','running','execution_lost')",
             )
             .map_err(db_err("tx: cancel_all_for_user select"))?;
         let ids: Vec<String> = stmt
@@ -299,7 +299,7 @@ impl RequestWriterOps for SqliteTxScope<'_> {
         for id in &ids {
             self.conn
                 .execute(
-                    "UPDATE requests SET status = ?1, cancelled_by = ?2, cancel_reason = ?3, updated_at = ?4, resolved_at = ?5 WHERE id = ?6 AND status IN ('pending', 'approved', 'dispatched')",
+                    "UPDATE requests SET status = ?1, cancelled_by = ?2, cancel_reason = ?3, updated_at = ?4, resolved_at = ?5 WHERE id = ?6 AND status IN ('pending','approved','auto_approved','break_glass','dispatched','running','execution_lost')",
                     params![
                         RequestStatus::Cancelled.as_str(),
                         cancelled_by,

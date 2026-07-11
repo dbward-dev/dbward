@@ -141,12 +141,14 @@ impl RequestReader for SqliteRequestRepo {
         let sql = format!(
             "SELECT COUNT(DISTINCT r.id) FROM requests r
              LEFT JOIN request_pending_approvers rpa ON r.id = rpa.request_id
-             WHERE (r.requester = ?{uid_idx} OR (r.status = 'pending' AND rpa.selector IN ({placeholders}))){status_clause}"
+             LEFT JOIN approvals a ON r.id = a.request_id AND a.actor_id = ?{uid_idx}
+             WHERE (r.requester = ?{uid_idx} OR (r.status = 'pending' AND rpa.selector IN ({placeholders})) OR a.actor_id IS NOT NULL){status_clause}"
         );
         let query_sql = format!(
             "SELECT DISTINCT r.* FROM requests r
              LEFT JOIN request_pending_approvers rpa ON r.id = rpa.request_id
-             WHERE (r.requester = ?{uid_idx} OR (r.status = 'pending' AND rpa.selector IN ({placeholders}))){status_clause}
+             LEFT JOIN approvals a ON r.id = a.request_id AND a.actor_id = ?{uid_idx}
+             WHERE (r.requester = ?{uid_idx} OR (r.status = 'pending' AND rpa.selector IN ({placeholders})) OR a.actor_id IS NOT NULL){status_clause}
              ORDER BY r.created_at DESC LIMIT ?{} OFFSET ?{}",
             uid_idx + if status.is_some() { 2 } else { 1 },
             uid_idx + if status.is_some() { 3 } else { 2 },

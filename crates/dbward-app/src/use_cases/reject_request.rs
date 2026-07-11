@@ -176,9 +176,11 @@ impl RejectRequest {
 
         // Atomic: approval + status change + audit
         let request_id = request.id.clone();
+        let clock = self.clock.clone();
         self.uow.execute(Box::new(move |tx| {
             tx.insert_approval(&approval)?;
-            let ok = tx.mark_rejected(&request_id, now)?;
+            let tx_now = clock.now();
+            let ok = tx.mark_rejected(&request_id, tx_now)?;
             if !ok {
                 return Err(AppError::Conflict("concurrent status change".into()));
             }
