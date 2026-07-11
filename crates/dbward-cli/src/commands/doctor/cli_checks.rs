@@ -19,6 +19,7 @@ pub(super) async fn run_cli_mode(ctx: &mut DoctorContext, config_path: Option<&s
                 status: Status::Pass,
                 message: sources_str,
                 hint: None,
+                details: vec![],
             });
             Some(m.config)
         }
@@ -28,6 +29,7 @@ pub(super) async fn run_cli_mode(ctx: &mut DoctorContext, config_path: Option<&s
                 status: Status::Fail,
                 message: e.to_string(),
                 hint: Some("Run 'dbward init' to create a config file".into()),
+                details: vec![],
             });
             None
         }
@@ -41,6 +43,7 @@ pub(super) async fn run_cli_mode(ctx: &mut DoctorContext, config_path: Option<&s
         status: Status::Pass,
         message: "all resolved".into(),
         hint: None,
+        details: vec![],
     });
 
     // C2.5: server_url_scheme — TLS transport safety
@@ -62,6 +65,7 @@ pub(super) async fn run_cli_mode(ctx: &mut DoctorContext, config_path: Option<&s
                 status: Status::Pass,
                 message: label.into(),
                 hint: None,
+                details: vec![],
             });
         }
         Err(e) => {
@@ -70,6 +74,7 @@ pub(super) async fn run_cli_mode(ctx: &mut DoctorContext, config_path: Option<&s
                 status: Status::Fail,
                 message: e.to_string(),
                 hint: Some("Production requires HTTPS. See docs/deployment/tls.md".into()),
+                details: vec![],
             });
         }
     }
@@ -84,6 +89,7 @@ pub(super) async fn run_cli_mode(ctx: &mut DoctorContext, config_path: Option<&s
                 status: Status::Pass,
                 message: format!("{server_url_display} (v{version})"),
                 hint: None,
+                details: vec![],
             });
 
             // C4: version_info
@@ -96,6 +102,7 @@ pub(super) async fn run_cli_mode(ctx: &mut DoctorContext, config_path: Option<&s
                         "CLI v{cli_version}, Server v{version} — consider updating CLI"
                     ),
                     hint: Some("Run 'dbward self-update'".into()),
+                    details: vec![],
                 });
             } else {
                 ctx.record(CheckResult {
@@ -103,6 +110,7 @@ pub(super) async fn run_cli_mode(ctx: &mut DoctorContext, config_path: Option<&s
                     status: Status::Pass,
                     message: format!("CLI v{cli_version}, Server v{version}"),
                     hint: None,
+                    details: vec![],
                 });
             }
         }
@@ -112,12 +120,14 @@ pub(super) async fn run_cli_mode(ctx: &mut DoctorContext, config_path: Option<&s
                 status: Status::Fail,
                 message: e,
                 hint: Some("Is the server running? Verify server.url in your config and check that the process is up.".into()),
+                details: vec![],
             });
             ctx.record(CheckResult {
                 id: "version_info",
                 status: Status::Skip,
                 message: "skipped (server unreachable)".into(),
                 hint: None,
+                details: vec![],
             });
         }
     }
@@ -135,6 +145,7 @@ pub(super) async fn run_cli_mode(ctx: &mut DoctorContext, config_path: Option<&s
             }
             .into(),
             hint: None,
+            details: vec![],
         });
     } else {
         ctx.record(CheckResult {
@@ -142,6 +153,7 @@ pub(super) async fn run_cli_mode(ctx: &mut DoctorContext, config_path: Option<&s
             status: Status::Fail,
             message: "no token or OIDC configured".into(),
             hint: Some("Set server.token or [server.oidc] in your config".into()),
+            details: vec![],
         });
     }
 
@@ -152,6 +164,7 @@ pub(super) async fn run_cli_mode(ctx: &mut DoctorContext, config_path: Option<&s
             status: Status::Skip,
             message: "skipped".into(),
             hint: None,
+            details: vec![],
         });
     } else if let Some(ref token) = cfg.server.token {
         let sc = crate::server_client::ServerClient::new(&cfg.server.url, token);
@@ -167,6 +180,7 @@ pub(super) async fn run_cli_mode(ctx: &mut DoctorContext, config_path: Option<&s
                     status: Status::Pass,
                     message: format!("{subject} ({})", roles.join(", ")),
                     hint: None,
+                    details: vec![],
                 });
             }
             Err(e) => {
@@ -175,6 +189,7 @@ pub(super) async fn run_cli_mode(ctx: &mut DoctorContext, config_path: Option<&s
                     status: Status::Fail,
                     message: format!("authentication failed: {e}"),
                     hint: Some("Check your token or run 'dbward login'. On first server start, tokens are in /data/admin-token and /data/developer-token.".into()),
+                    details: vec![],
                 });
             }
         }
@@ -184,6 +199,7 @@ pub(super) async fn run_cli_mode(ctx: &mut DoctorContext, config_path: Option<&s
             status: Status::Skip,
             message: "skipped (OIDC — run 'dbward login' to verify)".into(),
             hint: None,
+            details: vec![],
         });
     }
 
@@ -211,6 +227,7 @@ async fn check_databases_workflows(
                     status: Status::Warn,
                     message: "0 registered — requests will be rejected".into(),
                     hint: Some("Add [[databases]] to server config".into()),
+                    details: vec![],
                 });
             } else {
                 ctx.record(CheckResult {
@@ -218,6 +235,7 @@ async fn check_databases_workflows(
                     status: Status::Pass,
                     message: format!("{count} registered"),
                     hint: None,
+                    details: vec![],
                 });
             }
         }
@@ -227,6 +245,7 @@ async fn check_databases_workflows(
                 status: Status::Skip,
                 message: "skipped (insufficient permission)".into(),
                 hint: None,
+                details: vec![],
             });
         }
         Err(e) => {
@@ -235,6 +254,7 @@ async fn check_databases_workflows(
                 status: Status::Warn,
                 message: format!("could not check: {e}"),
                 hint: None,
+                details: vec![],
             });
         }
     }
@@ -249,6 +269,7 @@ async fn check_databases_workflows(
                     status: Status::Warn,
                     message: "0 defined — requests will be rejected (fail-closed)".into(),
                     hint: Some("Add [[workflows]] to server config".into()),
+                    details: vec![],
                 });
             } else {
                 ctx.record(CheckResult {
@@ -256,6 +277,7 @@ async fn check_databases_workflows(
                     status: Status::Pass,
                     message: format!("{count} defined"),
                     hint: None,
+                    details: vec![],
                 });
             }
         }
@@ -265,6 +287,7 @@ async fn check_databases_workflows(
                 status: Status::Skip,
                 message: "skipped (insufficient permission)".into(),
                 hint: None,
+                details: vec![],
             });
         }
         Err(e) => {
@@ -273,6 +296,7 @@ async fn check_databases_workflows(
                 status: Status::Warn,
                 message: format!("could not check: {e}"),
                 hint: None,
+                details: vec![],
             });
         }
     }

@@ -14,6 +14,7 @@ pub(super) async fn run_agent_mode(ctx: &mut DoctorContext, path: &std::path::Pa
                 status: Status::Fail,
                 message: format!("{}: {e}", path.display()),
                 hint: None,
+                details: vec![],
             });
             return;
         }
@@ -27,6 +28,7 @@ pub(super) async fn run_agent_mode(ctx: &mut DoctorContext, path: &std::path::Pa
             status: Status::Pass,
             message: "all resolved".into(),
             hint: None,
+            details: vec![],
         });
     } else {
         let has_undefined = env_issues.iter().any(|(_, defined, _)| !defined);
@@ -50,6 +52,7 @@ pub(super) async fn run_agent_mode(ctx: &mut DoctorContext, path: &std::path::Pa
             status,
             message: msgs.join("; "),
             hint: Some("Set these environment variables before starting the agent".into()),
+            details: vec![],
         });
     }
 
@@ -62,6 +65,7 @@ pub(super) async fn run_agent_mode(ctx: &mut DoctorContext, path: &std::path::Pa
                 status: Status::Pass,
                 message: path.display().to_string(),
                 hint: None,
+                details: vec![],
             });
             c
         }
@@ -71,6 +75,7 @@ pub(super) async fn run_agent_mode(ctx: &mut DoctorContext, path: &std::path::Pa
                 status: Status::Fail,
                 message: e.to_string(),
                 hint: None,
+                details: vec![],
             });
             return;
         }
@@ -85,6 +90,7 @@ pub(super) async fn run_agent_mode(ctx: &mut DoctorContext, path: &std::path::Pa
                 status: Status::Pass,
                 message: format!("{server_url} (v{version})"),
                 hint: None,
+                details: vec![],
             });
             true
         }
@@ -94,6 +100,7 @@ pub(super) async fn run_agent_mode(ctx: &mut DoctorContext, path: &std::path::Pa
                 status: Status::Fail,
                 message: format!("{server_url} — {e}"),
                 hint: Some("Is the server running?".into()),
+                details: vec![],
             });
             false
         }
@@ -106,6 +113,7 @@ pub(super) async fn run_agent_mode(ctx: &mut DoctorContext, path: &std::path::Pa
             status: Status::Skip,
             message: "skipped (server unreachable)".into(),
             hint: None,
+            details: vec![],
         });
     } else {
         match check_agent_token(&cfg.server.url, &cfg.server.agent_token, ctx.timeout).await {
@@ -115,6 +123,7 @@ pub(super) async fn run_agent_mode(ctx: &mut DoctorContext, path: &std::path::Pa
                     status: Status::Pass,
                     message: "valid agent token".into(),
                     hint: None,
+                    details: vec![],
                 });
             }
             Err(e) => {
@@ -123,6 +132,7 @@ pub(super) async fn run_agent_mode(ctx: &mut DoctorContext, path: &std::path::Pa
                     status: Status::Fail,
                     message: e,
                     hint: Some("Check server.agent_token in agent config".into()),
+                    details: vec![],
                 });
             }
         }
@@ -149,6 +159,7 @@ pub(super) async fn run_agent_mode(ctx: &mut DoctorContext, path: &std::path::Pa
             status: Status::Pass,
             message: format!("{count} valid"),
             hint: None,
+            details: vec![],
         });
     } else {
         ctx.record(CheckResult {
@@ -156,6 +167,7 @@ pub(super) async fn run_agent_mode(ctx: &mut DoctorContext, path: &std::path::Pa
             status: Status::Fail,
             message: format!("unsupported scheme: {}", invalid_urls.join(", ")),
             hint: Some("URLs must start with postgres://, postgresql://, or mysql://".into()),
+            details: vec![],
         });
     }
 }
