@@ -71,10 +71,11 @@ impl McpBackend for CliMcpBackend {
         _user: &AuthUser,
     ) -> McpResult<WaitOutput> {
         // Resume — skip on 409 Conflict (already dispatched/running)
-        match self.client.resume(request_id).await {
-            Ok(_) => {}
+        let wait_status = match self.client.resume(request_id).await {
+            Ok(_) => dbward_api_types::requests::RequestStatus::Dispatched,
             Err(e) if e.status == 409 => {
-                // Already dispatched/running — proceed to wait
+                // Already dispatched/running — just wait
+                dbward_api_types::requests::RequestStatus::Dispatched
             }
             Err(e) => {
                 return Err(format!(
@@ -84,17 +85,12 @@ impl McpBackend for CliMcpBackend {
                 )
                 .into());
             }
-        }
+        };
 
         // Wait with timeout
         match tokio::time::timeout(
             Duration::from_secs(timeout_secs),
-            workflow::wait_for_completion(
-                &self.client,
-                request_id,
-                dbward_api_types::requests::RequestStatus::Approved,
-                false,
-            ),
+            workflow::wait_for_completion(&self.client, request_id, wait_status, false),
         )
         .await
         {

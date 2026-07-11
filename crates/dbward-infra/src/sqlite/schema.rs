@@ -835,7 +835,8 @@ CREATE TABLE IF NOT EXISTS roles (
     databases_json TEXT NOT NULL DEFAULT '[\"*\"]',
     environments_json TEXT NOT NULL DEFAULT '[\"*\"]',
     built_in INTEGER NOT NULL DEFAULT 0,
-    config_synced INTEGER NOT NULL DEFAULT 0
+    config_synced INTEGER NOT NULL DEFAULT 0,
+    source TEXT NOT NULL DEFAULT 'config'
 );
 
 -- Result policies
