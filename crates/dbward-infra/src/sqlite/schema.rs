@@ -625,10 +625,21 @@ pub fn initialize(conn: &Connection) -> Result<(), rusqlite::Error> {
         if current < 26 {
             conn.execute_batch(MIGRATION_V26)?;
         }
-        // Idempotent index additions (safe for any schema version)
+        // Idempotent index and column additions (safe for any schema version)
         conn.execute_batch(
             "CREATE INDEX IF NOT EXISTS idx_approvals_actor ON approvals(actor_id);",
         )?;
+        // Ensure roles.source exists (added in V14 but schema may predate this patch)
+        let has_source: bool = conn
+            .prepare("SELECT COUNT(*) FROM pragma_table_info('roles') WHERE name='source'")
+            .and_then(|mut s| s.query_row([], |r| r.get::<_, i64>(0)))
+            .unwrap_or(0)
+            > 0;
+        if !has_source {
+            conn.execute_batch(
+                "ALTER TABLE roles ADD COLUMN source TEXT NOT NULL DEFAULT 'config';",
+            )?;
+        }
         conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
     }
     Ok(())
