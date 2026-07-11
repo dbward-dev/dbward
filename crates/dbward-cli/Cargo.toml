@@ -16,6 +16,9 @@ path = "src/main.rs"
 [dependencies]
 dbward-api-types = { path = "../dbward-api-types" }
 dbward-api-client = { path = "../dbward-api-client" }
+# NOTE: Only services::{explain_formatter, tables_display} are used.
+# Do NOT depend on use_case modules — CLI talks to server via REST API.
+dbward-app = { path = "../dbward-app" }
 dbward-config = { path = "../dbward-config" }
 dbward-domain = { path = "../dbward-domain" }
 dbward-mcp = { path = "../dbward-mcp" }

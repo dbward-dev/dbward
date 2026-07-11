@@ -133,26 +133,15 @@ pub fn build_review_modal(
                     .take(60)
                     .collect::<String>()
                     .replace('`', "'");
+
                 if let Some(plan) = entry.get("plan")
                     && !plan.is_null()
                 {
-                    let node_type = plan["Plan"]["Node Type"]
-                        .as_str()
-                        .or_else(|| plan[0]["Plan"]["Node Type"].as_str())
-                        .unwrap_or("?");
-                    let rows = plan["Plan"]["Plan Rows"]
-                        .as_f64()
-                        .or_else(|| plan[0]["Plan"]["Plan Rows"].as_f64())
-                        .map(|r| format!("~{}", r as i64))
-                        .unwrap_or_default();
-                    let cost = plan["Plan"]["Total Cost"]
-                        .as_f64()
-                        .or_else(|| plan[0]["Plan"]["Total Cost"].as_f64())
-                        .map(|c| format!(", cost: {c:.1}"))
-                        .unwrap_or_default();
-                    explain_text.push_str(&format!(
-                        "{sql_preview}\n→ {node_type} (rows: {rows}{cost})\n"
-                    ));
+                    let opts = dbward_app::services::explain_formatter::FormatOptions::slack();
+                    let lines =
+                        dbward_app::services::explain_formatter::format_explain_tree(entry, &opts);
+                    let tree_text = lines.join("\n").replace('`', "'");
+                    explain_text.push_str(&format!("{sql_preview}\n{tree_text}\n"));
                 } else if let Some(err) = entry.get("error") {
                     let msg = err.as_str().unwrap_or("unavailable").replace('`', "'");
                     explain_text.push_str(&format!("{sql_preview}\n⚠️ {msg}\n"));
@@ -196,21 +185,37 @@ pub fn build_review_modal(
             ctx_lines.push(format!("Risk: {level}{factors_str}"));
         }
 
-        if let Some(ref tables_json) = ctx.tables_json
-            && let Ok(tables) = serde_json::from_str::<Vec<Value>>(tables_json)
-        {
-            for t in tables.iter().take(3) {
-                let name = t["name"].as_str().unwrap_or("?");
-                let rows = t["estimated_rows"].as_i64().unwrap_or(0);
-                let has_cascade = t["constraints"]
-                    .as_array()
-                    .map(|cs| {
-                        cs.iter()
-                            .any(|c| c["on_delete"].as_str() == Some("CASCADE"))
-                    })
-                    .unwrap_or(false);
-                let cascade = if has_cascade { " ⚠️ CASCADE" } else { "" };
-                ctx_lines.push(format!("📊 {name}: ~{rows} rows{cascade}"));
+        if let Some(ref tables_json) = ctx.tables_json {
+            let entries =
+                dbward_app::services::tables_display::parse_tables_json(Some(tables_json));
+            for entry in entries.iter().take(5) {
+                let display_name = match &entry.schema_name {
+                    Some(s) if s != "public" => format!("{}.{}", s, entry.name),
+                    _ => entry.name.clone(),
+                };
+                let row_info = entry
+                    .estimated_rows
+                    .filter(|&r| r > 0)
+                    .map(|r| format!(" (~{r} rows)"))
+                    .unwrap_or_default();
+                let cascade = if entry.has_cascade_fk {
+                    let targets: String = entry
+                        .cascade_targets
+                        .iter()
+                        .take(3)
+                        .map(|s| s.as_str())
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    let suffix = if entry.cascade_targets.len() > 3 {
+                        format!(" +{}", entry.cascade_targets.len() - 3)
+                    } else {
+                        String::new()
+                    };
+                    format!(" ⚠️ CASCADE → {targets}{suffix}")
+                } else {
+                    String::new()
+                };
+                ctx_lines.push(format!("📊 {display_name}{row_info}{cascade}"));
             }
         }
 
@@ -225,9 +230,16 @@ pub fn build_review_modal(
         }
 
         if !ctx_lines.is_empty() {
+            let ctx_text = ctx_lines.join("\n");
+            let ctx_text = if ctx_text.chars().count() > 2800 {
+                let truncated: String = ctx_text.chars().take(2800).collect();
+                format!("{truncated}...")
+            } else {
+                ctx_text
+            };
             blocks.push(json!({
                 "type": "context",
-                "elements": [{"type": "mrkdwn", "text": ctx_lines.join("\n")}]
+                "elements": [{"type": "mrkdwn", "text": ctx_text}]
             }));
         }
     }

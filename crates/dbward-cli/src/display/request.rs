@@ -209,10 +209,25 @@ pub(crate) fn print_request_detail(body: &serde_json::Value) {
                 }
             }
             // Tables
-            if let Some(tables) = ctx["tables"].as_array() {
-                let names: Vec<&str> = tables.iter().filter_map(|v| v.as_str()).collect();
-                if !names.is_empty() {
-                    println!("  Tables:      {}", names.join(", "));
+            if let Some(tables_val) = ctx.get("tables").filter(|v| !v.is_null()) {
+                let json_str = serde_json::to_string(tables_val).unwrap_or_default();
+                let entries =
+                    dbward_app::services::tables_display::parse_tables_json(Some(&json_str));
+                if !entries.is_empty() {
+                    let display: Vec<String> = entries
+                        .iter()
+                        .map(|e| {
+                            let name = match &e.schema_name {
+                                Some(s) if s != "public" => format!("{}.{}", s, e.name),
+                                _ => e.name.clone(),
+                            };
+                            match e.estimated_rows {
+                                Some(r) if r > 0 => format!("{name} (~{r} rows)"),
+                                _ => name,
+                            }
+                        })
+                        .collect();
+                    println!("  Tables:      {}", display.join(", "));
                 }
             }
             // Schema snapshot
@@ -419,134 +434,8 @@ pub(crate) fn print_approve_result(body: &serde_json::Value, id: &str) {
 
 /// Format an explain entry's plan as an indented tree of nodes.
 fn format_explain_tree(entry: &serde_json::Value) -> Vec<String> {
-    // Text format: return as-is (one line per line)
-    if let Some(plan_str) = entry["plan"].as_str() {
-        return plan_str.lines().take(10).map(|l| l.to_string()).collect();
-    }
-    // PG JSON format: [{"Plan": {...}}]
-    if let Some(plan_node) = entry["plan"]
-        .as_array()
-        .and_then(|a| a.first())
-        .map(|f| &f["Plan"])
-        .filter(|p| !p.is_null())
-    {
-        let mut lines = Vec::new();
-        walk_plan_node(plan_node, 0, &mut lines);
-        return lines;
-    }
-    // MySQL JSON format: {"query_block": {...}}
-    if let Some(qb) = entry["plan"].get("query_block").filter(|v| !v.is_null()) {
-        let mut lines = Vec::new();
-        walk_mysql_query_block(qb, 0, &mut lines);
-        return lines;
-    }
-    vec!["(plan format unknown)".to_string()]
-}
-
-const MAX_EXPLAIN_DEPTH: usize = 6;
-
-fn walk_plan_node(node: &serde_json::Value, depth: usize, out: &mut Vec<String>) {
-    if depth > MAX_EXPLAIN_DEPTH {
-        let indent = "  ".repeat(depth);
-        out.push(format!("{indent}... (use --json for full plan)"));
-        return;
-    }
-    let node_type = node["Node Type"].as_str().unwrap_or("?");
-    let relation = node["Relation Name"].as_str().unwrap_or("");
-    let rows = node["Plan Rows"].as_u64().unwrap_or(0);
-    let cost = node["Total Cost"].as_f64().unwrap_or(0.0);
-    let filter = node["Filter"].as_str();
-
-    let indent = "  ".repeat(depth);
-    let on_part = if relation.is_empty() {
-        String::new()
-    } else {
-        format!(" on {relation}")
-    };
-    let mut line = format!("{indent}{node_type}{on_part} (rows={rows}, cost={cost:.0})");
-    if let Some(f) = filter {
-        let short_filter: String = f.chars().take(60).collect();
-        line.push_str(&format!("  Filter: {short_filter}"));
-    }
-    out.push(line);
-
-    if let Some(plans) = node["Plans"].as_array() {
-        for child in plans {
-            walk_plan_node(child, depth + 1, out);
-        }
-    }
-}
-
-/// Walk MySQL EXPLAIN JSON format (query_block → table / nested_loop / ordering_operation etc.)
-fn walk_mysql_query_block(qb: &serde_json::Value, depth: usize, out: &mut Vec<String>) {
-    if depth > MAX_EXPLAIN_DEPTH {
-        let indent = "  ".repeat(depth);
-        out.push(format!("{indent}... (use --json for full plan)"));
-        return;
-    }
-    let indent = "  ".repeat(depth);
-    let cost = qb["cost_info"]["query_cost"].as_str().unwrap_or("?");
-    out.push(format!("{indent}query_block (cost={cost})"));
-
-    // Single table access
-    if let Some(table) = qb.get("table").filter(|v| !v.is_null()) {
-        walk_mysql_table(table, depth + 1, out);
-    }
-    // Nested loop join
-    if let Some(nl) = qb["nested_loop"].as_array() {
-        let indent2 = "  ".repeat(depth + 1);
-        out.push(format!("{indent2}nested_loop"));
-        for item in nl {
-            if let Some(t) = item.get("table") {
-                walk_mysql_table(t, depth + 2, out);
-            }
-        }
-    }
-    // Ordering operation
-    if let Some(ordering) = qb.get("ordering_operation").filter(|v| !v.is_null()) {
-        let indent2 = "  ".repeat(depth + 1);
-        let using_filesort = ordering["using_filesort"].as_bool().unwrap_or(false);
-        let fs = if using_filesort { " (filesort)" } else { "" };
-        out.push(format!("{indent2}ordering_operation{fs}"));
-        // Ordering may contain nested_loop or table
-        if let Some(nl) = ordering["nested_loop"].as_array() {
-            for item in nl {
-                if let Some(t) = item.get("table") {
-                    walk_mysql_table(t, depth + 2, out);
-                }
-            }
-        }
-        if let Some(t) = ordering.get("table").filter(|v| !v.is_null()) {
-            walk_mysql_table(t, depth + 2, out);
-        }
-    }
-    // Grouping operation
-    if let Some(grouping) = qb.get("grouping_operation").filter(|v| !v.is_null()) {
-        let indent2 = "  ".repeat(depth + 1);
-        out.push(format!("{indent2}grouping_operation"));
-        if let Some(nl) = grouping["nested_loop"].as_array() {
-            for item in nl {
-                if let Some(t) = item.get("table") {
-                    walk_mysql_table(t, depth + 2, out);
-                }
-            }
-        }
-    }
-}
-
-fn walk_mysql_table(table: &serde_json::Value, depth: usize, out: &mut Vec<String>) {
-    let indent = "  ".repeat(depth);
-    let name = table["table_name"].as_str().unwrap_or("?");
-    let access = table["access_type"].as_str().unwrap_or("?");
-    let rows = table["rows_examined_per_scan"]
-        .as_u64()
-        .or_else(|| table["rows_produced_per_join"].as_u64())
-        .unwrap_or(0);
-    let filtered = table["filtered"].as_f64().unwrap_or(100.0);
-    let mut line = format!("{indent}{access} on {name} (rows={rows}, filtered={filtered:.0}%)");
-    if let Some(cond) = table["attached_condition"].as_str() {
-        let short: String = cond.chars().take(50).collect();
-        line.push_str(&format!("  WHERE: {short}"));
-    }
-    out.push(line);
+    dbward_app::services::explain_formatter::format_explain_tree(
+        entry,
+        &dbward_app::services::explain_formatter::FormatOptions::cli(),
+    )
 }

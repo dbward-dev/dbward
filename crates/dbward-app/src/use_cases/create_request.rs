@@ -384,25 +384,66 @@ impl CreateRequest {
                         }
                     }
                     let tables = table_extractor::extract_tables(stmts);
-                    let t_json = serde_json::to_string(
-                        &tables
-                            .iter()
-                            .map(|t| {
-                                if let Some(ref s) = t.schema {
-                                    format!("{}.{}", s, t.name)
-                                } else {
-                                    t.name.clone()
-                                }
-                            })
-                            .collect::<Vec<_>>(),
-                    )
-                    .ok();
-                    let (schema_status, schema_collected_at) =
-                        super::risk_analysis::resolve_schema_status(
-                            self.schema_repo.as_ref(),
-                            input.database.as_str(),
-                            input.environment.as_str(),
-                        );
+
+                    // Fetch-once: get snapshot once, derive status + tables + risk from it
+                    let snapshot = self
+                        .schema_repo
+                        .get_snapshot(input.database.as_str(), input.environment.as_str())
+                        .inspect_err(|e| {
+                            tracing::warn!(error = %e, "failed to fetch schema snapshot for enrichment");
+                        })
+                        .ok()
+                        .flatten();
+
+                    let (schema_status, schema_collected_at) = match &snapshot {
+                        Some(s)
+                            if s.status
+                                == dbward_domain::services::status_constants::schema::READY =>
+                        {
+                            (
+                                risk_scorer::SchemaStatus::Ready,
+                                Some(s.collected_at.clone()),
+                            )
+                        }
+                        Some(s) => (
+                            risk_scorer::SchemaStatus::Failed,
+                            Some(s.collected_at.clone()),
+                        ),
+                        None => (risk_scorer::SchemaStatus::NotSynced, None),
+                    };
+
+                    let tables_raw_json: Option<String> = snapshot
+                        .as_ref()
+                        .filter(|s| {
+                            s.status == dbward_domain::services::status_constants::schema::READY
+                        })
+                        .and_then(|s| s.snapshot_json.as_ref())
+                        .and_then(|json_str| {
+                            self.schema_repo
+                                .extract_tables_from_snapshot_json(json_str, &tables)
+                        });
+
+                    let table_risk_info = tables_raw_json
+                        .as_deref()
+                        .map(super::risk_analysis::parse_table_risk_info)
+                        .unwrap_or_default();
+
+                    let t_json = tables_raw_json.or_else(|| {
+                        serde_json::to_string(
+                            &tables
+                                .iter()
+                                .map(|t| {
+                                    if let Some(ref s) = t.schema {
+                                        format!("{}.{}", s, t.name)
+                                    } else {
+                                        t.name.clone()
+                                    }
+                                })
+                                .collect::<Vec<_>>(),
+                        )
+                        .ok()
+                    });
+
                     let allow_read_only = match early_workflow.as_ref() {
                         Some(wf) => super::risk_analysis::compute_allow_read_only(operation, wf),
                         None => false,
@@ -419,12 +460,6 @@ impl CreateRequest {
                         ),
                         None => false,
                     };
-                    let table_risk_info = super::risk_analysis::resolve_table_risk(
-                        self.schema_repo.as_ref(),
-                        input.database.as_str(),
-                        input.environment.as_str(),
-                        &tables,
-                    );
                     let assessment = risk_scorer::evaluate(&risk_scorer::RiskInput {
                         operation,
                         findings: &review.findings,
