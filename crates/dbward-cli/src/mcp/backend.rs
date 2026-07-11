@@ -87,6 +87,11 @@ impl McpBackend for CliMcpBackend {
                         dbward_api_types::requests::RequestStatus::Dispatched
                     }
                     "executed" | "failed" => dbward_api_types::requests::RequestStatus::Executed,
+                    "approved" | "auto_approved" | "break_glass" | "execution_lost" => {
+                        // Still resumable (dispatch lease may have expired) — let
+                        // wait_for_completion handle the re-resume.
+                        dbward_api_types::requests::RequestStatus::Approved
+                    }
                     _ => {
                         return Err(McpError::Internal(format!(
                             "request is '{}', cannot resume",

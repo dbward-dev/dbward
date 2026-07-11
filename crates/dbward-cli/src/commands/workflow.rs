@@ -95,9 +95,13 @@ pub async fn submit_and_orchestrate(
             })
         }
         RequestStatus::AutoApproved | RequestStatus::BreakGlass => {
-            sc.resume(&cr.request_id)
-                .await
-                .map_err(|e| CliError::Server(e.body.clone()))?;
+            match sc.resume(&cr.request_id).await {
+                Ok(_) => {}
+                Err(e) if e.status == 409 => {
+                    // Already dispatched by concurrent caller — proceed to wait
+                }
+                Err(e) => return Err(CliError::Server(e.body.clone())),
+            }
             let result = wait_and_resolve(sc, &cr.request_id, verbose).await?;
             Ok(Outcome::Completed {
                 request_id: cr.request_id,
