@@ -33,7 +33,7 @@ async fn expire_pending_requests(state: &AppState) {
         let channel = state
             .slack_config
             .as_ref()
-            .map(|s| s.default_channel.clone())
+            .map(|s| s.channel.clone())
             .unwrap_or_default();
 
         for notification in expired {

@@ -906,8 +906,6 @@ pub struct SlackConfig {
     #[serde(default = "default_slack_channel")]
     pub channel: String,
     #[serde(default)]
-    pub channels: HashMap<String, String>,
-    #[serde(default)]
     pub onboarding: Option<SlackOnboardingConfig>,
 }
 

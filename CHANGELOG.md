@@ -159,7 +159,6 @@ Intelligent approval: risk-based auto-approve, context enrichment, Slack integra
 - **Background Supervisor**: Panic auto-restart with sliding window rate limit
 - **HTTP Metrics**: Prometheus-compatible `/metrics` (request count, latency, queue depth)
 - **Health Check**: `/ready` with ResultStore + SQLite write probe
-- **Notification Routing**: Per-environment Slack channel routing via `[slack.channels]`
 
 ### Breaking Changes
 

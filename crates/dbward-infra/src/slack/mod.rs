@@ -86,15 +86,5 @@ pub enum SlackError {
 pub struct SlackConfig {
     pub bot_token: String,
     pub signing_secret: String,
-    pub default_channel: String,
-    pub channel_overrides: std::collections::HashMap<String, String>,
-}
-
-impl SlackConfig {
-    pub fn channel_for_env(&self, env: &str) -> &str {
-        self.channel_overrides
-            .get(env)
-            .map(|s| s.as_str())
-            .unwrap_or(&self.default_channel)
-    }
+    pub channel: String,
 }
