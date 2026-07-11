@@ -435,4 +435,44 @@ mod tests {
         assert_eq!(dispatched.len(), 1);
         assert_eq!(dispatched[0].id, "req-dispatched");
     }
+
+    #[test]
+    fn approved_request_visible_to_approver() {
+        let repo = setup();
+
+        // Insert a request
+        let mut req = make_request();
+        req.id = "req-visible".to_string();
+        req.status = RequestStatus::Approved;
+        repo.insert(&req).unwrap();
+
+        // Insert request_pending_approvers (for when it was pending)
+        {
+            let c = repo.conn.lock();
+            c.execute(
+                "INSERT INTO request_pending_approvers (request_id, selector, step_index) VALUES ('req-visible', 'user:approver-1', 0)",
+                [],
+            ).unwrap();
+        }
+
+        // Insert an approval record (approver approved it)
+        let approval = Approval {
+            id: "appr-1".to_string(),
+            request_id: "req-visible".to_string(),
+            actor_id: "approver-1".to_string(),
+            action: ApprovalAction::Approve,
+            matched_selector: "user:approver-1".to_string(),
+            step_index: 0,
+            comment: None,
+            created_at: Utc::now(),
+        };
+        repo.insert_approval(&approval).unwrap();
+
+        // approver-1 should see req-visible via the approval join
+        let (results, count) = repo
+            .list_visible_to_user("approver-1", &[], &[], None, 10, 0)
+            .unwrap();
+        assert_eq!(count, 1);
+        assert_eq!(results[0].id, "req-visible");
+    }
 }

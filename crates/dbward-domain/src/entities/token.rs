@@ -42,3 +42,42 @@ impl Token {
             .unwrap_or_else(|| raw_token.chars().take(8).collect())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn extract_prefix_normal_token() {
+        // Standard token: "dbw_" + 8 hex chars prefix + rest
+        let token = "dbw_abcdef0123456789";
+        assert_eq!(Token::extract_prefix(token), "abcdef01");
+    }
+
+    #[test]
+    fn extract_prefix_short_string() {
+        // Too short to slice 4..12 — falls back to first 8 chars
+        let token = "dbw_ab";
+        assert_eq!(Token::extract_prefix(token), "dbw_ab");
+    }
+
+    #[test]
+    fn extract_prefix_empty_string() {
+        assert_eq!(Token::extract_prefix(""), "");
+    }
+
+    #[test]
+    fn extract_prefix_non_ascii() {
+        // Multi-byte chars: .get(4..12) returns None if boundary is invalid
+        let token = "dbw_あいうえお";
+        // "あ" is 3 bytes; byte range 4..12 crosses char boundaries → None
+        // fallback: first 8 chars = "dbw_あいうえ"
+        assert_eq!(Token::extract_prefix(token), "dbw_あいうえ");
+    }
+
+    #[test]
+    fn extract_prefix_exactly_12_chars() {
+        let token = "dbw_12345678";
+        assert_eq!(Token::extract_prefix(token), "12345678");
+    }
+}

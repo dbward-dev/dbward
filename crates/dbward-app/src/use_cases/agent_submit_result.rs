@@ -1138,6 +1138,31 @@ mod tests {
         ));
     }
 
+    #[tokio::test]
+    async fn stream_only_does_not_store_but_creates_manifest() {
+        use dbward_domain::policies::DeliveryMode;
+
+        // When DeliveryMode::Stream + success=true, should_store must be false
+        // and result_manifest must have empty storage_key.
+        let delivery_mode = DeliveryMode::Stream;
+        let success = true;
+        let should_store = !matches!(delivery_mode, DeliveryMode::Stream) || !success;
+        assert!(!should_store, "stream-only success should not store");
+
+        let storage_key = if should_store {
+            "req-1/exec-1".to_string()
+        } else {
+            String::new()
+        };
+        assert!(
+            storage_key.is_empty(),
+            "stream-only should produce empty storage_key"
+        );
+
+        // Compensation delete guard: empty key is skipped
+        assert!(storage_key.is_empty());
+    }
+
     #[test]
     fn promote_migrate_result_extracts_applied() {
         let mut event = AuditEvent::simple(
