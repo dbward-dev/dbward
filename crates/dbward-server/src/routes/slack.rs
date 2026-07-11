@@ -28,23 +28,23 @@ async fn resolve_slack_auth_user(
         return Err("suspended".to_string());
     }
 
-    let user = user_repo
-        .get(&subject_id)
-        .map_err(|e| format!("DB error: {e}"))?
-        .ok_or_else(|| "user not found".to_string())?;
-
-    let roles = state
-        .reloadable
-        .load()
+    let reloadable = state.reloadable.load();
+    let roles = reloadable
         .role_resolver
-        .resolve(&subject_id, SubjectType::User, &user.groups)
+        .resolve(&subject_id, SubjectType::User, &[])
         .map_err(|e| format!("{e}"))?;
+
+    if roles.is_empty() {
+        return Err("no_roles".to_string());
+    }
+
+    let groups = reloadable.role_resolver.groups_for_subject(&subject_id);
 
     let auth_user = AuthUser {
         subject_id,
         subject_type: SubjectType::User,
         roles,
-        groups: user.groups,
+        groups,
         token_id: None,
     };
     Ok(auth_user)

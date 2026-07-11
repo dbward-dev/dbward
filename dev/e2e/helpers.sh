@@ -124,13 +124,25 @@ create_token() {
   local user=$1 role=$2
   shift 2
   local extra_args=""
+  local -a all_groups=()
   while [ $# -gt 0 ]; do
     case "$1" in
-      --groups) shift 2 ;; # groups abolished — ignored
+      --groups)
+        # Accumulate groups (supports multiple --groups flags and comma-separated values)
+        local OLD_IFS="$IFS"
+        IFS=','
+        for g in $2; do all_groups+=("$g"); done
+        IFS="$OLD_IFS"
+        shift 2 ;;
       --agent) extra_args="$extra_args --agent"; shift ;;
       *) shift ;;
     esac
   done
+  # Build JSON array from collected groups
+  local groups_json="[]"
+  if [ ${#all_groups[@]} -gt 0 ]; then
+    groups_json="[$(printf '"%s",' "${all_groups[@]}" | sed 's/,$//')]"
+  fi
   # Read admin token from file (written by auto-bootstrap on first startup)
   local admin_token
   admin_token=$(docker compose exec -T dbward-server cat /data/admin-token 2>/dev/null || echo "")
@@ -139,11 +151,38 @@ create_token() {
   case "$extra_args" in *--agent*) is_agent="agent" ;; esac
   local subject_type="${is_agent:-user}"
   if [ "$subject_type" = "user" ]; then
-    # Create user via API (ignore 409 if already exists)
-    curl -sf -X POST "${SERVER_URL}/api/users/${user}" \
+    # Create or update user to exact desired state
+    local create_status
+    create_status=$(curl -s -o /dev/null -w "%{http_code}" -X POST "${SERVER_URL}/api/users" \
       -H "Authorization: Bearer $admin_token" \
       -H "Content-Type: application/json" \
-      -d "{\"id\":\"$user\",\"roles\":[\"$role\"],\"groups\":[]}" >/dev/null 2>&1 || true
+      -d "{\"id\":\"$user\",\"roles\":[\"$role\"],\"groups\":$groups_json}" 2>/dev/null)
+    if [ "$create_status" = "409" ]; then
+      # User exists — converge to exact desired roles/groups state
+      # Get all defined groups to compute rm_groups = all_groups - requested_groups
+      local all_groups_raw
+      all_groups_raw=$(curl -sf "${SERVER_URL}/api/groups" \
+        -H "Authorization: Bearer $admin_token" 2>/dev/null | \
+        python3 -c "import sys,json; print(' '.join(json.load(sys.stdin).get('groups',[])))" 2>/dev/null || echo "")
+      local rm_json="[]"
+      if [ -n "$all_groups_raw" ]; then
+        local -a rm_arr=()
+        for g in $all_groups_raw; do
+          local keep=false
+          for rg in "${all_groups[@]}"; do
+            [ "$g" = "$rg" ] && keep=true && break
+          done
+          [ "$keep" = "false" ] && rm_arr+=("$g")
+        done
+        if [ ${#rm_arr[@]} -gt 0 ]; then
+          rm_json="[$(printf '"%s",' "${rm_arr[@]}" | sed 's/,$//')]"
+        fi
+      fi
+      curl -sf -X PATCH "${SERVER_URL}/api/users/${user}" \
+        -H "Authorization: Bearer $admin_token" \
+        -H "Content-Type: application/json" \
+        -d "{\"roles\":[\"$role\"],\"add_groups\":$groups_json,\"rm_groups\":$rm_json}" >/dev/null 2>&1 || true
+    fi
   fi
   local result
   if [ "$subject_type" = "agent" ]; then
