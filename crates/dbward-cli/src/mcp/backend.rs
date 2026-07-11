@@ -70,14 +70,21 @@ impl McpBackend for CliMcpBackend {
         timeout_secs: u64,
         _user: &AuthUser,
     ) -> McpResult<WaitOutput> {
-        // Resume
-        self.client.resume(request_id).await.map_err(|e| {
-            format!(
-                "resume failed ({}): {}",
-                e.status,
-                e.error_message.unwrap_or(e.body)
-            )
-        })?;
+        // Resume — skip on 409 Conflict (already dispatched/running)
+        match self.client.resume(request_id).await {
+            Ok(_) => {}
+            Err(e) if e.status == 409 => {
+                // Already dispatched/running — proceed to wait
+            }
+            Err(e) => {
+                return Err(format!(
+                    "resume failed ({}): {}",
+                    e.status,
+                    e.error_message.unwrap_or(e.body)
+                )
+                .into());
+            }
+        }
 
         // Wait with timeout
         match tokio::time::timeout(
