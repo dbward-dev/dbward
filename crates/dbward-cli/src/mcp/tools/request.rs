@@ -116,6 +116,10 @@ async fn submit_and_wait_resume(
         ));
     }
 
+    if cr.status == RequestStatus::Rejected {
+        return Ok(format!("Request {} was rejected.", cr.request_id));
+    }
+
     // 3. Wait with timeout (request_id preserved on timeout)
     match tokio::time::timeout(
         TIMEOUT,
