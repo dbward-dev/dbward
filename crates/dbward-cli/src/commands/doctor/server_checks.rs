@@ -727,54 +727,38 @@ async fn check_slack(ctx: &mut DoctorContext, cfg: &dbward_config::ServerConfig)
     }
 
     // S-slack5: channel existence + bot membership
-    let all_channels = std::iter::once(("default", slack.channel.as_str()))
-        .chain(slack.channels.iter().map(|(k, v)| (k.as_str(), v.as_str())));
+    let channel_id = slack.channel.as_str();
 
-    for (label, channel_id) in all_channels {
-        // Skip empty channel
-        if channel_id.is_empty() {
-            ctx.record(CheckResult {
-                id: "slack_channel",
-                status: Status::Skip,
-                message: format!("({label}): not configured"),
-                hint: None,
-                details: vec![],
-            });
-            continue;
-        }
-
-        // Skip #name format channels
-        if channel_id.starts_with('#') {
-            ctx.record(CheckResult {
-                id: "slack_channel",
-                status: Status::Skip,
-                message: format!(
-                    "{channel_id} ({label}): use channel ID (C.../G...) for full validation"
-                ),
-                hint: None,
-                details: vec![],
-            });
-            continue;
-        }
-
-        // Validate ID format: C or G followed by alphanumeric
-        if !(channel_id.starts_with('C') || channel_id.starts_with('G'))
-            || channel_id.len() < 2
-            || !channel_id[1..].chars().all(|c| c.is_ascii_alphanumeric())
-        {
-            ctx.record(CheckResult {
-                id: "slack_channel",
-                status: Status::Fail,
-                message: format!("{channel_id} ({label}): invalid channel ID format"),
-                hint: Some(
-                    "Channel IDs start with C (public) or G (private) followed by alphanumeric"
-                        .into(),
-                ),
-                details: vec![],
-            });
-            continue;
-        }
-
+    if channel_id.is_empty() {
+        ctx.record(CheckResult {
+            id: "slack_channel",
+            status: Status::Skip,
+            message: "not configured".into(),
+            hint: None,
+            details: vec![],
+        });
+    } else if channel_id.starts_with('#') {
+        ctx.record(CheckResult {
+            id: "slack_channel",
+            status: Status::Skip,
+            message: format!("{channel_id}: use channel ID (C.../G...) for full validation"),
+            hint: None,
+            details: vec![],
+        });
+    } else if !(channel_id.starts_with('C') || channel_id.starts_with('G'))
+        || channel_id.len() < 2
+        || !channel_id[1..].chars().all(|c| c.is_ascii_alphanumeric())
+    {
+        ctx.record(CheckResult {
+            id: "slack_channel",
+            status: Status::Fail,
+            message: format!("{channel_id}: invalid channel ID format"),
+            hint: Some(
+                "Channel IDs start with C (public) or G (private) followed by alphanumeric".into(),
+            ),
+            details: vec![],
+        });
+    } else {
         let conv_resp = client
             .get("https://slack.com/api/conversations.info")
             .bearer_auth(&slack.bot_token)
@@ -787,7 +771,7 @@ async fn check_slack(ctx: &mut DoctorContext, cfg: &dbward_config::ServerConfig)
                 ctx.record(CheckResult {
                     id: "slack_channel",
                     status: Status::Fail,
-                    message: format!("{channel_id} ({label}): connection failed"),
+                    message: format!("{channel_id}: connection failed"),
                     hint: None,
                     details: vec![],
                 });
@@ -797,7 +781,7 @@ async fn check_slack(ctx: &mut DoctorContext, cfg: &dbward_config::ServerConfig)
                     ctx.record(CheckResult {
                         id: "slack_channel",
                         status: Status::Fail,
-                        message: format!("{channel_id} ({label}): invalid response"),
+                        message: format!("{channel_id}: invalid response"),
                         hint: None,
                         details: vec![],
                     });
@@ -808,7 +792,7 @@ async fn check_slack(ctx: &mut DoctorContext, cfg: &dbward_config::ServerConfig)
                         ctx.record(CheckResult {
                             id: "slack_channel",
                             status: Status::Fail,
-                            message: format!("{channel_id} ({label}): {error}"),
+                            message: format!("{channel_id}: {error}"),
                             hint: Some("Verify the channel ID exists".into()),
                             details: vec![],
                         });
@@ -818,7 +802,7 @@ async fn check_slack(ctx: &mut DoctorContext, cfg: &dbward_config::ServerConfig)
                             ctx.record(CheckResult {
                                 id: "slack_channel",
                                 status: Status::Pass,
-                                message: format!("{channel_id} ({label}) — bot is member"),
+                                message: format!("{channel_id} — bot is member"),
                                 hint: None,
                                 details: vec![],
                             });
@@ -826,7 +810,7 @@ async fn check_slack(ctx: &mut DoctorContext, cfg: &dbward_config::ServerConfig)
                             ctx.record(CheckResult {
                                 id: "slack_channel",
                                 status: Status::Warn,
-                                message: format!("{channel_id} ({label}) — bot not a member"),
+                                message: format!("{channel_id} — bot not a member"),
                                 hint: Some("Run: /invite @dbward in the channel".into()),
                                 details: vec![],
                             });

@@ -249,8 +249,7 @@ pub async fn run_from_args(
             Some(dbward_infra::slack::SlackConfig {
                 bot_token: s.bot_token.clone(),
                 signing_secret: s.signing_secret.clone(),
-                default_channel: s.channel.clone(),
-                channel_overrides: s.channels.clone(),
+                channel: s.channel.clone(),
             })
         }
     });

@@ -360,8 +360,7 @@ channel = "C0123ABC456"
 |---|---|---|---|---|
 | `bot_token` | String | ✓ | — | Slack Bot OAuth token (`xoxb-...`). |
 | `signing_secret` | String | ✓ | — | Slack signing secret for request verification. |
-| `channel` | String | | `"#db-approvals"` | Default channel (ID or name). |
-| `channels` | Map | | `{}` | Per-environment override. Key = env, value = channel. |
+| `channel` | String | | `"#db-approvals"` | Channel for approval notifications (ID or name). |
 
 ### [slack.onboarding]
 

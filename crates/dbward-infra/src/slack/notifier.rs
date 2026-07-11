@@ -60,8 +60,7 @@ impl SlackNotifier {
     }
 
     async fn send_initial_message(&self, event: &WebhookEvent) {
-        let env = event.environment.as_deref().unwrap_or("default");
-        let channel = self.config.channel_for_env(env);
+        let channel = &self.config.channel;
 
         // Fetch context enrichment (best-effort)
         let context = event

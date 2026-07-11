@@ -69,14 +69,6 @@ signing_secret = "${SLACK_SIGNING_SECRET}"
 channel = "C0123ABC456"
 ```
 
-Per-environment channel overrides:
-
-```toml
-[slack.channels]
-production = "C0123ABC456"
-staging = "C0456DEF789"
-```
-
 See [Configuration Reference: \[slack\]](../reference/configuration.md#slack) for all options.
 
 ### 4. Invite the bot and verify

@@ -1213,7 +1213,7 @@ async fn handle_onboarding_submission(
         let channel = state
             .slack_config
             .as_ref()
-            .map(|s| s.default_channel.clone())
+            .map(|s| s.channel.clone())
             .unwrap_or_default();
 
         let reason_text = if reason.is_empty() {
@@ -1591,7 +1591,7 @@ async fn handle_onboarding_review_submit(
     let channel_id = state
         .slack_config
         .as_ref()
-        .map(|c| c.default_channel.clone())
+        .map(|c| c.channel.clone())
         .unwrap_or_default();
     let comment_opt: Option<&str> = if comment.is_empty() {
         None
