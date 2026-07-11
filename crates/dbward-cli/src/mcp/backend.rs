@@ -85,6 +85,7 @@ impl McpBackend for CliMcpBackend {
                     "dispatched" | "running" => {
                         dbward_api_types::requests::RequestStatus::Dispatched
                     }
+                    "executed" | "failed" => dbward_api_types::requests::RequestStatus::Executed,
                     _ => {
                         return Err(McpError::Internal(format!(
                             "request is '{}', cannot resume",
