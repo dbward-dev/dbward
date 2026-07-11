@@ -359,7 +359,9 @@ impl AgentSubmitResult {
             Err(e) => {
                 // Compensate: delete orphaned storage object
                 if let Some(ref rm) = result_manifest {
-                    if let Err(del_err) = self.result_store.delete(&rm.storage_key).await {
+                    if !rm.storage_key.is_empty()
+                        && let Err(del_err) = self.result_store.delete(&rm.storage_key).await
+                    {
                         tracing::error!(key = %rm.storage_key, error = %del_err, "compensation delete failed for stored result");
                     }
                 } else if !input.success {

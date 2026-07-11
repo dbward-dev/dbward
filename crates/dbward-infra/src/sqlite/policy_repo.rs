@@ -724,7 +724,7 @@ impl PolicyRepo for SqlitePolicyRepo {
             "INSERT INTO roles (name, permissions_json, databases_json, environments_json, built_in, config_synced, source)
              VALUES (?1, ?2, ?3, ?4, 0, 1, 'config')
              ON CONFLICT(name) DO UPDATE SET permissions_json = ?2, databases_json = ?3, environments_json = ?4, config_synced = 1, source = 'config'
-             WHERE config_synced = 1 OR built_in = 0",
+             WHERE config_synced = 1",
             rusqlite::params![role.name, perms_json, dbs_str, envs_str],
         )
         .map_err(db_err("policy: upsert_config_role"))?;

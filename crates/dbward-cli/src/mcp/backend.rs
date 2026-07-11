@@ -53,8 +53,7 @@ impl McpBackend for CliMcpBackend {
             | dbward_api_types::requests::RequestStatus::AutoApproved
             | dbward_api_types::requests::RequestStatus::BreakGlass
             | dbward_api_types::requests::RequestStatus::Dispatched
-            | dbward_api_types::requests::RequestStatus::Running
-            | dbward_api_types::requests::RequestStatus::ExecutionLost => RequestStatus::Approved,
+            | dbward_api_types::requests::RequestStatus::Running => RequestStatus::Approved,
             dbward_api_types::requests::RequestStatus::Rejected => RequestStatus::Rejected,
             _ => RequestStatus::Failed,
         };
@@ -87,7 +86,7 @@ impl McpBackend for CliMcpBackend {
                         dbward_api_types::requests::RequestStatus::Dispatched
                     }
                     "executed" | "failed" => dbward_api_types::requests::RequestStatus::Executed,
-                    "approved" | "auto_approved" | "break_glass" | "execution_lost" => {
+                    "approved" | "auto_approved" | "break_glass" => {
                         // Still resumable (dispatch lease may have expired) — let
                         // wait_for_completion handle the re-resume.
                         dbward_api_types::requests::RequestStatus::Approved

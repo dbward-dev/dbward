@@ -53,9 +53,28 @@ pub async fn wait_for_completion(
             wait_and_resolve(sc, request_id, verbose).await
         }
         RequestStatus::Approved | RequestStatus::AutoApproved | RequestStatus::BreakGlass => {
-            sc.resume(request_id)
-                .await
-                .map_err(|e| CliError::Server(e.body.clone()))?;
+            match sc.resume(request_id).await {
+                Ok(_) => {}
+                Err(e) if e.status == 409 => {
+                    // Verify the request is actually in-flight before proceeding to wait.
+                    // resume returns 409 for both concurrency races (already dispatched)
+                    // and policy rejections (max_executions, retry disabled).
+                    let req = sc.get_request(request_id).await?;
+                    let actual = RequestStatus::from_json(&req["status"]);
+                    match actual {
+                        RequestStatus::Dispatched | RequestStatus::Running => {
+                            // Concurrent caller already dispatched — safe to wait
+                        }
+                        RequestStatus::Executed | RequestStatus::Failed => {
+                            return resolve_terminal_result(sc, request_id).await;
+                        }
+                        _ => {
+                            return Err(CliError::Server(e.body.clone()));
+                        }
+                    }
+                }
+                Err(e) => return Err(CliError::Server(e.body.clone())),
+            }
             wait_and_resolve(sc, request_id, verbose).await
         }
         RequestStatus::Executed | RequestStatus::Failed => {
@@ -259,6 +278,25 @@ async fn poll_until_terminal(
                     Ok(_) => {
                         // Re-dispatched successfully; return None to retry stream
                         return Ok(None);
+                    }
+                    Err(e) if e.status == 409 => {
+                        // Check if actually dispatched or a policy rejection
+                        req = sc.get_request(request_id).await?;
+                        let actual = RequestStatus::from_json(&req["status"]);
+                        match actual {
+                            RequestStatus::Dispatched | RequestStatus::Running => {
+                                return Ok(None);
+                            }
+                            RequestStatus::Executed | RequestStatus::Failed => {
+                                return resolve_from_request(sc, request_id, &req).await.map(Some);
+                            }
+                            _ => {
+                                return Err(CliError::Server(format!(
+                                    "request {request_id} is '{}' and resume was rejected: {}. Run: dbward request show {request_id}",
+                                    actual, e.body
+                                )));
+                            }
+                        }
                     }
                     Err(e) => {
                         return Err(CliError::Server(format!(
