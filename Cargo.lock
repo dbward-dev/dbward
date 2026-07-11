@@ -644,6 +644,7 @@ dependencies = [
  "clap",
  "dbward-api-client",
  "dbward-api-types",
+ "dbward-app",
  "dbward-config",
  "dbward-domain",
  "dbward-mcp",

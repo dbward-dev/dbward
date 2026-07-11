@@ -435,6 +435,44 @@ pub trait SchemaRepo: Send + Sync {
         env: &str,
         tables: &[dbward_domain::services::table_extractor::TableRef],
     ) -> Result<Option<String>, AppError>;
+
+    /// Extract matching table entries from a raw snapshot_json string.
+    /// Returns a JSON array string of matched table objects, or None if no match.
+    fn extract_tables_from_snapshot_json(
+        &self,
+        snapshot_json: &str,
+        tables: &[dbward_domain::services::table_extractor::TableRef],
+    ) -> Option<String> {
+        let full: serde_json::Value = serde_json::from_str(snapshot_json).ok()?;
+        let all_tables = full.get("tables")?.as_array()?;
+        let matched: Vec<&serde_json::Value> = all_tables
+            .iter()
+            .filter(|t| {
+                let name = t.get("name").and_then(|n| n.as_str()).unwrap_or("");
+                let schema = t.get("schema_name").and_then(|s| s.as_str()).unwrap_or("");
+                tables.iter().any(|ref_t| {
+                    if let Some(ref s) = ref_t.schema {
+                        s == schema && ref_t.name == name
+                    } else {
+                        ref_t.name == name
+                    }
+                })
+            })
+            .collect();
+        for ref_t in tables.iter().filter(|t| t.schema.is_none()) {
+            let count = matched
+                .iter()
+                .filter(|t| t.get("name").and_then(|n| n.as_str()) == Some(ref_t.name.as_str()))
+                .count();
+            if count > 1 {
+                return None;
+            }
+        }
+        if matched.is_empty() {
+            return None;
+        }
+        serde_json::to_string(&matched).ok()
+    }
 }
 
 // --- DryRunRepo ---
