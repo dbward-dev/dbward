@@ -22,15 +22,15 @@ serde_json = { workspace = true }
 toml = { workspace = true }
 clap = { version = "4", features = ["derive"] }
 thiserror = { workspace = true }
-ed25519-dalek = { version = "2", features = ["pkcs8", "rand_core"] }
+ed25519-dalek = { version = "3", features = ["pkcs8", "rand_core"] }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true, features = ["env-filter", "json"] }
 tracing-appender = { workspace = true }
 hex = "0.4"
 chrono = { workspace = true }
-sha2 = "0.10"
+sha2 = "0.11"
 hostname = "0.4"
 
 [dev-dependencies]
-rand = "0.8"
+rand = "0.10"
 async-trait = "0.1"
