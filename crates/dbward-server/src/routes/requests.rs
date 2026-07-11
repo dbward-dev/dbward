@@ -444,7 +444,7 @@ pub async fn stream_result(
                 }
             }
             stream_result::StreamResultData::Timeout => {
-                Ok((StatusCode::OK, Json(json!({"status": "timeout"}))).into_response())
+                Ok((StatusCode::NO_CONTENT, Json(json!({}))).into_response())
             }
         },
         Err(e) => Err(map_error(e)),
