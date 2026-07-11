@@ -80,7 +80,7 @@ pub async fn submit_and_orchestrate(
     let cr = create_request(sc, params).await?;
 
     match cr.status {
-        RequestStatus::Dispatched | RequestStatus::BreakGlass | RequestStatus::Running => {
+        RequestStatus::Dispatched | RequestStatus::Running => {
             let result = wait_and_resolve(sc, &cr.request_id, verbose).await?;
             Ok(Outcome::Completed {
                 request_id: cr.request_id,
@@ -94,7 +94,7 @@ pub async fn submit_and_orchestrate(
                 result,
             })
         }
-        RequestStatus::AutoApproved => {
+        RequestStatus::AutoApproved | RequestStatus::BreakGlass => {
             sc.resume(&cr.request_id)
                 .await
                 .map_err(|e| CliError::Server(e.body.clone()))?;

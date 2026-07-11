@@ -70,12 +70,28 @@ impl McpBackend for CliMcpBackend {
         timeout_secs: u64,
         _user: &AuthUser,
     ) -> McpResult<WaitOutput> {
-        // Resume — skip on 409 Conflict (already dispatched/running)
+        // Resume — on 409 Conflict, check current status to determine next action
         let wait_status = match self.client.resume(request_id).await {
             Ok(_) => dbward_api_types::requests::RequestStatus::Dispatched,
             Err(e) if e.status == 409 => {
-                // Already dispatched/running — just wait
-                dbward_api_types::requests::RequestStatus::Dispatched
+                // Check actual status — 409 can mean dispatched/running OR invalid state
+                let req = self
+                    .client
+                    .get_request(request_id)
+                    .await
+                    .map_err(|e| McpError::Internal(e.to_string()))?;
+                let status_str = req["status"].as_str().unwrap_or("");
+                match status_str {
+                    "dispatched" | "running" => {
+                        dbward_api_types::requests::RequestStatus::Dispatched
+                    }
+                    _ => {
+                        return Err(McpError::Internal(format!(
+                            "request is '{}', cannot resume",
+                            status_str
+                        )));
+                    }
+                }
             }
             Err(e) => {
                 return Err(format!(
