@@ -109,19 +109,27 @@ impl ResultChannel for InMemoryResultChannel {
     ) -> Result<Option<ResultSummary>, AppError> {
         let slot = self.ensure_slot(request_id);
 
+        // Register notification interest BEFORE checking data to avoid race:
+        // without this, publish() can fire between data check and notified()
+        // registration, causing the notification to be lost (300s hang).
+        let notified = slot.notify.notified();
+        tokio::pin!(notified);
+        // Defensive: enable() registers for notify_one(). For notify_waiters(),
+        // Notified creation alone suffices, but enable() future-proofs against
+        // a potential switch to notify_one().
+        notified.as_mut().enable();
+
         // Check if already available
         if let Some(ref summary) = *slot.data.lock().await {
             return Ok(Some(summary.clone()));
         }
 
-        // Wait with timeout
-        let timeout = tokio::time::timeout(
-            std::time::Duration::from_secs(timeout_secs),
-            slot.notify.notified(),
-        )
-        .await;
+        // Wait — if publish() fired after Notified creation, resolves immediately
+        let timeout =
+            tokio::time::timeout(std::time::Duration::from_secs(timeout_secs), notified).await;
 
         if timeout.is_ok() {
+            // notify_all (shutdown/eviction) can wake without data → returns None
             Ok(slot.data.lock().await.clone())
         } else {
             Ok(None)
@@ -265,5 +273,99 @@ mod tests {
             elapsed < std::time::Duration::from_secs(2),
             "took too long: {elapsed:?}"
         );
+    }
+
+    #[tokio::test]
+    async fn subscribe_returns_data_published_before_call() {
+        let ch = Arc::new(InMemoryResultChannel::new(100, 600));
+        ch.create_slot("pre-pub");
+        ch.publish("pre-pub", test_summary(true)).await;
+
+        // subscribe finds data via the check after enable — returns immediately
+        let result = ch.subscribe("pre-pub", 2).await.unwrap();
+        assert!(result.is_some());
+        assert!(result.unwrap().success);
+    }
+
+    #[tokio::test]
+    async fn subscribe_receives_concurrent_publish() {
+        let ch = Arc::new(InMemoryResultChannel::new(100, 600));
+        ch.create_slot("concurrent");
+
+        let ch2 = ch.clone();
+        let sub = tokio::spawn(async move { ch2.subscribe("concurrent", 5).await });
+
+        // Yield multiple times to increase chance of subscribe reaching await
+        for _ in 0..10 {
+            tokio::task::yield_now().await;
+        }
+        ch.publish("concurrent", test_summary(true)).await;
+
+        let result = sub.await.unwrap().unwrap();
+        assert!(result.is_some());
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn subscribe_never_misses_publish_under_contention() {
+        // Probabilistic stress test: spawns 50 concurrent subscribe+publish pairs.
+        // With multi_thread runtime, publish can truly race against subscribe.
+        let ch = Arc::new(InMemoryResultChannel::new(10_000, 600));
+        let mut handles = vec![];
+
+        for i in 0..50 {
+            let id = format!("stress-{i}");
+            ch.create_slot(&id);
+
+            let ch_sub = ch.clone();
+            let ch_pub = ch.clone();
+            let id_sub = id.clone();
+            let id_pub = id.clone();
+
+            let sub_handle = tokio::spawn(async move { ch_sub.subscribe(&id_sub, 2).await });
+            let _pub_handle = tokio::spawn(async move {
+                ch_pub.publish(&id_pub, test_summary(true)).await;
+            });
+
+            handles.push(sub_handle);
+        }
+
+        for h in handles {
+            let result = h.await.unwrap().unwrap();
+            assert!(
+                result.is_some(),
+                "subscribe must not miss publish under contention"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn notify_all_without_data_returns_none_not_panic() {
+        let ch = Arc::new(InMemoryResultChannel::new(100, 600));
+        ch.create_slot("spurious");
+
+        let ch2 = ch.clone();
+        let sub = tokio::spawn(async move { ch2.subscribe("spurious", 5).await });
+
+        tokio::task::yield_now().await;
+        ch.notify_all().await;
+
+        let result = sub.await.unwrap().unwrap();
+        // Woken without data → None (spurious wakeup treated as timeout-like)
+        assert!(result.is_none());
+    }
+
+    #[tokio::test]
+    async fn subscribe_without_create_slot_still_receives_publish() {
+        // Simulates the Conflict path where resume is skipped (no create_slot)
+        let ch = Arc::new(InMemoryResultChannel::new(100, 600));
+
+        let ch2 = ch.clone();
+        let sub = tokio::spawn(async move { ch2.subscribe("no-slot", 5).await });
+
+        tokio::task::yield_now().await;
+        ch.publish("no-slot", test_summary(true)).await;
+
+        let result = sub.await.unwrap().unwrap();
+        assert!(result.is_some());
     }
 }
