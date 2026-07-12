@@ -423,12 +423,69 @@ impl CreateRequest {
                                 .extract_tables_from_snapshot_json(json_str, &tables)
                         });
 
-                    let table_risk_info = tables_raw_json
+                    let mut table_risk_info = tables_raw_json
                         .as_deref()
                         .map(super::risk_analysis::parse_table_risk_info)
                         .unwrap_or_default();
 
-                    let t_json = tables_raw_json.or_else(|| {
+                    // CASCADE reverse-lookup: enrich with inbound cascade children
+                    let has_delete = table_extractor::has_delete_statement(stmts);
+                    if has_delete {
+                        let delete_targets = table_extractor::extract_delete_targets(stmts);
+                        #[allow(clippy::collapsible_if)]
+                        if !delete_targets.is_empty() {
+                            if let Some(snap_json) = snapshot
+                                .as_ref()
+                                .filter(|s| {
+                                    s.status
+                                        == dbward_domain::services::status_constants::schema::READY
+                                })
+                                .and_then(|s| s.snapshot_json.as_deref())
+                            {
+                                let cascade_map = super::risk_analysis::build_cascade_graph(
+                                    snap_json,
+                                    &delete_targets,
+                                );
+                                if let Some(raw) = tables_raw_json.as_deref() {
+                                    super::risk_analysis::enrich_with_cascade_children(
+                                        &mut table_risk_info,
+                                        raw,
+                                        &cascade_map,
+                                    );
+                                }
+                            }
+                        }
+                    }
+
+                    // Build tables_json for storage: inject cascade_children into raw JSON
+                    let t_json = if !table_risk_info.is_empty()
+                        && table_risk_info
+                            .iter()
+                            .any(|t| !t.cascade_children.is_empty())
+                    {
+                        // Enrich the raw JSON with cascade_children for display
+                        tables_raw_json
+                            .as_deref()
+                            .and_then(|raw| {
+                                let mut arr: Vec<serde_json::Value> =
+                                    serde_json::from_str(raw).ok()?;
+                                for (entry, info) in arr.iter_mut().zip(table_risk_info.iter()) {
+                                    if !info.cascade_children.is_empty() {
+                                        entry["cascade_children"] =
+                                            serde_json::to_value(&info.cascade_children).ok()?;
+                                        entry["cascade_children_truncated"] =
+                                            serde_json::Value::Bool(
+                                                info.cascade_children_truncated,
+                                            );
+                                    }
+                                }
+                                serde_json::to_string(&arr).ok()
+                            })
+                            .or(tables_raw_json)
+                    } else {
+                        tables_raw_json
+                    }
+                    .or_else(|| {
                         serde_json::to_string(
                             &tables
                                 .iter()
@@ -467,6 +524,7 @@ impl CreateRequest {
                         tables: &table_risk_info,
                         statement_count: stmts.len(),
                         has_dml: matches!(operation, Operation::ExecuteDml),
+                        has_delete_stmt: has_delete,
                         allow_read_only,
                         safe_ddl,
                         max_estimated_rows: match early_workflow.as_ref() {
@@ -487,7 +545,7 @@ impl CreateRequest {
                     let trace_factors: Vec<String> = assessment
                         .factors
                         .iter()
-                        .map(|f| format!("{:?}", f))
+                        .map(|f| f.name().to_string())
                         .collect();
                     let trace_ss = match schema_status {
                         risk_scorer::SchemaStatus::Ready => dt::SchemaStatus::Ready,

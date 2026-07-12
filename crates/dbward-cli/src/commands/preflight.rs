@@ -37,7 +37,15 @@ pub async fn run_preflight(
 
     eprintln!();
     eprintln!("  Status:      {status}");
-    eprintln!("  Risk:        {risk}");
+    let factors: Vec<&str> = result["risk_assessment"]["factors"]
+        .as_array()
+        .map(|arr| arr.iter().filter_map(|v| v.as_str()).collect())
+        .unwrap_or_default();
+    if factors.is_empty() {
+        eprintln!("  Risk:        {risk}");
+    } else {
+        eprintln!("  Risk:        {risk} ({})", factors.join(", "));
+    }
     eprintln!("  Statement:   {stmt_type} ({operation})");
 
     // Review findings

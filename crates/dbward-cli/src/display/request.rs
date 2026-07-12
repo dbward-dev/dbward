@@ -374,9 +374,9 @@ pub(crate) fn print_request_detail(body: &serde_json::Value) {
         } else {
             let factors_str = factors.join(", ");
             if let Some(t) = threshold {
-                println!("    Risk:       {level} [{factors_str}] (threshold: {t})");
+                println!("    Risk:       {level} ({factors_str}) (threshold: {t})");
             } else {
-                println!("    Risk:       {level} [{factors_str}]");
+                println!("    Risk:       {level} ({factors_str})");
             }
         }
         // Workflow
