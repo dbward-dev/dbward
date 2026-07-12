@@ -641,6 +641,11 @@ pub fn initialize(conn: &Connection) -> Result<(), rusqlite::Error> {
         // All existing roles are config-managed (API role creation is not yet available).
         conn.execute_batch("ALTER TABLE roles ADD COLUMN source TEXT NOT NULL DEFAULT 'config';")?;
     }
+    // Ensure all non-built-in roles have config_synced = 1 (legacy rows from V12 migration
+    // may still have 0 if the server was never restarted after V12 was applied).
+    conn.execute_batch(
+        "UPDATE roles SET config_synced = 1 WHERE built_in = 0 AND config_synced = 0;",
+    )?;
 
     Ok(())
 }
