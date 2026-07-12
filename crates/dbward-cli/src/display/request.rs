@@ -180,20 +180,22 @@ pub(crate) fn print_request_detail(body: &serde_json::Value) {
             // Risk
             if let Some(risk) = ctx.get("risk").filter(|v| !v.is_null()) {
                 let level = risk["level"].as_str().unwrap_or("?");
-                let factors: Vec<&str> = risk["factors"]
+                let factors: Vec<String> = risk["factors"]
                     .as_array()
-                    .map(|arr| arr.iter().filter_map(|v| v.as_str()).collect())
+                    .map(|arr| dbward_app::services::risk_display::format_risk_factors(arr))
                     .unwrap_or_default();
                 if factors.is_empty() {
                     println!("  Risk:        {level}");
-                } else if factors.len() <= 3 {
-                    println!("  Risk:        {level} ({})", factors.join(", "));
+                } else if factors.len() == 1 {
+                    println!("  Risk:        {level} ({})", factors[0]);
                 } else {
-                    println!(
-                        "  Risk:        {level} ({}, ...+{})",
-                        factors[..3].join(", "),
-                        factors.len() - 3
-                    );
+                    println!("  Risk:        {level}");
+                    for f in factors.iter().take(5) {
+                        println!("               - {f}");
+                    }
+                    if factors.len() > 5 {
+                        println!("               (+{} more)", factors.len() - 5);
+                    }
                 }
             }
             // SQL Review

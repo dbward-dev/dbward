@@ -83,7 +83,7 @@ pub struct PreflightFinding {
 #[derive(Debug, Clone, Serialize)]
 pub struct PreflightRiskAssessment {
     pub level: RiskLevel,
-    pub factors: Vec<String>,
+    pub factors: Vec<serde_json::Value>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -533,11 +533,7 @@ impl PreflightUseCase {
         // 16. Build risk DTO
         let risk_dto = PreflightRiskAssessment {
             level: risk_assessment.level,
-            factors: risk_assessment
-                .factors
-                .iter()
-                .map(|f| f.name().to_string())
-                .collect(),
+            factors: crate::services::risk_display::serialize_factors(&risk_assessment.factors),
         };
 
         // 17. Next actions

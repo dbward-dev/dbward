@@ -534,7 +534,7 @@ impl CreateRequest {
                     });
                     let r_json = serde_json::json!({
                         "level": format!("{:?}", assessment.level),
-                        "factors": assessment.factors.iter().map(|f| format!("{:?}", f)).collect::<Vec<_>>(),
+                        "factors": crate::services::risk_display::serialize_factors(&assessment.factors),
                     });
                     let rev_json = serde_json::json!({
                         "findings": review.findings.iter().map(|f| {

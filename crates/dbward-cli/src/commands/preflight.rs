@@ -37,14 +37,22 @@ pub async fn run_preflight(
 
     eprintln!();
     eprintln!("  Status:      {status}");
-    let factors: Vec<&str> = result["risk_assessment"]["factors"]
+    let factors: Vec<String> = result["risk_assessment"]["factors"]
         .as_array()
-        .map(|arr| arr.iter().filter_map(|v| v.as_str()).collect())
+        .map(|arr| dbward_app::services::risk_display::format_risk_factors(arr))
         .unwrap_or_default();
     if factors.is_empty() {
         eprintln!("  Risk:        {risk}");
+    } else if factors.len() == 1 {
+        eprintln!("  Risk:        {risk} ({})", factors[0]);
     } else {
-        eprintln!("  Risk:        {risk} ({})", factors.join(", "));
+        eprintln!("  Risk:        {risk}");
+        for f in factors.iter().take(5) {
+            eprintln!("               - {f}");
+        }
+        if factors.len() > 5 {
+            eprintln!("               (+{} more)", factors.len() - 5);
+        }
     }
     eprintln!("  Statement:   {stmt_type} ({operation})");
 

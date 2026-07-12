@@ -119,12 +119,12 @@ pub fn build_review_modal(
 
     // Context Enrichment
     if let Some(ctx) = context {
-        // DX-11: Explain results
+        // Execution Plan
         if let Some(ref explain_json) = ctx.explain_json
             && let Ok(explains) = serde_json::from_str::<Vec<Value>>(explain_json)
             && !explains.is_empty()
         {
-            let mut explain_text = String::from("*📊 Execution Plan*\n```");
+            let mut explain_text = String::from("*Execution Plan*\n```");
             for entry in explains.iter().take(5) {
                 let sql_preview: String = entry["sql"]
                     .as_str()
@@ -144,9 +144,9 @@ pub fn build_review_modal(
                     explain_text.push_str(&format!("{sql_preview}\n{tree_text}\n"));
                 } else if let Some(err) = entry.get("error") {
                     let msg = err.as_str().unwrap_or("unavailable").replace('`', "'");
-                    explain_text.push_str(&format!("{sql_preview}\n⚠️ {msg}\n"));
+                    explain_text.push_str(&format!("{sql_preview}\n(error: {msg})\n"));
                 } else {
-                    explain_text.push_str(&format!("{sql_preview}\n⚠️ unavailable\n"));
+                    explain_text.push_str(&format!("{sql_preview}\n(unavailable)\n"));
                 }
             }
             explain_text.push_str("```");
@@ -167,115 +167,152 @@ pub fn build_review_modal(
             }));
         }
 
-        let mut ctx_lines: Vec<String> = Vec::new();
-
+        // Risk Assessment
         if let Some(ref risk_json) = ctx.risk_json
             && let Ok(risk) = serde_json::from_str::<Value>(risk_json)
         {
-            let level = risk["level"].as_str().unwrap_or("?");
-            let factors: Vec<&str> = risk["factors"]
-                .as_array()
-                .map(|a| a.iter().filter_map(|v| v.as_str()).collect())
-                .unwrap_or_default();
-            let factors_str = if factors.is_empty() {
-                String::new()
-            } else {
-                format!(" ({})", factors.join(", "))
+            let level = risk["level"].as_str().unwrap_or("Unknown");
+            let risk_emoji = match level {
+                "High" | "Critical" => "🔴",
+                "Medium" => "🟡",
+                "Low" => "🟢",
+                _ => "⚪",
             };
-            ctx_lines.push(format!("Risk: {level}{factors_str}"));
+            let factors: Vec<String> = risk["factors"]
+                .as_array()
+                .map(|a| dbward_app::services::risk_display::format_risk_factors(a))
+                .unwrap_or_default();
+            let risk_text = if factors.is_empty() {
+                format!("*Risk Assessment*\n{risk_emoji} {level}")
+            } else {
+                let bullet_list = factors
+                    .iter()
+                    .map(|f| format!("- {}", escape_mrkdwn(f)))
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                format!("*Risk Assessment*\n{risk_emoji} {level}\n{bullet_list}")
+            };
+            let mut risk_text = risk_text;
+            truncate_section(&mut risk_text);
+            blocks.push(json!({
+                "type": "section",
+                "text": {"type": "mrkdwn", "text": risk_text}
+            }));
         }
 
+        // Affected Tables
         if let Some(ref tables_json) = ctx.tables_json {
             let entries =
                 dbward_app::services::tables_display::parse_tables_json(Some(tables_json));
-            for entry in entries.iter().take(5) {
-                let display_name = match &entry.schema_name {
-                    Some(s) if s != "public" => format!("{}.{}", s, entry.name),
-                    _ => entry.name.clone(),
-                };
-                let row_info = entry
-                    .estimated_rows
-                    .filter(|&r| r > 0)
-                    .map(|r| format!(" (~{r} rows)"))
-                    .unwrap_or_default();
-                let cascade = if !entry.cascade_children.is_empty() {
-                    // Inbound CASCADE children (new)
-                    let child_info: String = entry
-                        .cascade_children
-                        .iter()
-                        .take(3)
-                        .map(|c| {
-                            let name = match &c.schema_name {
-                                Some(s) if s != "public" => {
-                                    format!("{}.{}", s, c.table_name)
-                                }
-                                _ => c.table_name.clone(),
-                            };
-                            let rows = c
-                                .estimated_rows
-                                .filter(|&r| r > 0)
-                                .map(|r| format!(" (~{r} rows)"))
-                                .unwrap_or_default();
-                            format!("{name}{rows}")
+            if !entries.is_empty() {
+                let mut table_lines: Vec<String> = Vec::new();
+                for entry in entries.iter().take(5) {
+                    let display_name = match &entry.schema_name {
+                        Some(s) if s != "public" => escape_mrkdwn(&format!("{}.{}", s, entry.name)),
+                        _ => escape_mrkdwn(&entry.name),
+                    };
+                    let row_info = entry
+                        .estimated_rows
+                        .filter(|&r| r > 0)
+                        .map(|r| {
+                            format!(
+                                " (~{} rows)",
+                                dbward_app::services::risk_display::format_number(r)
+                            )
                         })
-                        .collect::<Vec<_>>()
-                        .join(", ");
-                    let suffix = if entry.cascade_children.len() > 3 {
-                        format!(" +{}", entry.cascade_children.len() - 3)
+                        .unwrap_or_default();
+                    let cascade = if !entry.cascade_children.is_empty() {
+                        let child_info: String = entry
+                            .cascade_children
+                            .iter()
+                            .take(3)
+                            .map(|c| {
+                                let name = match &c.schema_name {
+                                    Some(s) if s != "public" => {
+                                        escape_mrkdwn(&format!("{}.{}", s, c.table_name))
+                                    }
+                                    _ => escape_mrkdwn(&c.table_name),
+                                };
+                                let rows = c
+                                    .estimated_rows
+                                    .filter(|&r| r > 0)
+                                    .map(|r| {
+                                        format!(
+                                            " (~{} rows)",
+                                            dbward_app::services::risk_display::format_number(r)
+                                        )
+                                    })
+                                    .unwrap_or_default();
+                                format!("{name}{rows}")
+                            })
+                            .collect::<Vec<_>>()
+                            .join(", ");
+                        let suffix = if entry.cascade_children.len() > 3 {
+                            format!(" +{}", entry.cascade_children.len() - 3)
+                        } else {
+                            String::new()
+                        };
+                        let trunc = if entry.cascade_children_truncated {
+                            " (deeper chains may exist)"
+                        } else {
+                            ""
+                        };
+                        format!(" → CASCADE: {child_info}{suffix}{trunc}")
+                    } else if entry.has_cascade_fk {
+                        let targets: String = entry
+                            .cascade_targets
+                            .iter()
+                            .take(3)
+                            .map(|s| escape_mrkdwn(s))
+                            .collect::<Vec<_>>()
+                            .join(", ");
+                        let suffix = if entry.cascade_targets.len() > 3 {
+                            format!(" +{}", entry.cascade_targets.len() - 3)
+                        } else {
+                            String::new()
+                        };
+                        format!(" → CASCADE: {targets}{suffix}")
                     } else {
                         String::new()
                     };
-                    let trunc = if entry.cascade_children_truncated {
-                        " ⚠️ deeper chains may exist"
-                    } else {
-                        ""
-                    };
-                    format!(" ⚠️ CASCADE children: {child_info}{suffix}{trunc}")
-                } else if entry.has_cascade_fk {
-                    // Fallback: old stored data (outbound)
-                    let targets: String = entry
-                        .cascade_targets
-                        .iter()
-                        .take(3)
-                        .map(|s| s.as_str())
-                        .collect::<Vec<_>>()
-                        .join(", ");
-                    let suffix = if entry.cascade_targets.len() > 3 {
-                        format!(" +{}", entry.cascade_targets.len() - 3)
-                    } else {
-                        String::new()
-                    };
-                    format!(" ⚠️ CASCADE → {targets}{suffix}")
-                } else {
-                    String::new()
-                };
-                ctx_lines.push(format!("📊 {display_name}{row_info}{cascade}"));
+                    table_lines.push(format!("{display_name}{row_info}{cascade}"));
+                }
+                let mut tables_text = format!("*Affected Tables*\n{}", table_lines.join("\n"));
+                truncate_section(&mut tables_text);
+                blocks.push(json!({
+                    "type": "section",
+                    "text": {"type": "mrkdwn", "text": tables_text}
+                }));
             }
         }
 
+        // SQL Review
         if let Some(ref review_json) = ctx.sql_review_json
             && let Ok(review) = serde_json::from_str::<Value>(review_json)
             && let Some(findings) = review["findings"].as_array()
+            && !findings.is_empty()
         {
-            for f in findings.iter().take(3) {
-                let msg = f["message"].as_str().unwrap_or("");
-                ctx_lines.push(format!("⚠️ {msg}"));
+            let review_lines: Vec<String> = findings
+                .iter()
+                .take(5)
+                .filter_map(|f| f["message"].as_str())
+                .map(|msg| format!("- {}", escape_mrkdwn(msg)))
+                .collect();
+            if !review_lines.is_empty() {
+                let mut review_text = format!("*SQL Review*\n{}", review_lines.join("\n"));
+                truncate_section(&mut review_text);
+                blocks.push(json!({
+                    "type": "section",
+                    "text": {"type": "mrkdwn", "text": review_text}
+                }));
             }
         }
 
-        if !ctx_lines.is_empty() {
-            let ctx_text = ctx_lines.join("\n");
-            let ctx_text = if ctx_text.chars().count() > 2800 {
-                let truncated: String = ctx_text.chars().take(2800).collect();
-                format!("{truncated}...")
-            } else {
-                ctx_text
-            };
-            blocks.push(json!({
-                "type": "context",
-                "elements": [{"type": "mrkdwn", "text": ctx_text}]
-            }));
-        }
+        // Help link
+        blocks.push(json!({
+            "type": "context",
+            "elements": [{"type": "mrkdwn", "text": "<https://github.com/metapox/dbward/blob/main/docs/reference/sql-safety.md|How to read this>"}]
+        }));
     }
 
     blocks.push(json!({"type": "divider"}));
@@ -964,6 +1001,29 @@ pub fn build_create_request_modal(
         "blocks": blocks
     })
 }
+
+/// Escape user-controlled strings for Slack mrkdwn to prevent injection.
+fn escape_mrkdwn(s: &str) -> String {
+    s.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+}
+
+/// Truncate mrkdwn text to stay within Slack's 3000 char section limit.
+/// Uses char count (not byte length) and char-boundary safe truncation.
+fn truncate_section(text: &mut String) {
+    const MAX_SECTION_CHARS: usize = 2900;
+    if text.chars().count() > MAX_SECTION_CHARS {
+        let boundary = text
+            .char_indices()
+            .nth(MAX_SECTION_CHARS)
+            .map(|(i, _)| i)
+            .unwrap_or(text.len());
+        text.truncate(boundary);
+        text.push_str("...");
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
