@@ -501,6 +501,12 @@ impl SchemaDriver for MysqlDriver {
         .await
         .map_err(query_err)?;
 
+        // MySQL schema = database name
+        let db_name: String = sqlx::query_scalar("SELECT DATABASE()")
+            .fetch_one(&self.pool)
+            .await
+            .map_err(query_err)?;
+
         let mut tables = Vec::new();
         for row in &table_rows {
             let name: String = get_str(row, 0);
@@ -537,7 +543,8 @@ impl SchemaDriver for MysqlDriver {
             let fk_rows = sqlx::query(
                 "SELECT kcu.constraint_name, kcu.column_name, \
                         kcu.referenced_table_name, kcu.referenced_column_name, \
-                        rc.delete_rule \
+                        rc.delete_rule, \
+                        kcu.referenced_table_schema \
                  FROM information_schema.key_column_usage kcu \
                  JOIN information_schema.referential_constraints rc \
                    ON kcu.constraint_name = rc.constraint_name AND kcu.constraint_schema = rc.constraint_schema \
@@ -557,6 +564,7 @@ impl SchemaDriver for MysqlDriver {
                 let ref_table = get_opt_str(r, 2);
                 let ref_col = get_opt_str(r, 3);
                 let delete_rule = get_opt_str(r, 4);
+                let ref_schema = get_opt_str(r, 5);
 
                 if let Some(existing) = constraints.iter_mut().find(|c| c.name == cname) {
                     if !existing.columns.contains(&col) {
@@ -579,8 +587,10 @@ impl SchemaDriver for MysqlDriver {
                             "CASCADE" => FkAction::Cascade,
                             "SET NULL" => FkAction::SetNull,
                             "RESTRICT" => FkAction::Restrict,
+                            "SET DEFAULT" => FkAction::SetDefault,
                             _ => FkAction::NoAction,
                         }),
+                        referenced_schema: ref_schema,
                     });
                 }
             }
@@ -614,7 +624,7 @@ impl SchemaDriver for MysqlDriver {
 
             tables.push(TableInfo {
                 name,
-                schema_name: String::new(),
+                schema_name: db_name.clone(),
                 estimated_rows,
                 columns,
                 constraints,

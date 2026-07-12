@@ -32,6 +32,8 @@ pub struct ConstraintInfo {
     pub referenced_table: Option<String>,
     pub referenced_columns: Option<Vec<String>>,
     pub on_delete: Option<FkAction>,
+    #[serde(default)]
+    pub referenced_schema: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

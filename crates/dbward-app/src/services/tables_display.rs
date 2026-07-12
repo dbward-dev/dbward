@@ -11,6 +11,17 @@ pub struct TableEntry {
     pub estimated_rows: Option<i64>,
     pub has_cascade_fk: bool,
     pub cascade_targets: Vec<String>,
+    pub cascade_children: Vec<CascadeChildDisplay>,
+    pub cascade_children_truncated: bool,
+}
+
+/// Display info for a CASCADE child table.
+#[derive(Debug, Clone, PartialEq)]
+pub struct CascadeChildDisplay {
+    pub table_name: String,
+    pub schema_name: Option<String>,
+    pub estimated_rows: Option<i64>,
+    pub depth: u8,
 }
 
 /// Parse tables_json with backward compatibility.
@@ -39,6 +50,8 @@ pub fn parse_tables_json(json: Option<&str>) -> Vec<TableEntry> {
                     estimated_rows: None,
                     has_cascade_fk: false,
                     cascade_targets: vec![],
+                    cascade_children: vec![],
+                    cascade_children_truncated: false,
                 }
             } else {
                 // Object format: extract from schema snapshot or derived format
@@ -77,12 +90,32 @@ pub fn parse_tables_json(json: Option<&str>) -> Vec<TableEntry> {
                             })
                             .unwrap_or_default()
                     });
+                let cascade_children: Vec<CascadeChildDisplay> = v
+                    .get("cascade_children")
+                    .and_then(|a| a.as_array())
+                    .map(|arr| {
+                        arr.iter()
+                            .map(|c| CascadeChildDisplay {
+                                table_name: c["table_name"].as_str().unwrap_or("?").to_string(),
+                                schema_name: c["schema_name"].as_str().map(String::from),
+                                estimated_rows: c["estimated_rows"].as_i64(),
+                                depth: c["depth"].as_u64().unwrap_or(1) as u8,
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                let cascade_children_truncated = v
+                    .get("cascade_children_truncated")
+                    .and_then(|b| b.as_bool())
+                    .unwrap_or(false);
                 TableEntry {
                     name: v["name"].as_str().unwrap_or("?").to_string(),
                     schema_name: v["schema_name"].as_str().map(String::from),
                     estimated_rows: v["estimated_rows"].as_i64(),
                     has_cascade_fk: has_cascade,
                     cascade_targets,
+                    cascade_children,
+                    cascade_children_truncated,
                 }
             }
         })
@@ -195,6 +228,8 @@ mod tests {
                 estimated_rows: Some(1000),
                 has_cascade_fk: false,
                 cascade_targets: vec![],
+                cascade_children: vec![],
+                cascade_children_truncated: false,
             },
             TableEntry {
                 name: "invoices".to_string(),
@@ -202,6 +237,8 @@ mod tests {
                 estimated_rows: Some(500),
                 has_cascade_fk: false,
                 cascade_targets: vec![],
+                cascade_children: vec![],
+                cascade_children_truncated: false,
             },
         ];
         let result = format_table_names(&entries);

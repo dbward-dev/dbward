@@ -298,12 +298,73 @@ impl PreflightUseCase {
             .map(|stmts| table_extractor::extract_tables(stmts))
             .unwrap_or_default();
 
-        let table_risk_info = super::risk_analysis::resolve_table_risk(
-            self.schema_repo.as_ref(),
-            input.database.as_str(),
-            input.environment.as_str(),
-            &tables,
-        );
+        let has_delete_stmt = classify_result
+            .parsed_statements
+            .as_ref()
+            .map(|stmts| table_extractor::has_delete_statement(stmts))
+            .unwrap_or(false);
+
+        // Fetch-once: get snapshot once, derive all risk info from it
+        let snapshot = self
+            .schema_repo
+            .get_snapshot(input.database.as_str(), input.environment.as_str())
+            .ok()
+            .flatten();
+
+        let (schema_status, _schema_collected_at) = match &snapshot {
+            Some(s) if s.status == dbward_domain::services::status_constants::schema::READY => (
+                risk_scorer::SchemaStatus::Ready,
+                Some(s.collected_at.clone()),
+            ),
+            Some(s) => (
+                risk_scorer::SchemaStatus::Failed,
+                Some(s.collected_at.clone()),
+            ),
+            None => (risk_scorer::SchemaStatus::NotSynced, None),
+        };
+
+        let tables_raw_json: Option<String> = snapshot
+            .as_ref()
+            .filter(|s| s.status == dbward_domain::services::status_constants::schema::READY)
+            .and_then(|s| s.snapshot_json.as_ref())
+            .and_then(|json_str| {
+                self.schema_repo
+                    .extract_tables_from_snapshot_json(json_str, &tables)
+            });
+
+        let mut table_risk_info = tables_raw_json
+            .as_deref()
+            .map(super::risk_analysis::parse_table_risk_info)
+            .unwrap_or_default();
+
+        // CASCADE reverse-lookup: enrich with inbound cascade children
+        if has_delete_stmt {
+            let delete_targets = classify_result
+                .parsed_statements
+                .as_ref()
+                .map(|stmts| table_extractor::extract_delete_targets(stmts))
+                .unwrap_or_default();
+            #[allow(clippy::collapsible_if)]
+            if !delete_targets.is_empty() {
+                if let Some(snap_json) = snapshot
+                    .as_ref()
+                    .filter(|s| {
+                        s.status == dbward_domain::services::status_constants::schema::READY
+                    })
+                    .and_then(|s| s.snapshot_json.as_deref())
+                {
+                    let cascade_map =
+                        super::risk_analysis::build_cascade_graph(snap_json, &delete_targets);
+                    if let Some(ref raw) = tables_raw_json {
+                        super::risk_analysis::enrich_with_cascade_children(
+                            &mut table_risk_info,
+                            raw,
+                            &cascade_map,
+                        );
+                    }
+                }
+            }
+        }
 
         let max_estimated_rows = super::risk_analysis::max_estimated_rows(&workflow);
         let allow_read_only = super::risk_analysis::compute_allow_read_only(operation, &workflow);
@@ -324,12 +385,6 @@ impl PreflightUseCase {
             review_result.findings.is_empty(),
         );
 
-        let (schema_status, _schema_collected_at) = super::risk_analysis::resolve_schema_status(
-            self.schema_repo.as_ref(),
-            input.database.as_str(),
-            input.environment.as_str(),
-        );
-
         // 9. Risk Assessment
         let risk_input = RiskInput {
             operation,
@@ -338,6 +393,7 @@ impl PreflightUseCase {
             tables: &table_risk_info,
             statement_count: classification.statement_count,
             has_dml: !operation.is_read_only(),
+            has_delete_stmt,
             allow_read_only,
             safe_ddl,
             max_estimated_rows,

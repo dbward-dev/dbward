@@ -65,17 +65,36 @@ pub struct RiskInput<'a> {
     pub tables: &'a [TableRiskInfo],
     pub statement_count: usize,
     pub has_dml: bool,
+    pub has_delete_stmt: bool,
     pub allow_read_only: bool,
     pub safe_ddl: bool,
     pub max_estimated_rows: i64,
+}
+
+/// Information about a child table affected by CASCADE DELETE on a parent.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct CascadeChildInfo {
+    pub table_name: String,
+    pub schema_name: Option<String>,
+    pub estimated_rows: i64,
+    pub depth: u8,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct TableRiskInfo {
     pub name: String,
     pub estimated_rows: i64,
+    /// DEPRECATED(v0.2): Outbound FK info. NOT used in risk scoring.
+    /// Kept for backward compatibility with stored risk_json.
     pub has_cascade_fk: bool,
+    /// DEPRECATED(v0.2): See has_cascade_fk.
     pub cascade_targets: Vec<String>,
+    /// Inbound: child tables affected by CASCADE when this table is DELETE target.
+    #[serde(default)]
+    pub cascade_children: Vec<CascadeChildInfo>,
+    /// True if BFS hit depth limit with unvisited children remaining.
+    #[serde(default)]
+    pub cascade_children_truncated: bool,
 }
 
 pub fn evaluate(input: &RiskInput) -> RiskAssessment {
@@ -134,16 +153,43 @@ pub fn evaluate(input: &RiskInput) -> RiskAssessment {
     // Table-level risks
     let effective_max_rows = input.max_estimated_rows;
     for table in input.tables {
-        if table.has_cascade_fk && table.estimated_rows > effective_max_rows {
+        // Inbound CASCADE: only fires when SQL contains DELETE
+        if input.has_delete_stmt && !table.cascade_children.is_empty() {
+            let max_child_rows = table
+                .cascade_children
+                .iter()
+                .map(|c| c.estimated_rows)
+                .max()
+                .unwrap_or(0);
+            let base_level = if max_child_rows > effective_max_rows
+                || table.estimated_rows > effective_max_rows
+            {
+                RiskLevel::High
+            } else {
+                RiskLevel::Medium
+            };
+            let final_level = if table.cascade_children_truncated {
+                base_level.max(RiskLevel::High)
+            } else {
+                base_level
+            };
             factors.push(RiskFactor::CascadeDelete {
-                targets: table.cascade_targets.clone(),
+                targets: table
+                    .cascade_children
+                    .iter()
+                    .map(|c| match &c.schema_name {
+                        Some(s) if s != "public" => format!("{}.{}", s, c.table_name),
+                        _ => c.table_name.clone(),
+                    })
+                    .collect(),
             });
-            level = level.max(RiskLevel::High);
-        } else if table.has_cascade_fk {
-            factors.push(RiskFactor::CascadeDelete {
-                targets: table.cascade_targets.clone(),
-            });
-            level = level.max(RiskLevel::Medium);
+            level = level.max(final_level);
+            // Also report LargeTable if the parent itself is large
+            if table.estimated_rows > effective_max_rows {
+                factors.push(RiskFactor::LargeTable {
+                    rows: table.estimated_rows,
+                });
+            }
         } else if table.estimated_rows > effective_max_rows {
             factors.push(RiskFactor::LargeTable {
                 rows: table.estimated_rows,
@@ -176,6 +222,7 @@ mod tests {
             tables: &no_tables(),
             statement_count: 1,
             has_dml: false,
+            has_delete_stmt: false,
             allow_read_only: true,
             max_estimated_rows: 1000,
             safe_ddl: false,
@@ -192,6 +239,7 @@ mod tests {
             tables: &no_tables(),
             statement_count: 1,
             has_dml: false,
+            has_delete_stmt: false,
             allow_read_only: false,
             max_estimated_rows: 1000,
             safe_ddl: false,
@@ -208,6 +256,7 @@ mod tests {
             tables: &no_tables(),
             statement_count: 1,
             has_dml: true,
+            has_delete_stmt: false,
             allow_read_only: true,
             max_estimated_rows: 1000,
             safe_ddl: false,
@@ -226,9 +275,12 @@ mod tests {
                 estimated_rows: 100,
                 has_cascade_fk: false,
                 cascade_targets: vec![],
+                cascade_children: vec![],
+                cascade_children_truncated: false,
             }],
             statement_count: 1,
             has_dml: true,
+            has_delete_stmt: false,
             allow_read_only: true,
             max_estimated_rows: 1000,
             safe_ddl: false,
@@ -243,13 +295,21 @@ mod tests {
             findings: &no_findings(),
             schema_status: SchemaStatus::Ready,
             tables: &[TableRiskInfo {
-                name: "orders".into(),
+                name: "users".into(),
                 estimated_rows: 50000,
-                has_cascade_fk: true,
-                cascade_targets: vec!["order_items".into()],
+                has_cascade_fk: false,
+                cascade_targets: vec![],
+                cascade_children: vec![CascadeChildInfo {
+                    table_name: "orders".into(),
+                    schema_name: Some("public".into()),
+                    estimated_rows: 100000,
+                    depth: 1,
+                }],
+                cascade_children_truncated: false,
             }],
             statement_count: 1,
             has_dml: true,
+            has_delete_stmt: true,
             allow_read_only: true,
             max_estimated_rows: 1000,
             safe_ddl: false,
@@ -272,6 +332,7 @@ mod tests {
             tables: &no_tables(),
             statement_count: 1,
             has_dml: true,
+            has_delete_stmt: false,
             allow_read_only: true,
             max_estimated_rows: 1000,
             safe_ddl: false,
@@ -288,6 +349,7 @@ mod tests {
             tables: &no_tables(),
             statement_count: 3,
             has_dml: true,
+            has_delete_stmt: false,
             allow_read_only: true,
             max_estimated_rows: 1000,
             safe_ddl: false,
@@ -312,6 +374,7 @@ mod tests {
             tables: &no_tables(),
             statement_count: 1,
             has_dml: true,
+            has_delete_stmt: false,
             allow_read_only: true,
             max_estimated_rows: 1000,
             safe_ddl: false,
@@ -326,17 +389,126 @@ mod tests {
             findings: &no_findings(),
             schema_status: SchemaStatus::Ready,
             tables: &[TableRiskInfo {
-                name: "orders".into(),
+                name: "users".into(),
                 estimated_rows: 500,
-                has_cascade_fk: true,
-                cascade_targets: vec!["items".into()],
+                has_cascade_fk: false,
+                cascade_targets: vec![],
+                cascade_children: vec![CascadeChildInfo {
+                    table_name: "orders".into(),
+                    schema_name: Some("public".into()),
+                    estimated_rows: 200,
+                    depth: 1,
+                }],
+                cascade_children_truncated: false,
             }],
             statement_count: 1,
             has_dml: true,
+            has_delete_stmt: true,
             allow_read_only: true,
             max_estimated_rows: 1000,
             safe_ddl: false,
         });
         assert_eq!(r.level, RiskLevel::Medium);
+    }
+
+    #[test]
+    fn cascade_not_fired_without_delete_stmt() {
+        // has_delete_stmt=false → cascade_children ignored
+        let r = evaluate(&RiskInput {
+            operation: Operation::ExecuteDml,
+            findings: &no_findings(),
+            schema_status: SchemaStatus::Ready,
+            tables: &[TableRiskInfo {
+                name: "users".into(),
+                estimated_rows: 500,
+                has_cascade_fk: false,
+                cascade_targets: vec![],
+                cascade_children: vec![CascadeChildInfo {
+                    table_name: "orders".into(),
+                    schema_name: Some("public".into()),
+                    estimated_rows: 50000,
+                    depth: 1,
+                }],
+                cascade_children_truncated: false,
+            }],
+            statement_count: 1,
+            has_dml: true,
+            has_delete_stmt: false,
+            allow_read_only: true,
+            max_estimated_rows: 1000,
+            safe_ddl: false,
+        });
+        // Without has_delete_stmt, cascade_children should be ignored → Low
+        assert_eq!(r.level, RiskLevel::Low);
+        assert!(
+            !r.factors
+                .iter()
+                .any(|f| matches!(f, RiskFactor::CascadeDelete { .. }))
+        );
+    }
+
+    #[test]
+    fn cascade_truncated_escalates_to_high() {
+        let r = evaluate(&RiskInput {
+            operation: Operation::ExecuteDml,
+            findings: &no_findings(),
+            schema_status: SchemaStatus::Ready,
+            tables: &[TableRiskInfo {
+                name: "users".into(),
+                estimated_rows: 100,
+                has_cascade_fk: false,
+                cascade_targets: vec![],
+                cascade_children: vec![CascadeChildInfo {
+                    table_name: "orders".into(),
+                    schema_name: Some("public".into()),
+                    estimated_rows: 50, // small child
+                    depth: 1,
+                }],
+                cascade_children_truncated: true, // but truncated!
+            }],
+            statement_count: 1,
+            has_dml: true,
+            has_delete_stmt: true,
+            allow_read_only: true,
+            max_estimated_rows: 1000,
+            safe_ddl: false,
+        });
+        // base_level=Medium (small rows), but truncated → escalation to High
+        assert_eq!(r.level, RiskLevel::High);
+    }
+
+    #[test]
+    fn deprecated_has_cascade_fk_does_not_fire() {
+        // has_cascade_fk=true but cascade_children empty → no CascadeDelete factor
+        let r = evaluate(&RiskInput {
+            operation: Operation::ExecuteDml,
+            findings: &no_findings(),
+            schema_status: SchemaStatus::Ready,
+            tables: &[TableRiskInfo {
+                name: "orders".into(),
+                estimated_rows: 50000,
+                has_cascade_fk: true,
+                cascade_targets: vec!["users".into()],
+                cascade_children: vec![],
+                cascade_children_truncated: false,
+            }],
+            statement_count: 1,
+            has_dml: true,
+            has_delete_stmt: true,
+            allow_read_only: true,
+            max_estimated_rows: 1000,
+            safe_ddl: false,
+        });
+        // LargeTable fires, but CascadeDelete does NOT
+        assert!(
+            r.factors
+                .iter()
+                .any(|f| matches!(f, RiskFactor::LargeTable { .. }))
+        );
+        assert!(
+            !r.factors
+                .iter()
+                .any(|f| matches!(f, RiskFactor::CascadeDelete { .. }))
+        );
     }
 }

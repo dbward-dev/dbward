@@ -446,7 +446,8 @@ impl SchemaDriver for PostgresDriver {
             let constraint_rows = sqlx::query(
                 "SELECT tc.constraint_name, tc.constraint_type, \
                         kcu.column_name, \
-                        ccu.table_name AS ref_table, ccu.column_name AS ref_column, \
+                        ccu.table_name AS ref_table, ccu.table_schema AS ref_schema, \
+                        ccu.column_name AS ref_column, \
                         rc.delete_rule \
                  FROM information_schema.table_constraints tc \
                  JOIN information_schema.key_column_usage kcu \
@@ -469,6 +470,7 @@ impl SchemaDriver for PostgresDriver {
                 let ctype: String = cr.get("constraint_type");
                 let col: String = cr.get("column_name");
                 let ref_table: Option<String> = cr.get("ref_table");
+                let ref_schema: Option<String> = cr.get("ref_schema");
                 let ref_col: Option<String> = cr.get("ref_column");
                 let delete_rule: Option<String> = cr.get("delete_rule");
 
@@ -501,6 +503,7 @@ impl SchemaDriver for PostgresDriver {
                             "SET DEFAULT" => FkAction::SetDefault,
                             _ => FkAction::NoAction,
                         }),
+                        referenced_schema: ref_schema,
                     });
                 }
             }

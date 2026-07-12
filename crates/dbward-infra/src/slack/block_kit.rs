@@ -198,7 +198,41 @@ pub fn build_review_modal(
                     .filter(|&r| r > 0)
                     .map(|r| format!(" (~{r} rows)"))
                     .unwrap_or_default();
-                let cascade = if entry.has_cascade_fk {
+                let cascade = if !entry.cascade_children.is_empty() {
+                    // Inbound CASCADE children (new)
+                    let child_info: String = entry
+                        .cascade_children
+                        .iter()
+                        .take(3)
+                        .map(|c| {
+                            let name = match &c.schema_name {
+                                Some(s) if s != "public" => {
+                                    format!("{}.{}", s, c.table_name)
+                                }
+                                _ => c.table_name.clone(),
+                            };
+                            let rows = c
+                                .estimated_rows
+                                .filter(|&r| r > 0)
+                                .map(|r| format!(" (~{r} rows)"))
+                                .unwrap_or_default();
+                            format!("{name}{rows}")
+                        })
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    let suffix = if entry.cascade_children.len() > 3 {
+                        format!(" +{}", entry.cascade_children.len() - 3)
+                    } else {
+                        String::new()
+                    };
+                    let trunc = if entry.cascade_children_truncated {
+                        " ⚠️ deeper chains may exist"
+                    } else {
+                        ""
+                    };
+                    format!(" ⚠️ CASCADE children: {child_info}{suffix}{trunc}")
+                } else if entry.has_cascade_fk {
+                    // Fallback: old stored data (outbound)
                     let targets: String = entry
                         .cascade_targets
                         .iter()
