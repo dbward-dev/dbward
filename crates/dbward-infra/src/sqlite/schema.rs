@@ -638,12 +638,8 @@ pub fn initialize(conn: &Connection) -> Result<(), rusqlite::Error> {
         .unwrap_or(0)
         > 0;
     if !has_source {
-        // Default to 'api' to preserve provenance of pre-existing API-created roles.
-        // Then set 'config' only for roles that were config-synced.
-        conn.execute_batch(
-            "ALTER TABLE roles ADD COLUMN source TEXT NOT NULL DEFAULT 'api';
-             UPDATE roles SET source = 'config' WHERE config_synced = 1;",
-        )?;
+        // All existing roles are config-managed (API role creation is not yet available).
+        conn.execute_batch("ALTER TABLE roles ADD COLUMN source TEXT NOT NULL DEFAULT 'config';")?;
     }
 
     Ok(())
