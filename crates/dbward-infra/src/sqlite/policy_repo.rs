@@ -721,10 +721,10 @@ impl PolicyRepo for SqlitePolicyRepo {
             .collect();
         let envs_str = serde_json::to_string(&envs_json).unwrap_or_else(|_| "[\"*\"]".to_string());
         conn.execute(
-            "INSERT INTO roles (name, permissions_json, databases_json, environments_json, built_in, config_synced)
-             VALUES (?1, ?2, ?3, ?4, 0, 1)
-             ON CONFLICT(name) DO UPDATE SET permissions_json = ?2, databases_json = ?3, environments_json = ?4, config_synced = 1
-             WHERE config_synced = 1 OR built_in = 0",
+            "INSERT INTO roles (name, permissions_json, databases_json, environments_json, built_in, config_synced, source)
+             VALUES (?1, ?2, ?3, ?4, 0, 1, 'config')
+             ON CONFLICT(name) DO UPDATE SET permissions_json = ?2, databases_json = ?3, environments_json = ?4, config_synced = 1, source = 'config'
+             WHERE config_synced = 1",
             rusqlite::params![role.name, perms_json, dbs_str, envs_str],
         )
         .map_err(db_err("policy: upsert_config_role"))?;
@@ -1275,5 +1275,68 @@ mod tests {
         let env = Environment::new("staging").unwrap();
         let policy = evaluator.get_sql_review_policy(&db, &env).unwrap();
         assert_eq!(policy.id, "builtin-default");
+    }
+
+    #[test]
+    fn upsert_config_role_inserts_new() {
+        let conn = setup();
+        let repo = SqlitePolicyRepo::new(conn.clone());
+        let role = dbward_domain::auth::RoleDefinition {
+            name: "dev-role".into(),
+            permissions: vec![],
+            databases: vec![],
+            environments: vec![],
+        };
+        repo.upsert_config_role(&role).unwrap();
+        let c = conn.lock();
+        let source: String = c
+            .query_row(
+                "SELECT source FROM roles WHERE name = 'dev-role'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(source, "config");
+        let config_synced: i64 = c
+            .query_row(
+                "SELECT config_synced FROM roles WHERE name = 'dev-role'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(config_synced, 1);
+    }
+
+    #[test]
+    fn upsert_config_role_does_not_overwrite_api_managed() {
+        let conn = setup();
+        // Insert an API-managed role (config_synced=0, source='api')
+        {
+            let c = conn.lock();
+            c.execute(
+                "INSERT INTO roles (name, permissions_json, config_synced, source) VALUES ('api-role', '[]', 0, 'api')",
+                [],
+            )
+            .unwrap();
+        }
+        let repo = SqlitePolicyRepo::new(conn.clone());
+        let role = dbward_domain::auth::RoleDefinition {
+            name: "api-role".into(),
+            permissions: vec![],
+            databases: vec![],
+            environments: vec![],
+        };
+        let result = repo.upsert_config_role(&role);
+        assert!(result.is_err());
+        // Verify it's still API-managed
+        let c = conn.lock();
+        let source: String = c
+            .query_row(
+                "SELECT source FROM roles WHERE name = 'api-role'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(source, "api");
     }
 }

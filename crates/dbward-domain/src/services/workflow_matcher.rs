@@ -69,6 +69,7 @@ pub fn evaluate(workflow: &Workflow, risk_level: Option<RiskLevel>) -> ApprovalD
                 if let Some(max_level) = aa.max_risk_level
                     && let Some(level) = risk_level
                     && level != RiskLevel::Unknown
+                    && level != RiskLevel::Unavailable
                     && level <= max_level
                 {
                     return ApprovalDecision::AutoApproved {

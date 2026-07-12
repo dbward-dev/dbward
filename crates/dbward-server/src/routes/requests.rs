@@ -2,6 +2,7 @@ use axum::{
     Json,
     extract::{Extension, Path, State},
     http::StatusCode,
+    response::{IntoResponse, Response},
 };
 use serde_json::json;
 
@@ -394,7 +395,7 @@ pub async fn stream_result(
     State(state): State<AppState>,
     Extension(user): Extension<AuthUser>,
     Path(id): Path<String>,
-) -> ApiResult {
+) -> Result<Response, (StatusCode, Json<serde_json::Value>)> {
     let uc = state.requests().stream_result();
 
     let input = stream_result::StreamResultInput {
@@ -417,7 +418,8 @@ pub async fn stream_result(
                         .map(|s| serde_json::from_str::<serde_json::Value>(s)
                             .unwrap_or_else(|_| serde_json::Value::String(s.to_owned()))),
                 })),
-            )),
+            )
+                .into_response()),
             stream_result::StreamResultData::TerminalPlaceholder { success: _ } => {
                 let get_uc = state.requests().get_result();
                 let get_input = dbward_app::use_cases::get_result::GetResultInput {
@@ -434,14 +436,15 @@ pub async fn stream_result(
                                 stored_out.success,
                                 &bytes,
                             )),
-                        ))
+                        )
+                            .into_response())
                     }
                     Err(AppError::Gone(msg)) => Err(map_error(AppError::Gone(msg))),
                     Err(e) => Err(map_error(e)),
                 }
             }
             stream_result::StreamResultData::Timeout => {
-                Ok((StatusCode::NO_CONTENT, Json(json!({}))))
+                Ok((StatusCode::NO_CONTENT, Json(json!({}))).into_response())
             }
         },
         Err(e) => Err(map_error(e)),

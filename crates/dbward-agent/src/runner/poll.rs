@@ -169,7 +169,7 @@ pub(super) async fn poll_loop(
                         info!("Server version: {sv}, agent version: {av}");
                     }
                 }
-                if !is_ready && !resp.upgrade_required {
+                if !is_ready && !resp.upgrade_required && !degraded {
                     info!(
                         phase = "ready",
                         consecutive_failures, "poll recovered, readiness restored"

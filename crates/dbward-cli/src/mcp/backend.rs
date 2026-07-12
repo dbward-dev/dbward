@@ -49,7 +49,11 @@ impl McpBackend for CliMcpBackend {
 
         let status = match cr.status {
             dbward_api_types::requests::RequestStatus::Pending => RequestStatus::Pending,
-            dbward_api_types::requests::RequestStatus::Approved => RequestStatus::Approved,
+            dbward_api_types::requests::RequestStatus::Approved
+            | dbward_api_types::requests::RequestStatus::AutoApproved
+            | dbward_api_types::requests::RequestStatus::BreakGlass
+            | dbward_api_types::requests::RequestStatus::Dispatched
+            | dbward_api_types::requests::RequestStatus::Running => RequestStatus::Approved,
             dbward_api_types::requests::RequestStatus::Rejected => RequestStatus::Rejected,
             _ => RequestStatus::Failed,
         };
@@ -66,24 +70,49 @@ impl McpBackend for CliMcpBackend {
         timeout_secs: u64,
         _user: &AuthUser,
     ) -> McpResult<WaitOutput> {
-        // Resume
-        self.client.resume(request_id).await.map_err(|e| {
-            format!(
-                "resume failed ({}): {}",
-                e.status,
-                e.error_message.unwrap_or(e.body)
-            )
-        })?;
+        // Resume — on 409 Conflict, check current status to determine next action
+        let wait_status = match self.client.resume(request_id).await {
+            Ok(_) => dbward_api_types::requests::RequestStatus::Dispatched,
+            Err(e) if e.status == 409 => {
+                // Check actual status — 409 can mean dispatched/running OR invalid state
+                let req = self
+                    .client
+                    .get_request(request_id)
+                    .await
+                    .map_err(|e| McpError::Internal(e.to_string()))?;
+                let status_str = req["status"].as_str().unwrap_or("");
+                match status_str {
+                    "dispatched" | "running" => {
+                        dbward_api_types::requests::RequestStatus::Dispatched
+                    }
+                    "executed" | "failed" => dbward_api_types::requests::RequestStatus::Executed,
+                    "approved" | "auto_approved" | "break_glass" => {
+                        // Still resumable (dispatch lease may have expired) — let
+                        // wait_for_completion handle the re-resume.
+                        dbward_api_types::requests::RequestStatus::Approved
+                    }
+                    _ => {
+                        return Err(McpError::Internal(format!(
+                            "request is '{}', cannot resume",
+                            status_str
+                        )));
+                    }
+                }
+            }
+            Err(e) => {
+                return Err(format!(
+                    "resume failed ({}): {}",
+                    e.status,
+                    e.error_message.unwrap_or(e.body)
+                )
+                .into());
+            }
+        };
 
         // Wait with timeout
         match tokio::time::timeout(
             Duration::from_secs(timeout_secs),
-            workflow::wait_for_completion(
-                &self.client,
-                request_id,
-                dbward_api_types::requests::RequestStatus::Approved,
-                false,
-            ),
+            workflow::wait_for_completion(&self.client, request_id, wait_status, false),
         )
         .await
         {

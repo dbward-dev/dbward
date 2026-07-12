@@ -209,7 +209,8 @@ fn compute_next_status(
         (Failed, Dispatch) => Dispatched,
         (ExecutionLost, Dispatch) => Dispatched,
 
-        // Dispatch timeout
+        // Dispatch timeout — reverts to Approved regardless of pre-dispatch status.
+        // TODO(#bug8): Preserve pre_dispatch_status (AutoApproved/BreakGlass) via schema migration.
         (Dispatched, DispatchTimeout) => Approved,
 
         // Agent lifecycle

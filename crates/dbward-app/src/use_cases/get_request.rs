@@ -43,14 +43,22 @@ impl GetRequest {
 
         let is_approver_view = if let Err(authz_err) = scoped_ok {
             let role_names: Vec<String> = user.roles.iter().map(|r| r.name.clone()).collect();
-            let is_approver = req.status == RequestStatus::Pending
+            let is_pending_approver = req.status == RequestStatus::Pending
                 && self.request_reader.is_pending_approver(
                     &req.id,
                     &user.subject_id,
                     &user.groups,
                     &role_names,
                 )?;
-            if !is_approver {
+            let has_approved = if !is_pending_approver {
+                self.approval_repo
+                    .get_approvals(&req.id)?
+                    .iter()
+                    .any(|a| a.actor_id == user.subject_id)
+            } else {
+                false
+            };
+            if !is_pending_approver && !has_approved {
                 return Err(AppError::Forbidden(authz_err));
             }
             true
