@@ -117,7 +117,20 @@ pub async fn submit_and_orchestrate(
             match sc.resume(&cr.request_id).await {
                 Ok(_) => {}
                 Err(e) if e.status == 409 => {
-                    // Already dispatched by concurrent caller — proceed to wait
+                    // Verify actual state — 409 can be concurrency or policy rejection
+                    let req = sc.get_request(&cr.request_id).await?;
+                    let actual = RequestStatus::from_json(&req["status"]);
+                    match actual {
+                        RequestStatus::Dispatched | RequestStatus::Running => {}
+                        RequestStatus::Executed | RequestStatus::Failed => {
+                            let result = resolve_terminal_result(sc, &cr.request_id).await?;
+                            return Ok(Outcome::Completed {
+                                request_id: cr.request_id,
+                                result,
+                            });
+                        }
+                        _ => return Err(CliError::Server(e.body.clone())),
+                    }
                 }
                 Err(e) => return Err(CliError::Server(e.body.clone())),
             }
