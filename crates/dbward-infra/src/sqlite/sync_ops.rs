@@ -515,10 +515,10 @@ impl SyncPolicyOps for SqliteTxScope<'_> {
         let envs_json = serde_json::to_string(&role.environments)
             .map_err(|e| AppError::Internal(format!("json: {e}")))?;
         self.conn.execute(
-            "INSERT INTO roles (name, permissions_json, databases_json, environments_json, built_in, config_synced) \
-             VALUES (?1, ?2, ?3, ?4, 0, 1) \
-             ON CONFLICT(name) DO UPDATE SET permissions_json = ?2, databases_json = ?3, environments_json = ?4, config_synced = 1 \
-             WHERE config_synced = 1 OR built_in = 0",
+            "INSERT INTO roles (name, permissions_json, databases_json, environments_json, built_in, config_synced, source) \
+             VALUES (?1, ?2, ?3, ?4, 0, 1, 'config') \
+             ON CONFLICT(name) DO UPDATE SET permissions_json = ?2, databases_json = ?3, environments_json = ?4, config_synced = 1, source = 'config' \
+             WHERE config_synced = 1",
             params![role.name, perms_json, dbs_json, envs_json],
         ).map_err(db_err("sync: create_role"))?;
         Ok(())
