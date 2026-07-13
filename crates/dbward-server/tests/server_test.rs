@@ -478,7 +478,11 @@ impl TokenRepo for StubTokenRepo {
     fn find_active_initial(&self, _: &str) -> Result<Option<Token>, AppError> {
         Ok(None)
     }
-    fn count_active_for_subject(&self, _: &str) -> Result<u32, AppError> {
+    fn count_active_for_subject(
+        &self,
+        _: &str,
+        _: dbward_domain::auth::SubjectType,
+    ) -> Result<u32, AppError> {
         Ok(0)
     }
 }

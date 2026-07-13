@@ -758,7 +758,11 @@ mod tests {
         ) -> Result<Option<dbward_domain::entities::Token>, AppError> {
             Ok(None)
         }
-        fn count_active_for_subject(&self, _: &str) -> Result<u32, AppError> {
+        fn count_active_for_subject(
+            &self,
+            _: &str,
+            _: dbward_domain::auth::SubjectType,
+        ) -> Result<u32, AppError> {
             Ok(0)
         }
     }
@@ -1518,7 +1522,11 @@ mod tests {
             ) -> Result<Option<dbward_domain::entities::Token>, AppError> {
                 Ok(None)
             }
-            fn count_active_for_subject(&self, _: &str) -> Result<u32, AppError> {
+            fn count_active_for_subject(
+                &self,
+                _: &str,
+                _: dbward_domain::auth::SubjectType,
+            ) -> Result<u32, AppError> {
                 Ok(0)
             }
         }
@@ -1630,7 +1638,11 @@ mod tests {
             ) -> Result<Option<dbward_domain::entities::Token>, AppError> {
                 Ok(None)
             }
-            fn count_active_for_subject(&self, _: &str) -> Result<u32, AppError> {
+            fn count_active_for_subject(
+                &self,
+                _: &str,
+                _: dbward_domain::auth::SubjectType,
+            ) -> Result<u32, AppError> {
                 Ok(0)
             }
         }
@@ -1742,7 +1754,11 @@ mod tests {
             ) -> Result<Option<dbward_domain::entities::Token>, AppError> {
                 Ok(None)
             }
-            fn count_active_for_subject(&self, _: &str) -> Result<u32, AppError> {
+            fn count_active_for_subject(
+                &self,
+                _: &str,
+                _: dbward_domain::auth::SubjectType,
+            ) -> Result<u32, AppError> {
                 Ok(0)
             }
         }
@@ -1854,7 +1870,11 @@ mod tests {
             ) -> Result<Option<dbward_domain::entities::Token>, AppError> {
                 Ok(None)
             }
-            fn count_active_for_subject(&self, _: &str) -> Result<u32, AppError> {
+            fn count_active_for_subject(
+                &self,
+                _: &str,
+                _: dbward_domain::auth::SubjectType,
+            ) -> Result<u32, AppError> {
                 Ok(0)
             }
         }
@@ -1971,7 +1991,11 @@ mod tests {
             ) -> Result<Option<dbward_domain::entities::Token>, AppError> {
                 Ok(None)
             }
-            fn count_active_for_subject(&self, _: &str) -> Result<u32, AppError> {
+            fn count_active_for_subject(
+                &self,
+                _: &str,
+                _: dbward_domain::auth::SubjectType,
+            ) -> Result<u32, AppError> {
                 Ok(0)
             }
         }

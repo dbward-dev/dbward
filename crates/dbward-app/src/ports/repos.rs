@@ -374,7 +374,11 @@ pub trait TokenRepo: Send + Sync {
     /// Find the active initial token for a given subject (at most one due to partial unique index).
     fn find_active_initial(&self, subject_id: &str) -> Result<Option<Token>, AppError>;
     /// Count active tokens for a subject (used for sprawl guard).
-    fn count_active_for_subject(&self, subject_id: &str) -> Result<u32, AppError>;
+    fn count_active_for_subject(
+        &self,
+        subject_id: &str,
+        subject_type: dbward_domain::auth::SubjectType,
+    ) -> Result<u32, AppError>;
 }
 
 // --- WebhookRepo ---

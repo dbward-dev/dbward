@@ -141,12 +141,16 @@ impl TokenRepo for SqliteTokenRepo {
         }
     }
 
-    fn count_active_for_subject(&self, subject_id: &str) -> Result<u32, AppError> {
+    fn count_active_for_subject(
+        &self,
+        subject_id: &str,
+        subject_type: dbward_domain::auth::SubjectType,
+    ) -> Result<u32, AppError> {
         let conn = self.conn.lock();
         let count: u32 = conn
             .query_row(
-                "SELECT COUNT(*) FROM tokens WHERE subject_id = ?1 AND status = 'active'",
-                rusqlite::params![subject_id],
+                "SELECT COUNT(*) FROM tokens WHERE subject_id = ?1 AND subject_type = ?2 AND status = 'active'",
+                rusqlite::params![subject_id, subject_type_str(subject_type)],
                 |row| row.get(0),
             )
             .map_err(db_err("token: count_active_for_subject"))?;

@@ -146,6 +146,11 @@ pub async fn inspect(
         .map_err(map_error)?
         .ok_or_else(|| map_error(AppError::NotFound("token not found".into())))?;
 
+    // Bootstrap tokens are not accessible via API
+    if token.provisioning_kind == Some(dbward_domain::entities::ProvisioningKind::Bootstrap) {
+        return Err(map_error(AppError::NotFound("token not found".into())));
+    }
+
     // Authorization: owner or TokenManage
     let is_owner = token.subject_id == user.subject_id && token.subject_type == user.subject_type;
     if !is_owner {

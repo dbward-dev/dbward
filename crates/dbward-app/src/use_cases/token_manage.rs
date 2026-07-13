@@ -130,7 +130,7 @@ impl TokenManage {
         if self.max_active_tokens_per_user > 0 {
             let count = self
                 .token_repo
-                .count_active_for_subject(&input.subject_id)?;
+                .count_active_for_subject(&input.subject_id, subject_type)?;
             if count >= self.max_active_tokens_per_user {
                 return Err(AppError::Validation(
                     "active token limit reached; revoke unused tokens first".into(),
@@ -332,6 +332,11 @@ impl TokenManage {
             .get(&input.token_id)?
             .ok_or_else(|| AppError::NotFound("token not found".into()))?;
 
+        // Bootstrap tokens are not accessible via API
+        if token.provisioning_kind == Some(dbward_domain::entities::ProvisioningKind::Bootstrap) {
+            return Err(AppError::NotFound("token not found".into()));
+        }
+
         // Owner can revoke own token with token.revoke_own; otherwise need TokenManage
         if token.subject_id == user.subject_id && token.subject_type == user.subject_type {
             self.authorizer
@@ -372,7 +377,6 @@ impl TokenManage {
         &self,
         target_user_id: &str,
         user: &AuthUser,
-        ctx: &dbward_domain::entities::AuditContext,
     ) -> Result<ReissueInitialOutput, AppError> {
         // Authorization: token.manage required
         self.authorizer
@@ -439,23 +443,6 @@ impl TokenManage {
             created_at: now,
         };
 
-        let metadata = serde_json::json!({
-            "actor": user.subject_id,
-            "target_user": target_user_id,
-            "old_token_id": old_token_id,
-            "new_token_id": id,
-        });
-
-        let mut audit_event = dbward_domain::entities::AuditEvent::simple(
-            "token.reissued_initial",
-            "token",
-            &user.subject_id,
-            Some(&id),
-            now,
-            ctx,
-        );
-        audit_event.metadata_json = metadata.to_string();
-
         // Atomic: revoke old + create new in a single transaction
         let revoke_id = old_token_id.clone();
         let actor_id = user.subject_id.clone();
@@ -473,7 +460,6 @@ impl TokenManage {
                 tx.record(&revoke_event)?;
             }
             tx.create_token(&new_token)?;
-            tx.record(&audit_event)?;
             Ok(())
         }))?;
 
@@ -566,7 +552,11 @@ mod tests {
         fn find_active_initial(&self, _: &str) -> Result<Option<Token>, AppError> {
             Ok(None)
         }
-        fn count_active_for_subject(&self, _: &str) -> Result<u32, AppError> {
+        fn count_active_for_subject(
+            &self,
+            _: &str,
+            _: dbward_domain::auth::SubjectType,
+        ) -> Result<u32, AppError> {
             Ok(0)
         }
     }

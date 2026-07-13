@@ -397,9 +397,7 @@ pub async fn reissue_initial_token(
     }
 
     let uc = state.tokens().manage();
-    let output = uc
-        .reissue_initial(&user_id, &user, &ctx)
-        .map_err(map_error)?;
+    let output = uc.reissue_initial(&user_id, &user).map_err(map_error)?;
 
     // Attempt Slack DM delivery
     let mut delivery_status = "not_configured";
@@ -450,32 +448,35 @@ pub async fn reissue_initial_token(
 
     let manual_recovery_required = plaintext_returned;
 
-    // Record delivery outcome in audit (supplements the UC-level audit event)
+    // Record audit event with delivery outcome (must succeed — fail the request if not)
     {
-        let delivery_metadata = serde_json::json!({
+        let audit_metadata = serde_json::json!({
+            "actor": user.subject_id,
+            "target_user": user_id,
+            "old_token_id": output.old_token_id,
+            "new_token_id": output.new_token_id,
             "delivery_attempted": delivery_channel.is_some(),
             "delivery_status": delivery_status,
             "delivery_channel": delivery_channel,
             "dm_error": dm_error,
             "plaintext_returned": plaintext_returned,
-            "new_token_id": output.new_token_id,
-            "target_user": user_id,
         });
-        let mut delivery_audit = dbward_domain::entities::AuditEvent::simple(
-            "token.reissued_initial.delivery",
+        let mut audit_event = dbward_domain::entities::AuditEvent::simple(
+            "token.reissued_initial",
             "token",
             &user.subject_id,
             Some(&output.new_token_id),
             chrono::Utc::now(),
             &ctx,
         );
-        delivery_audit.metadata_json = delivery_metadata.to_string();
-        if let Err(e) = state.uow().execute(Box::new(move |tx| {
-            tx.record(&delivery_audit)?;
-            Ok(())
-        })) {
-            tracing::error!(error = %e, "reissue: failed to record delivery audit event");
-        }
+        audit_event.metadata_json = audit_metadata.to_string();
+        state
+            .uow()
+            .execute(Box::new(move |tx| {
+                tx.record(&audit_event)?;
+                Ok(())
+            }))
+            .map_err(map_error)?;
     }
 
     Ok((
