@@ -377,3 +377,79 @@ fn get_user_source(
 ) -> Option<String> {
     repo.get_source(user_id).ok().flatten()
 }
+
+pub async fn reissue_initial_token(
+    State(state): State<AppState>,
+    Extension(user): Extension<AuthUser>,
+    client_ip: Option<Extension<ClientIp>>,
+    connect_info: Option<Extension<axum::extract::ConnectInfo<std::net::SocketAddr>>>,
+    Path(user_id): Path<String>,
+) -> Result<(StatusCode, Json<serde_json::Value>), (StatusCode, Json<serde_json::Value>)> {
+    let ctx = super::extract_audit_context(
+        client_ip.as_ref().map(|e| &e.0),
+        connect_info.as_ref().map(|e| &e.0),
+    );
+
+    let uc = state.tokens().manage();
+    let output = uc
+        .reissue_initial(&user_id, &user, &ctx)
+        .map_err(map_error)?;
+
+    // Attempt Slack DM delivery
+    let mut delivery_status = "not_configured";
+    let mut delivery_channel: Option<&str> = None;
+    let mut token_response: Option<&str> = None;
+    let mut plaintext_returned = false;
+
+    let slack_user_id = state.user_repo().get_slack_user_id(&user_id).ok().flatten();
+
+    if let (Some(sc), Some(slack_id)) = (&state.slack_client, &slack_user_id) {
+        delivery_channel = Some("slack_dm");
+        let dm_text = format!(
+            "🔑 Your dbward initial token has been reissued.\n\n\
+             Your new API token (save it securely — it won't be shown again):\n\
+             ```{}```\n\n\
+             Configure it:\n\
+             ```export DBWARD_API_TOKEN={}```",
+            output.plaintext, output.plaintext
+        );
+        match sc
+            .post_message(
+                slack_id,
+                &[serde_json::json!({
+                    "type": "section",
+                    "text": { "type": "mrkdwn", "text": dm_text }
+                })],
+                "Your dbward token has been reissued.",
+            )
+            .await
+        {
+            Ok(_) => {
+                delivery_status = "delivered";
+            }
+            Err(e) => {
+                tracing::warn!(error = %e, user_id = %user_id, "reissue: DM delivery failed");
+                delivery_status = "failed";
+                token_response = Some(&output.plaintext);
+                plaintext_returned = true;
+            }
+        }
+    } else {
+        // Slack not configured or user has no slack_user_id
+        token_response = Some(&output.plaintext);
+        plaintext_returned = true;
+    }
+
+    Ok((
+        StatusCode::OK,
+        Json(serde_json::json!({
+            "reissued_token_id": output.new_token_id,
+            "reissued_at": chrono::Utc::now().to_rfc3339(),
+            "revoked_old_token_id": output.old_token_id,
+            "delivery_status": delivery_status,
+            "delivery_channel": delivery_channel,
+            "token": token_response,
+            "plaintext_returned": plaintext_returned,
+        })),
+    ))
+}

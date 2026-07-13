@@ -535,6 +535,7 @@ pub async fn run_from_args(
         max_persist_bytes: cfg.result_storage.max_persist_bytes,
         accept_oidc: oidc_active,
         storage_backend: cfg.result_storage.backend.clone(),
+        max_active_tokens_per_user: cfg.auth.token_policy.max_active_tokens_per_user,
         draining: draining.clone(),
         preflight_job_repo: Arc::new(dbward_infra::sqlite::SqlitePreflightJobRepo::new(
             conn.clone(),

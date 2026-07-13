@@ -1541,6 +1541,12 @@ fn token_prefix_is_raw_4_to_12() {
         fn purge_revoked(&self, _: &str) -> Result<u32, AppError> {
             Ok(0)
         }
+        fn find_active_initial(&self, _: &str) -> Result<Option<Token>, AppError> {
+            Ok(None)
+        }
+        fn count_active_for_subject(&self, _: &str) -> Result<u32, AppError> {
+            Ok(0)
+        }
     }
 
     struct FakeUserRepoNotSuspended;
@@ -1735,13 +1741,14 @@ fn token_prefix_is_raw_4_to_12() {
         clock: Arc::new(FakeClock::new()),
         id_gen: Arc::new(SeqIdGen::new()),
         token_gen: Arc::new(FakeTokenValueGen),
+        max_active_tokens_per_user: 5,
     };
 
     let admin = make_user("admin", &["admin"]);
     let output = uc
         .create(
             TokenCreateInput {
-                subject_id: "bob".into(),
+                subject_id: "admin".into(),
                 subject_type: "user".into(),
                 name: Some("test-token".into()),
                 scope_ceiling: Some(dbward_domain::entities::ScopeCeiling {

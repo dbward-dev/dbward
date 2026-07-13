@@ -30,7 +30,7 @@ dbward token create --subject prod-agent --subject-type agent --no-scope-ceiling
 ```
 
 ```bash
-# Via REST API (requires token.write permission)
+# Via REST API (requires token.create_own or token.manage permission)
 curl -X POST http://localhost:3000/api/tokens \
   -H "Authorization: Bearer $ADMIN_TOKEN" \
   -H "Content-Type: application/json" \
@@ -114,7 +114,7 @@ dbward token inspect <ID>
 ```
 
 ```bash
-# Via REST API (owner or token.write permission)
+# Via REST API (owner or token.manage permission)
 curl http://localhost:3000/api/tokens/$TOKEN_ID/inspect \
   -H "Authorization: Bearer $MY_TOKEN"
 ```

@@ -96,6 +96,7 @@ pub struct AppState {
     pub(crate) max_persist_bytes: usize,
     pub(crate) accept_oidc: bool,
     pub(crate) storage_backend: String,
+    pub(crate) max_active_tokens_per_user: u32,
 
     // Shutdown — pub(crate)
     pub(crate) draining: Arc<AtomicBool>,
@@ -394,6 +395,7 @@ impl<'a> TokenUseCases<'a> {
             clock: s.clock.clone(),
             id_gen: s.id_generator.clone(),
             token_gen: s.token_value_generator.clone(),
+            max_active_tokens_per_user: s.max_active_tokens_per_user,
         }
     }
 }
@@ -591,6 +593,10 @@ impl AppState {
     pub(crate) fn id_gen(&self) -> &Arc<dyn IdGenerator> {
         &self.id_generator
     }
+
+    pub(crate) fn token_value_generator(&self) -> &Arc<dyn dbward_app::ports::TokenValueGenerator> {
+        &self.token_value_generator
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -763,6 +769,7 @@ pub struct AppStateBuilder {
     pub max_persist_bytes: usize,
     pub accept_oidc: bool,
     pub storage_backend: String,
+    pub max_active_tokens_per_user: u32,
     pub draining: Arc<AtomicBool>,
     pub preflight_job_repo: Arc<dyn PreflightJobRepo>,
     pub preflight_notifier: Arc<crate::preflight_notifier::PreflightNotifier>,
@@ -831,6 +838,7 @@ impl AppStateBuilder {
             max_persist_bytes: self.max_persist_bytes,
             accept_oidc: self.accept_oidc,
             storage_backend: self.storage_backend,
+            max_active_tokens_per_user: self.max_active_tokens_per_user,
             draining: self.draining,
             preflight_job_repo: self.preflight_job_repo,
             preflight_notifier: self.preflight_notifier,

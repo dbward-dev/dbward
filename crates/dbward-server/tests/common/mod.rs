@@ -49,6 +49,7 @@ impl RoleResolver for NoopRoleResolver {
                         Permission::RequestApprove,
                         Permission::ResultView,
                         Permission::WorkflowRead,
+                        Permission::TokenCreateOwn,
                         Permission::TokenRevokeOwn,
                     ]
                     .into_iter()

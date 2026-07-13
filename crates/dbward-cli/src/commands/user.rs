@@ -61,6 +61,11 @@ pub enum UserAction {
         /// User ID
         id: String,
     },
+    /// Reissue a user's initial token (admin only)
+    ReissueInitialToken {
+        /// User ID
+        id: String,
+    },
 }
 
 pub async fn run_user(sc: &ServerClient, action: UserAction) -> Result<(), CliError> {
@@ -156,6 +161,39 @@ pub async fn run_user(sc: &ServerClient, action: UserAction) -> Result<(), CliEr
         UserAction::Rm { id } => {
             sc.delete(&format!("/api/users/{id}")).await?;
             eprintln!("User '{id}' deleted.");
+            Ok(())
+        }
+        UserAction::ReissueInitialToken { id } => {
+            let resp: serde_json::Value = sc
+                .post(
+                    &format!("/api/users/{id}/reissue-initial-token"),
+                    &serde_json::json!({}),
+                )
+                .await?;
+
+            let delivery = resp
+                .get("delivery_status")
+                .and_then(|v| v.as_str())
+                .unwrap_or("unknown");
+
+            eprintln!("Initial token reissued for user '{id}'.");
+
+            if delivery == "delivered" {
+                eprintln!("  Delivery: Slack DM sent successfully.");
+            } else if let Some(token) = resp.get("token").and_then(|v| v.as_str()) {
+                if delivery == "failed" {
+                    eprintln!("  ⚠ Slack DM delivery failed.");
+                } else {
+                    eprintln!("  Slack not configured.");
+                }
+                println!("{token}");
+                eprintln!("  Configure: export DBWARD_API_TOKEN=<token above>");
+            }
+
+            if let Some(token_id) = resp.get("reissued_token_id").and_then(|v| v.as_str()) {
+                eprintln!("  Token ID: {token_id}");
+            }
+
             Ok(())
         }
     }

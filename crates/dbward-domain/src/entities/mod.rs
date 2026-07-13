@@ -19,7 +19,7 @@ pub use database::Database;
 pub use execution::{Execution, ExecutionStatus};
 pub use request::{Request, RequestStatus};
 pub use result::{ExecutionResult, ResultAccess, ResultStatus, SelectorType};
-pub use token::{ScopeCeiling, Token, TokenStatus};
+pub use token::{ProvisioningKind, ScopeCeiling, Token, TokenStatus};
 pub use user::{User, UserStatus};
 pub use webhook::{Webhook, WebhookFormat, WebhookStatus};
 pub use webhook_delivery::{DeliveryStatus, WebhookDelivery};

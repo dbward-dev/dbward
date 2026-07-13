@@ -480,6 +480,7 @@ fn builtin_roles() -> Vec<(String, ResolvedRole)> {
                     Permission::RequestResume,
                     Permission::ResultView,
                     Permission::WorkflowRead,
+                    Permission::TokenCreateOwn,
                     Permission::TokenRevokeOwn,
                 ]
                 .into_iter()
@@ -497,6 +498,8 @@ fn builtin_roles() -> Vec<(String, ResolvedRole)> {
                     Permission::RequestView,
                     Permission::ResultView,
                     Permission::WorkflowRead,
+                    Permission::TokenCreateOwn,
+                    Permission::TokenRevokeOwn,
                 ]
                 .into_iter()
                 .collect(),

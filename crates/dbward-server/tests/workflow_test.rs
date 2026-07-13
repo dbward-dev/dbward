@@ -185,6 +185,7 @@ fn workflow_state() -> AppState {
         accept_oidc: false,
         max_persist_bytes: 10 * 1024 * 1024,
         storage_backend: "local".into(),
+        max_active_tokens_per_user: 5,
         mcp_enabled: false,
         mcp_allowed_origins: vec![],
         mcp_default_database: String::new(),

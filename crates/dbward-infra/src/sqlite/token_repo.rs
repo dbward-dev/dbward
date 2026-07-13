@@ -24,7 +24,7 @@ impl TokenRepo for SqliteTokenRepo {
             .as_ref()
             .map(|sc| serde_json::to_string(sc).unwrap());
         conn.execute(
-            "INSERT INTO tokens (id, subject_type, subject_id, token_hash, token_prefix, scope_ceiling_json, name, status, expires_at, created_at, revoked_at) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11)",
+            "INSERT INTO tokens (id, subject_type, subject_id, token_hash, token_prefix, scope_ceiling_json, name, status, provisioning_kind, expires_at, created_at, revoked_at) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12)",
             rusqlite::params![
                 token.id,
                 subject_type_str(token.subject_type),
@@ -34,6 +34,7 @@ impl TokenRepo for SqliteTokenRepo {
                 scope_ceiling_json,
                 token.name,
                 token_status_str(token.status),
+                token.provisioning_kind.map(|pk| pk.as_str()),
                 token.expires_at.map(|t| t.to_rfc3339()),
                 token.created_at.to_rfc3339(),
                 token.revoked_at.map(|t| t.to_rfc3339()),
@@ -45,7 +46,7 @@ impl TokenRepo for SqliteTokenRepo {
     fn verify(&self, prefix: &str, hash: &str) -> Result<Option<Token>, AppError> {
         let conn = self.conn.lock();
         let mut stmt = conn.prepare(
-            "SELECT id, subject_type, subject_id, token_hash, token_prefix, scope_ceiling_json, name, status, expires_at, created_at, revoked_at FROM tokens WHERE token_prefix = ?1 AND status = 'active'",
+            "SELECT id, subject_type, subject_id, token_hash, token_prefix, scope_ceiling_json, name, status, provisioning_kind, expires_at, created_at, revoked_at FROM tokens WHERE token_prefix = ?1 AND status = 'active'",
         ).map_err(db_err("token: verify"))?;
         let rows = stmt
             .query_map(rusqlite::params![prefix], row_to_token)
@@ -64,7 +65,7 @@ impl TokenRepo for SqliteTokenRepo {
     fn list(&self) -> Result<Vec<Token>, AppError> {
         let conn = self.conn.lock();
         let mut stmt = conn.prepare(
-            "SELECT id, subject_type, subject_id, token_hash, token_prefix, scope_ceiling_json, name, status, expires_at, created_at, revoked_at FROM tokens",
+            "SELECT id, subject_type, subject_id, token_hash, token_prefix, scope_ceiling_json, name, status, provisioning_kind, expires_at, created_at, revoked_at FROM tokens",
         ).map_err(db_err("token: list"))?;
         let rows = stmt
             .query_map([], row_to_token)
@@ -76,7 +77,7 @@ impl TokenRepo for SqliteTokenRepo {
     fn get(&self, token_id: &str) -> Result<Option<Token>, AppError> {
         let conn = self.conn.lock();
         let mut stmt = conn.prepare(
-            "SELECT id, subject_type, subject_id, token_hash, token_prefix, scope_ceiling_json, name, status, expires_at, created_at, revoked_at FROM tokens WHERE id = ?1",
+            "SELECT id, subject_type, subject_id, token_hash, token_prefix, scope_ceiling_json, name, status, provisioning_kind, expires_at, created_at, revoked_at FROM tokens WHERE id = ?1",
         ).map_err(db_err("token: get"))?;
         let result = stmt.query_row(rusqlite::params![token_id], row_to_token);
         match result {
@@ -126,6 +127,31 @@ impl TokenRepo for SqliteTokenRepo {
             .map_err(db_err("token: purge_revoked"))?;
         Ok(n as u32)
     }
+
+    fn find_active_initial(&self, subject_id: &str) -> Result<Option<Token>, AppError> {
+        let conn = self.conn.lock();
+        let mut stmt = conn.prepare(
+            "SELECT id, subject_type, subject_id, token_hash, token_prefix, scope_ceiling_json, name, status, provisioning_kind, expires_at, created_at, revoked_at FROM tokens WHERE subject_id = ?1 AND status = 'active' AND provisioning_kind = 'initial'",
+        ).map_err(db_err("token: find_active_initial"))?;
+        let result = stmt.query_row(rusqlite::params![subject_id], row_to_token);
+        match result {
+            Ok(t) => Ok(Some(t)),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(db_err("token: find_active_initial")(e)),
+        }
+    }
+
+    fn count_active_for_subject(&self, subject_id: &str) -> Result<u32, AppError> {
+        let conn = self.conn.lock();
+        let count: u32 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM tokens WHERE subject_id = ?1 AND status = 'active'",
+                rusqlite::params![subject_id],
+                |row| row.get(0),
+            )
+            .map_err(db_err("token: count_active_for_subject"))?;
+        Ok(count)
+    }
 }
 
 pub(crate) fn subject_type_str(s: SubjectType) -> &'static str {
@@ -160,9 +186,10 @@ fn row_to_token(row: &rusqlite::Row) -> rusqlite::Result<Token> {
     let subject_type_s: String = row.get(1)?;
     let scope_ceiling_json: Option<String> = row.get(5)?;
     let status_s: String = row.get(7)?;
-    let expires_str: Option<String> = row.get(8)?;
-    let created_str: String = row.get(9)?;
-    let revoked_str: Option<String> = row.get(10)?;
+    let provisioning_kind_s: Option<String> = row.get(8)?;
+    let expires_str: Option<String> = row.get(9)?;
+    let created_str: String = row.get(10)?;
+    let revoked_str: Option<String> = row.get(11)?;
 
     let scope_ceiling = scope_ceiling_json
         .as_deref()
@@ -181,13 +208,16 @@ fn row_to_token(row: &rusqlite::Row) -> rusqlite::Result<Token> {
         scope_ceiling,
         name: row.get(6)?,
         status: parse_token_status(&status_s),
+        provisioning_kind: dbward_domain::entities::ProvisioningKind::from_str_opt(
+            provisioning_kind_s.as_deref(),
+        ),
         expires_at: match expires_str {
             Some(s) => Some(
                 DateTime::parse_from_rfc3339(&s)
                     .map(|d| d.with_timezone(&Utc))
                     .map_err(|e| {
                         rusqlite::Error::FromSqlConversionFailure(
-                            8,
+                            9,
                             rusqlite::types::Type::Text,
                             Box::new(e),
                         )

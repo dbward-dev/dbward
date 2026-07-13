@@ -532,6 +532,30 @@ pub struct AuthConfig {
     pub roles: Vec<RoleConfig>,
     #[serde(default)]
     pub groups: Vec<GroupConfig>,
+    #[serde(default)]
+    pub token_policy: TokenPolicyConfig,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+pub struct TokenPolicyConfig {
+    /// Maximum number of active tokens per user/agent subject.
+    /// Default: 5. Set to 0 for unlimited.
+    #[serde(default = "TokenPolicyConfig::default_max_active")]
+    pub max_active_tokens_per_user: u32,
+}
+
+impl Default for TokenPolicyConfig {
+    fn default() -> Self {
+        Self {
+            max_active_tokens_per_user: 5,
+        }
+    }
+}
+
+impl TokenPolicyConfig {
+    fn default_max_active() -> u32 {
+        5
+    }
 }
 
 #[derive(Debug, Deserialize, Clone)]

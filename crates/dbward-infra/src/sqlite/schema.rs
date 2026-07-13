@@ -1,6 +1,6 @@
 use rusqlite::Connection;
 
-const SCHEMA_VERSION: u32 = 26;
+const SCHEMA_VERSION: u32 = 27;
 
 const MIGRATION_V2: &str = "
 CREATE TABLE IF NOT EXISTS webhook_deliveries (
@@ -479,6 +479,14 @@ CREATE INDEX IF NOT EXISTS idx_onboarding_status ON onboarding_requests(status);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_onboarding_pending_user ON onboarding_requests(slack_user_id) WHERE status = 'pending';
 ";
 
+// SEC-9: Token provisioning_kind column + partial unique index for initial tokens.
+const MIGRATION_V27: &str = "
+ALTER TABLE tokens ADD COLUMN provisioning_kind TEXT;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_tokens_active_initial
+  ON tokens(subject_type, subject_id)
+  WHERE status = 'active' AND provisioning_kind = 'initial';
+";
+
 /// Initialize the database: set pragmas and create schema.
 pub fn initialize(conn: &Connection) -> Result<(), rusqlite::Error> {
     conn.execute_batch(
@@ -625,6 +633,9 @@ pub fn initialize(conn: &Connection) -> Result<(), rusqlite::Error> {
         if current < 26 {
             conn.execute_batch(MIGRATION_V26)?;
         }
+        if current < 27 {
+            conn.execute_batch(MIGRATION_V27)?;
+        }
         conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
     }
 
@@ -686,11 +697,15 @@ CREATE TABLE IF NOT EXISTS tokens (
     scope_ceiling_json TEXT,
     name TEXT,
     status TEXT NOT NULL DEFAULT 'active',
+    provisioning_kind TEXT,
     expires_at TEXT,
     created_at TEXT NOT NULL,
     revoked_at TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_tokens_prefix ON tokens(token_prefix);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_tokens_active_initial
+  ON tokens(subject_type, subject_id)
+  WHERE status = 'active' AND provisioning_kind = 'initial';
 
 -- Requests
 CREATE TABLE IF NOT EXISTS requests (

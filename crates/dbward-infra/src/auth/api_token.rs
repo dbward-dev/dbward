@@ -119,6 +119,12 @@ mod tests {
         fn purge_revoked(&self, _: &str) -> Result<u32, AppError> {
             Ok(0)
         }
+        fn find_active_initial(&self, _: &str) -> Result<Option<Token>, AppError> {
+            Ok(None)
+        }
+        fn count_active_for_subject(&self, _: &str) -> Result<u32, AppError> {
+            Ok(0)
+        }
     }
 
     fn valid_token() -> Token {
@@ -133,6 +139,7 @@ mod tests {
             }),
             name: None,
             status: TokenStatus::Active,
+            provisioning_kind: None,
             expires_at: None,
             created_at: Utc::now(),
             revoked_at: None,
