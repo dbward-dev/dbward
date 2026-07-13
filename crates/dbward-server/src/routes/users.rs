@@ -400,6 +400,7 @@ pub async fn reissue_initial_token(
     let mut delivery_channel: Option<&str> = None;
     let mut token_response: Option<&str> = None;
     let mut plaintext_returned = false;
+    let mut dm_error: Option<String> = None;
 
     let slack_user_id = state.user_repo().get_slack_user_id(&user_id).ok().flatten();
 
@@ -429,6 +430,7 @@ pub async fn reissue_initial_token(
             }
             Err(e) => {
                 tracing::warn!(error = %e, user_id = %user_id, "reissue: DM delivery failed");
+                dm_error = Some(e.to_string());
                 delivery_status = "failed";
                 token_response = Some(&output.plaintext);
                 plaintext_returned = true;
@@ -440,6 +442,36 @@ pub async fn reissue_initial_token(
         plaintext_returned = true;
     }
 
+    let manual_recovery_required = plaintext_returned;
+
+    // Record delivery outcome in audit (supplements the UC-level audit event)
+    {
+        let delivery_metadata = serde_json::json!({
+            "delivery_attempted": delivery_channel.is_some(),
+            "delivery_status": delivery_status,
+            "delivery_channel": delivery_channel,
+            "dm_error": dm_error,
+            "plaintext_returned": plaintext_returned,
+            "new_token_id": output.new_token_id,
+            "target_user": user_id,
+        });
+        let mut delivery_audit = dbward_domain::entities::AuditEvent::simple(
+            "token.reissued_initial.delivery",
+            "token",
+            &user.subject_id,
+            Some(&output.new_token_id),
+            chrono::Utc::now(),
+            &ctx,
+        );
+        delivery_audit.metadata_json = delivery_metadata.to_string();
+        if let Err(e) = state.uow().execute(Box::new(move |tx| {
+            tx.record(&delivery_audit)?;
+            Ok(())
+        })) {
+            tracing::error!(error = %e, "reissue: failed to record delivery audit event");
+        }
+    }
+
     Ok((
         StatusCode::OK,
         Json(serde_json::json!({
@@ -449,7 +481,7 @@ pub async fn reissue_initial_token(
             "delivery_status": delivery_status,
             "delivery_channel": delivery_channel,
             "token": token_response,
-            "plaintext_returned": plaintext_returned,
+            "manual_recovery_required": manual_recovery_required,
         })),
     ))
 }

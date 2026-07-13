@@ -97,12 +97,6 @@ impl FromStr for Permission {
             "token.create_own" => Ok(Self::TokenCreateOwn),
             "token.revoke_own" => Ok(Self::TokenRevokeOwn),
             "token.manage" => Ok(Self::TokenManage),
-            // Backward-compatible alias: token.write maps to token.manage
-            "token.write" => {
-                #[cfg(debug_assertions)]
-                eprintln!("[WARN] permission 'token.write' is deprecated; use 'token.manage'");
-                Ok(Self::TokenManage)
-            }
             "agent.operate" => Ok(Self::AgentOperate),
             "metrics.view" => Ok(Self::MetricsView),
             "*" => Ok(Self::All),
@@ -173,10 +167,7 @@ mod tests {
     }
 
     #[test]
-    fn token_write_alias_maps_to_token_manage() {
-        assert_eq!(
-            "token.write".parse::<Permission>().unwrap(),
-            Permission::TokenManage,
-        );
+    fn token_write_is_rejected() {
+        assert!("token.write".parse::<Permission>().is_err());
     }
 }

@@ -377,6 +377,14 @@ impl TokenManage {
             .authorize_global(user, Permission::TokenManage)
             .map_err(AppError::Forbidden)?;
 
+        // User existence check
+        if self.user_repo.get(target_user_id)?.is_none() {
+            return Err(AppError::NotFound(format!(
+                "user '{}' not found",
+                target_user_id
+            )));
+        }
+
         // User state checks
         if self.user_repo.is_deleted(target_user_id)? {
             return Err(AppError::Gone("user has been deleted".into()));
@@ -398,27 +406,11 @@ impl TokenManage {
             ));
         }
 
-        // Find and revoke existing active initial token
+        // Find existing active initial token
         let old_token = self.token_repo.find_active_initial(target_user_id)?;
         let old_token_id = old_token.as_ref().map(|t| t.id.clone());
 
         let now = self.clock.now();
-        if let Some(ref old) = old_token {
-            let old_id = old.id.clone();
-            let revoke_event = dbward_domain::entities::AuditEvent::simple(
-                "token.revoked",
-                "token",
-                &user.subject_id,
-                Some(&old_id),
-                now,
-                ctx,
-            );
-            self.uow.execute(Box::new(move |tx| {
-                tx.revoke_token(&old_id, now)?;
-                tx.record(&revoke_event)?;
-                Ok(())
-            }))?;
-        }
 
         // Create new initial token
         let scope_ceiling = dbward_domain::entities::ScopeCeiling {
@@ -462,7 +454,22 @@ impl TokenManage {
         );
         audit_event.metadata_json = metadata.to_string();
 
+        // Atomic: revoke old + create new in a single transaction
+        let revoke_id = old_token_id.clone();
+        let actor_id = user.subject_id.clone();
         self.uow.execute(Box::new(move |tx| {
+            if let Some(ref old_id) = revoke_id {
+                tx.revoke_token(old_id, now)?;
+                let revoke_event = dbward_domain::entities::AuditEvent::simple(
+                    "token.revoked",
+                    "token",
+                    &actor_id,
+                    Some(old_id),
+                    now,
+                    &dbward_domain::entities::AuditContext::System,
+                );
+                tx.record(&revoke_event)?;
+            }
             tx.create_token(&new_token)?;
             tx.record(&audit_event)?;
             Ok(())
