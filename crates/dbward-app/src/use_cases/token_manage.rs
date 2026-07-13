@@ -124,7 +124,9 @@ impl TokenManage {
             ));
         }
 
-        // Token sprawl guard: check active token count per subject
+        // Token sprawl guard: check active token count per subject.
+        // Note: count + insert are not in the same TX, but SQLite's single-writer
+        // lock serializes all writes, preventing TOCTOU races in practice.
         if self.max_active_tokens_per_user > 0 {
             let count = self
                 .token_repo

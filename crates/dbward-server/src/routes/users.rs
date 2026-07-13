@@ -390,6 +390,12 @@ pub async fn reissue_initial_token(
         connect_info.as_ref().map(|e| &e.0),
     );
 
+    if user_id.is_empty() {
+        return Err(map_error(dbward_app::error::AppError::Validation(
+            "user_id is required".into(),
+        )));
+    }
+
     let uc = state.tokens().manage();
     let output = uc
         .reissue_initial(&user_id, &user, &ctx)
