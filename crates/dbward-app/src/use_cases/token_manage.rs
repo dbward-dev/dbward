@@ -1148,4 +1148,194 @@ mod tests {
         let uc = make_uc_with_authorizer(Arc::new(AllowOnly(Permission::TokenCreateOwn)));
         assert!(matches!(uc.list(&make_user()), Err(AppError::Forbidden(_))));
     }
+
+    // --- Bootstrap token isolation tests ---
+
+    struct FakeTokenRepoWithBootstrap;
+    impl TokenRepo for FakeTokenRepoWithBootstrap {
+        fn create(&self, _: &Token) -> Result<(), AppError> {
+            Ok(())
+        }
+        fn verify(&self, _: &str, _: &str) -> Result<Option<Token>, AppError> {
+            Ok(None)
+        }
+        fn list(&self) -> Result<Vec<Token>, AppError> {
+            Ok(vec![])
+        }
+        fn get(&self, _id: &str) -> Result<Option<Token>, AppError> {
+            Ok(Some(Token {
+                id: "bootstrap-tok".into(),
+                subject_id: "admin".into(),
+                subject_type: dbward_domain::auth::SubjectType::User,
+                token_hash: "hash".into(),
+                token_prefix: "prefix".into(),
+                scope_ceiling: None,
+                name: Some("bootstrap-admin".into()),
+                status: dbward_domain::entities::TokenStatus::Active,
+                provisioning_kind: Some(dbward_domain::entities::ProvisioningKind::Bootstrap),
+                expires_at: None,
+                created_at: chrono::Utc::now(),
+                revoked_at: None,
+            }))
+        }
+        fn revoke(&self, _: &str, _: chrono::DateTime<chrono::Utc>) -> Result<bool, AppError> {
+            Ok(true)
+        }
+        fn revoke_all_for_user(
+            &self,
+            _: &str,
+            _: chrono::DateTime<chrono::Utc>,
+        ) -> Result<u32, AppError> {
+            Ok(0)
+        }
+        fn count_active(&self) -> Result<u32, AppError> {
+            Ok(0)
+        }
+        fn purge_revoked(&self, _: &str) -> Result<u32, AppError> {
+            Ok(0)
+        }
+        fn find_active_initial(&self, _: &str) -> Result<Option<Token>, AppError> {
+            Ok(None)
+        }
+        fn count_active_for_subject(
+            &self,
+            _: &str,
+            _: dbward_domain::auth::SubjectType,
+        ) -> Result<u32, AppError> {
+            Ok(0)
+        }
+    }
+
+    #[test]
+    fn revoke_bootstrap_token_returns_not_found() {
+        let uc = TokenManage {
+            authorizer: Arc::new(AllowAll),
+            token_repo: Arc::new(FakeTokenRepoWithBootstrap),
+            user_repo: Arc::new(FakeUserRepo),
+            policy_repo: Arc::new(FakePolicyRepo { roles: vec![] }),
+            role_resolver: Arc::new(FakeRoleResolver),
+            license: Arc::new(FakeLicense),
+            uow: Arc::new(NoopUnitOfWork),
+            clock: Arc::new(FakeClock),
+            id_gen: Arc::new(FakeIdGen),
+            token_gen: Arc::new(FakeTokenGen),
+            max_active_tokens_per_user: 5,
+        };
+        let result = uc.revoke(
+            TokenRevokeInput {
+                token_id: "bootstrap-tok".into(),
+            },
+            &make_user(),
+            &dbward_domain::entities::AuditContext::System,
+        );
+        assert!(matches!(result, Err(AppError::NotFound(_))));
+    }
+
+    // --- Sprawl guard tests ---
+
+    struct FakeTokenRepoAtLimit;
+    impl TokenRepo for FakeTokenRepoAtLimit {
+        fn create(&self, _: &Token) -> Result<(), AppError> {
+            Ok(())
+        }
+        fn verify(&self, _: &str, _: &str) -> Result<Option<Token>, AppError> {
+            Ok(None)
+        }
+        fn list(&self) -> Result<Vec<Token>, AppError> {
+            Ok(vec![])
+        }
+        fn get(&self, _: &str) -> Result<Option<Token>, AppError> {
+            Ok(None)
+        }
+        fn revoke(&self, _: &str, _: chrono::DateTime<chrono::Utc>) -> Result<bool, AppError> {
+            Ok(true)
+        }
+        fn revoke_all_for_user(
+            &self,
+            _: &str,
+            _: chrono::DateTime<chrono::Utc>,
+        ) -> Result<u32, AppError> {
+            Ok(0)
+        }
+        fn count_active(&self) -> Result<u32, AppError> {
+            Ok(5)
+        }
+        fn purge_revoked(&self, _: &str) -> Result<u32, AppError> {
+            Ok(0)
+        }
+        fn find_active_initial(&self, _: &str) -> Result<Option<Token>, AppError> {
+            Ok(None)
+        }
+        fn count_active_for_subject(
+            &self,
+            _: &str,
+            _: dbward_domain::auth::SubjectType,
+        ) -> Result<u32, AppError> {
+            Ok(5) // at limit
+        }
+    }
+
+    #[test]
+    fn create_rejects_at_token_limit() {
+        let uc = TokenManage {
+            authorizer: Arc::new(AllowAll),
+            token_repo: Arc::new(FakeTokenRepoAtLimit),
+            user_repo: Arc::new(FakeUserRepo),
+            policy_repo: Arc::new(FakePolicyRepo { roles: vec![] }),
+            role_resolver: Arc::new(FakeRoleResolver),
+            license: Arc::new(FakeLicense),
+            uow: Arc::new(NoopUnitOfWork),
+            clock: Arc::new(FakeClock),
+            id_gen: Arc::new(FakeIdGen),
+            token_gen: Arc::new(FakeTokenGen),
+            max_active_tokens_per_user: 5,
+        };
+        let result = uc.create(
+            TokenCreateInput {
+                subject_id: "alice".into(),
+                subject_type: "user".into(),
+                name: None,
+                scope_ceiling: None,
+                expires_at: None,
+                issued_by: None,
+                groups: vec![],
+            },
+            &make_user(),
+            &dbward_domain::entities::AuditContext::System,
+        );
+        assert!(
+            matches!(result, Err(AppError::Validation(ref msg)) if msg.contains("token limit"))
+        );
+    }
+
+    #[test]
+    fn create_allows_when_limit_is_zero_unlimited() {
+        let uc = TokenManage {
+            authorizer: Arc::new(AllowAll),
+            token_repo: Arc::new(FakeTokenRepoAtLimit), // returns count=5
+            user_repo: Arc::new(FakeUserRepo),
+            policy_repo: Arc::new(FakePolicyRepo { roles: vec![] }),
+            role_resolver: Arc::new(FakeRoleResolver),
+            license: Arc::new(FakeLicense),
+            uow: Arc::new(NoopUnitOfWork),
+            clock: Arc::new(FakeClock),
+            id_gen: Arc::new(FakeIdGen),
+            token_gen: Arc::new(FakeTokenGen),
+            max_active_tokens_per_user: 0, // unlimited
+        };
+        let result = uc.create(
+            TokenCreateInput {
+                subject_id: "alice".into(),
+                subject_type: "user".into(),
+                name: None,
+                scope_ceiling: None,
+                expires_at: None,
+                issued_by: None,
+                groups: vec![],
+            },
+            &make_user(),
+            &dbward_domain::entities::AuditContext::System,
+        );
+        assert!(result.is_ok());
+    }
 }
