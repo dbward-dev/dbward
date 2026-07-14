@@ -145,7 +145,7 @@ impl RbacAuthorizer {
                         Err(denied(permission, "not the token owner"))
                     }
                 } else {
-                    // TokenWrite: Layer 1 already passed
+                    // TokenManage: Layer 1 already passed
                     Ok(())
                 }
             }
@@ -398,7 +398,7 @@ mod tests {
         );
         assert!(
             RbacAuthorizer
-                .authorize_global(&u, Permission::TokenWrite)
+                .authorize_global(&u, Permission::TokenManage)
                 .is_err()
         );
     }

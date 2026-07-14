@@ -752,6 +752,19 @@ mod tests {
         fn purge_revoked(&self, _: &str) -> Result<u32, AppError> {
             Ok(0)
         }
+        fn find_active_initial(
+            &self,
+            _: &str,
+        ) -> Result<Option<dbward_domain::entities::Token>, AppError> {
+            Ok(None)
+        }
+        fn count_active_for_subject(
+            &self,
+            _: &str,
+            _: dbward_domain::auth::SubjectType,
+        ) -> Result<u32, AppError> {
+            Ok(0)
+        }
     }
 
     struct FakeRequestWriter;
@@ -1503,6 +1516,19 @@ mod tests {
             fn purge_revoked(&self, _: &str) -> Result<u32, AppError> {
                 Ok(0)
             }
+            fn find_active_initial(
+                &self,
+                _: &str,
+            ) -> Result<Option<dbward_domain::entities::Token>, AppError> {
+                Ok(None)
+            }
+            fn count_active_for_subject(
+                &self,
+                _: &str,
+                _: dbward_domain::auth::SubjectType,
+            ) -> Result<u32, AppError> {
+                Ok(0)
+            }
         }
 
         let token_repo = Arc::new(TrackingTokenRepo {
@@ -1604,6 +1630,19 @@ mod tests {
                 Ok(0)
             }
             fn purge_revoked(&self, _: &str) -> Result<u32, AppError> {
+                Ok(0)
+            }
+            fn find_active_initial(
+                &self,
+                _: &str,
+            ) -> Result<Option<dbward_domain::entities::Token>, AppError> {
+                Ok(None)
+            }
+            fn count_active_for_subject(
+                &self,
+                _: &str,
+                _: dbward_domain::auth::SubjectType,
+            ) -> Result<u32, AppError> {
                 Ok(0)
             }
         }
@@ -1709,6 +1748,19 @@ mod tests {
             fn purge_revoked(&self, _: &str) -> Result<u32, AppError> {
                 Ok(0)
             }
+            fn find_active_initial(
+                &self,
+                _: &str,
+            ) -> Result<Option<dbward_domain::entities::Token>, AppError> {
+                Ok(None)
+            }
+            fn count_active_for_subject(
+                &self,
+                _: &str,
+                _: dbward_domain::auth::SubjectType,
+            ) -> Result<u32, AppError> {
+                Ok(0)
+            }
         }
 
         let token_repo = Arc::new(TrackingTokenRepo {
@@ -1810,6 +1862,19 @@ mod tests {
                 Ok(0)
             }
             fn purge_revoked(&self, _: &str) -> Result<u32, AppError> {
+                Ok(0)
+            }
+            fn find_active_initial(
+                &self,
+                _: &str,
+            ) -> Result<Option<dbward_domain::entities::Token>, AppError> {
+                Ok(None)
+            }
+            fn count_active_for_subject(
+                &self,
+                _: &str,
+                _: dbward_domain::auth::SubjectType,
+            ) -> Result<u32, AppError> {
                 Ok(0)
             }
         }
@@ -1918,6 +1983,19 @@ mod tests {
                 Ok(0)
             }
             fn purge_revoked(&self, _: &str) -> Result<u32, AppError> {
+                Ok(0)
+            }
+            fn find_active_initial(
+                &self,
+                _: &str,
+            ) -> Result<Option<dbward_domain::entities::Token>, AppError> {
+                Ok(None)
+            }
+            fn count_active_for_subject(
+                &self,
+                _: &str,
+                _: dbward_domain::auth::SubjectType,
+            ) -> Result<u32, AppError> {
                 Ok(0)
             }
         }

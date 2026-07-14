@@ -1678,7 +1678,7 @@ async fn handle_onboarding_review_submit(
                             let _ = sc2.post_ephemeral(
                                 &channel_id,
                                 &approver_slack_id,
-                                &format!("⚠️ DM delivery to <@{target_slack_id}> failed. Use `dbward token create --subject {user_id}` to issue a new token."),
+                                &format!("⚠️ DM delivery to <@{target_slack_id}> failed. Use `dbward user reissue-initial-token {user_id}` to retry."),
                             ).await;
                         }
                     }

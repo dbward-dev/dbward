@@ -215,6 +215,10 @@ pub fn build_router(state: AppState) -> Router {
             "/api/users/{id}/activate",
             axum::routing::post(users::activate),
         )
+        .route(
+            "/api/users/{id}/reissue-initial-token",
+            axum::routing::post(users::reissue_initial_token),
+        )
         // Groups
         .route("/api/groups", axum::routing::get(groups::list))
         .route("/api/groups/{name}", axum::routing::get(groups::show))

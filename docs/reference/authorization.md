@@ -12,8 +12,8 @@ dbward uses role-based access control (RBAC) with database and environment scopi
 | Role | Permissions | Scope |
 |------|-------------|-------|
 | `admin` | `*` (all) | All databases, all environments |
-| `developer` | `request.execute`, `request.query`, `request.view`, `request.cancel`, `request.resume`, `result.view`, `workflow.read`, `token.revoke_own` | All |
-| `readonly` | `request.query`, `request.view`, `result.view`, `workflow.read` | All |
+| `developer` | `request.execute`, `request.query`, `request.view`, `request.cancel`, `request.resume`, `result.view`, `workflow.read`, `token.create_own`, `token.revoke_own` | All |
+| `readonly` | `request.query`, `request.view`, `result.view`, `workflow.read`, `token.create_own`, `token.revoke_own` | All |
 | `agent-default` | `agent.operate` | All |
 
 Built-in roles cannot be redefined in config.
@@ -139,8 +139,9 @@ default_role = "developer"
 |-----------|-------------|
 | `user.write` | Add, update, suspend, activate, and delete users |
 | `user.read` | List and view users and groups |
-| `token.write` | Create/revoke any token |
+| `token.create_own` | Create tokens for yourself |
 | `token.revoke_own` | Revoke own tokens |
+| `token.manage` | List all tokens, create agent tokens, revoke others' tokens, reissue initial tokens |
 
 ### Agent permissions
 

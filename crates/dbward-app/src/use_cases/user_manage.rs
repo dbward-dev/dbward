@@ -192,6 +192,7 @@ impl UserManage {
             scope_ceiling: Some(ceiling),
             name: Some("initial".to_string()),
             status: dbward_domain::entities::TokenStatus::Active,
+            provisioning_kind: Some(dbward_domain::entities::ProvisioningKind::Initial),
             expires_at: None,
             created_at: now,
             revoked_at: None,
@@ -1049,6 +1050,16 @@ mod tests {
             Ok(0)
         }
         fn purge_revoked(&self, _: &str) -> Result<u32, AppError> {
+            Ok(0)
+        }
+        fn find_active_initial(&self, _: &str) -> Result<Option<Token>, AppError> {
+            Ok(None)
+        }
+        fn count_active_for_subject(
+            &self,
+            _: &str,
+            _: dbward_domain::auth::SubjectType,
+        ) -> Result<u32, AppError> {
             Ok(0)
         }
     }

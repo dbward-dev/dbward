@@ -297,7 +297,7 @@ Permission: `user.read`
 
 Create a new API token. The raw token value is returned only once — store it securely.
 
-Permission: `token.write`
+Permission: `token.create_own` (self user) or `token.manage` (agent)
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
@@ -311,24 +311,31 @@ Notes:
 - `scope_ceiling` is optional for user tokens. When omitted, the ceiling is auto-derived from the user's resolved roles.
 - Agent tokens may omit `scope_ceiling` (unrestricted).
 - Effective permissions = resolved roles ∩ scope_ceiling.
+- Creating tokens for other users is not allowed. Use `POST /api/users/{id}/reissue-initial-token` instead.
 
 ### GET /api/tokens
 
 List all tokens with metadata and status.
 
-Permission: `token.write`
+Permission: `token.manage`
 
 ### DELETE /api/tokens/{id}
 
 Revoke a token immediately.
 
-Permission: `token.write` or `token.revoke_own` (for own tokens)
+Permission: `token.manage` or `token.revoke_own` (for own tokens)
 
 ### GET /api/tokens/{id}/inspect
 
 Show the token's effective roles and permissions after ceiling application.
 
-Permission: Token owner or `token.write`
+Permission: Token owner or `token.manage`
+
+### POST /api/users/{id}/reissue-initial-token
+
+Reissue a user's initial token. Revokes the existing initial token (if any), creates a new one, and attempts Slack DM delivery.
+
+Permission: `token.manage`
 
 ---
 

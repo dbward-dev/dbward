@@ -475,6 +475,16 @@ impl TokenRepo for StubTokenRepo {
     fn purge_revoked(&self, _: &str) -> Result<u32, AppError> {
         Ok(0)
     }
+    fn find_active_initial(&self, _: &str) -> Result<Option<Token>, AppError> {
+        Ok(None)
+    }
+    fn count_active_for_subject(
+        &self,
+        _: &str,
+        _: dbward_domain::auth::SubjectType,
+    ) -> Result<u32, AppError> {
+        Ok(0)
+    }
 }
 
 struct StubWebhookRepo;
@@ -839,6 +849,7 @@ fn test_state_builder() -> AppStateBuilder {
         max_persist_bytes: 10 * 1024 * 1024,
         accept_oidc: true,
         storage_backend: "local".into(),
+        max_active_tokens_per_user: 5,
         mcp_enabled: false,
         mcp_allowed_origins: vec![],
         mcp_default_database: String::new(),

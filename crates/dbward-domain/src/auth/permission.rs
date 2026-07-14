@@ -23,8 +23,9 @@ pub enum Permission {
     WebhookWrite,
     UserWrite,
     UserRead,
-    TokenWrite,
+    TokenCreateOwn,
     TokenRevokeOwn,
+    TokenManage,
     AgentOperate,
     MetricsView,
     /// Wildcard: grants all permissions.
@@ -53,8 +54,9 @@ impl Permission {
             Self::WebhookWrite => "webhook.write",
             Self::UserWrite => "user.write",
             Self::UserRead => "user.read",
-            Self::TokenWrite => "token.write",
+            Self::TokenCreateOwn => "token.create_own",
             Self::TokenRevokeOwn => "token.revoke_own",
+            Self::TokenManage => "token.manage",
             Self::AgentOperate => "agent.operate",
             Self::MetricsView => "metrics.view",
             Self::All => "*",
@@ -92,8 +94,9 @@ impl FromStr for Permission {
             "webhook.write" => Ok(Self::WebhookWrite),
             "user.write" => Ok(Self::UserWrite),
             "user.read" => Ok(Self::UserRead),
-            "token.write" => Ok(Self::TokenWrite),
+            "token.create_own" => Ok(Self::TokenCreateOwn),
             "token.revoke_own" => Ok(Self::TokenRevokeOwn),
+            "token.manage" => Ok(Self::TokenManage),
             "agent.operate" => Ok(Self::AgentOperate),
             "metrics.view" => Ok(Self::MetricsView),
             "*" => Ok(Self::All),
@@ -141,8 +144,9 @@ mod tests {
             Permission::WebhookWrite,
             Permission::UserWrite,
             Permission::UserRead,
-            Permission::TokenWrite,
+            Permission::TokenCreateOwn,
             Permission::TokenRevokeOwn,
+            Permission::TokenManage,
             Permission::AgentOperate,
             Permission::MetricsView,
             Permission::All,
@@ -160,5 +164,10 @@ mod tests {
     #[test]
     fn unknown_returns_err() {
         assert!("foo.bar".parse::<Permission>().is_err());
+    }
+
+    #[test]
+    fn token_write_is_rejected() {
+        assert!("token.write".parse::<Permission>().is_err());
     }
 }

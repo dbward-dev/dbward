@@ -586,7 +586,7 @@ impl TokenWriterOps for SqliteTxScope<'_> {
             .map(|sc| serde_json::to_string(sc).unwrap());
         self.conn
             .execute(
-                "INSERT INTO tokens (id, subject_type, subject_id, token_hash, token_prefix, scope_ceiling_json, name, status, expires_at, created_at, revoked_at) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11)",
+                "INSERT INTO tokens (id, subject_type, subject_id, token_hash, token_prefix, scope_ceiling_json, name, status, provisioning_kind, expires_at, created_at, revoked_at) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12)",
                 params![
                     token.id,
                     subject_type_str(token.subject_type),
@@ -596,6 +596,7 @@ impl TokenWriterOps for SqliteTxScope<'_> {
                     scope_ceiling_json,
                     token.name,
                     token_status_str(token.status),
+                    token.provisioning_kind.map(|pk| pk.as_str()),
                     token.expires_at.map(|t| t.to_rfc3339()),
                     token.created_at.to_rfc3339(),
                     token.revoked_at.map(|t| t.to_rfc3339()),
@@ -682,8 +683,8 @@ impl UserWriterOps for SqliteTxScope<'_> {
             .map(|s| serde_json::to_string(s).unwrap_or_else(|_| "null".into()));
         self.conn
             .execute(
-                "INSERT INTO tokens (id, subject_type, subject_id, token_hash, token_prefix, scope_ceiling_json, name, status, expires_at, created_at) \
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 'active', ?8, ?9)",
+                "INSERT INTO tokens (id, subject_type, subject_id, token_hash, token_prefix, scope_ceiling_json, name, status, provisioning_kind, expires_at, created_at) \
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 'active', ?8, ?9, ?10)",
                 params![
                     token.id,
                     match token.subject_type {
@@ -695,6 +696,7 @@ impl UserWriterOps for SqliteTxScope<'_> {
                     token.token_prefix,
                     scope_json,
                     token.name,
+                    token.provisioning_kind.map(|pk| pk.as_str()),
                     token.expires_at.map(|d| d.to_rfc3339()),
                     token.created_at.to_rfc3339(),
                 ],

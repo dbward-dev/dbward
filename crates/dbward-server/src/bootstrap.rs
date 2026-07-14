@@ -1,27 +1,11 @@
 use std::path::Path;
 
-use dbward_app::use_cases::token_manage::TokenCreateInput;
-use dbward_domain::auth::{AuthUser, Permission, ResolvedRole, SubjectType};
+use sha2::{Digest, Sha256};
+
+use dbward_domain::auth::SubjectType;
 use dbward_domain::entities::TokenStatus;
-use dbward_domain::values::{DatabaseName, Environment};
 
 use crate::state::AppState;
-
-/// System-level AuthUser for bootstrap operations (bypasses normal auth).
-fn system_user() -> AuthUser {
-    AuthUser {
-        subject_id: "system".into(),
-        subject_type: SubjectType::User,
-        roles: vec![ResolvedRole {
-            name: "system".into(),
-            permissions: [Permission::All].into_iter().collect(),
-            databases: vec![DatabaseName::wildcard()],
-            environments: vec![Environment::wildcard()],
-        }],
-        groups: vec![],
-        token_id: None,
-    }
-}
 
 pub fn create_bootstrap_token(
     state: &AppState,
@@ -29,9 +13,11 @@ pub fn create_bootstrap_token(
     role: &str,
     is_agent: bool,
 ) -> Result<String, Box<dyn std::error::Error>> {
-    let uc = state.tokens().manage();
-
-    let subject_type = if is_agent { "agent" } else { "user" };
+    let subject_type = if is_agent {
+        SubjectType::Agent
+    } else {
+        SubjectType::User
+    };
 
     // scope_ceiling: explicit role for user tokens, None for agent tokens.
     let scope_ceiling = if is_agent {
@@ -42,21 +28,52 @@ pub fn create_bootstrap_token(
         })
     };
 
-    let output = uc.create(
-        TokenCreateInput {
-            subject_id: subject_id.to_string(),
-            subject_type: subject_type.to_string(),
-            name: Some(format!("bootstrap-{subject_id}")),
-            scope_ceiling,
-            expires_at: None,
-            issued_by: Some("system".to_string()),
-            groups: vec![],
-        },
-        &system_user(),
-        &dbward_domain::entities::AuditContext::System,
-    )?;
+    // Generate token value directly (bypass UC to avoid "other user" hard-403)
+    let raw = state.token_value_generator().generate_token_value();
+    let prefix = dbward_domain::entities::Token::extract_prefix(&raw);
+    let hash = hex::encode(Sha256::digest(raw.as_bytes()));
 
-    Ok(output.token)
+    let now = state.clock().now();
+    let id = state.id_gen().generate();
+
+    let token = dbward_domain::entities::Token {
+        id: id.clone(),
+        subject_id: subject_id.to_string(),
+        subject_type,
+        token_hash: hash,
+        token_prefix: prefix,
+        scope_ceiling: scope_ceiling.clone(),
+        name: Some(format!("bootstrap-{subject_id}")),
+        status: TokenStatus::Active,
+        provisioning_kind: Some(dbward_domain::entities::ProvisioningKind::Bootstrap),
+        expires_at: None,
+        revoked_at: None,
+        created_at: now,
+    };
+
+    let metadata = serde_json::json!({
+        "issued_by": "system",
+        "issued_for": subject_id,
+        "scope_ceiling": scope_ceiling,
+    });
+
+    let mut audit_event = dbward_domain::entities::AuditEvent::simple(
+        "token.created",
+        "token",
+        "system",
+        Some(&id),
+        now,
+        &dbward_domain::entities::AuditContext::System,
+    );
+    audit_event.metadata_json = metadata.to_string();
+
+    state.uow().execute(Box::new(move |tx| {
+        tx.create_token(&token)?;
+        tx.record(&audit_event)?;
+        Ok(())
+    }))?;
+
+    Ok(raw)
 }
 
 /// Auto-bootstrap: on first startup, create DB + signing key + tokens.

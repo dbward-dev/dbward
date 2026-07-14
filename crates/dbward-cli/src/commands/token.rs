@@ -23,8 +23,9 @@ fn parse_status(s: &str) -> Result<String, String> {
 pub enum TokenAction {
     /// Create a new API token
     Create {
+        /// Subject ID (defaults to yourself if omitted)
         #[arg(long)]
-        subject: String,
+        subject: Option<String>,
         #[arg(long, default_value = "user", value_parser = parse_subject_type)]
         subject_type: String,
         /// Scope ceiling roles (comma-separated). Omit to use the user's resolved roles.
@@ -77,6 +78,24 @@ pub async fn run_token_command(
             expires,
             role,
         } => {
+            // Resolve subject: if not provided, use caller's own identity
+            let resolved_subject = match subject {
+                Some(s) => s.clone(),
+                None => {
+                    if subject_type != "user" {
+                        return Err(CliError::Config(
+                            "--subject is required for agent tokens".into(),
+                        ));
+                    }
+                    let me: serde_json::Value = client.get("/api/me").await?;
+                    me.get("subject_id")
+                        .and_then(|v| v.as_str())
+                        .ok_or_else(|| {
+                            CliError::Config("could not determine caller identity".into())
+                        })?
+                        .to_string()
+                }
+            };
             // Build scope_ceiling from flags
             let scope_ceiling = if *no_scope_ceiling {
                 if subject_type != "agent" {
@@ -103,7 +122,7 @@ pub async fn run_token_command(
             };
 
             let body = json!({
-                "subject_id": subject,
+                "subject_id": resolved_subject,
                 "subject_type": subject_type,
                 "name": name,
                 "scope_ceiling": scope_ceiling,
@@ -121,7 +140,7 @@ pub async fn run_token_command(
                 println!("  ID:      {}", resp["id"].as_str().unwrap_or("-"));
                 println!("  Token:   {}", resp["token"].as_str().unwrap_or("-"));
                 println!("  Prefix:  {}", resp["prefix"].as_str().unwrap_or("-"));
-                println!("  Subject: {} ({})", subject, subject_type);
+                println!("  Subject: {} ({})", resolved_subject, subject_type);
                 if let Some(sc) = resp.get("scope_ceiling").filter(|v| !v.is_null()) {
                     if let Some(roles) = sc.get("roles").and_then(|r| r.as_array()) {
                         let role_strs: Vec<&str> =

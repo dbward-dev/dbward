@@ -282,20 +282,23 @@ Manage API tokens.
 ### dbward token create
 
 ```bash
-dbward token create --subject alice
-dbward token create --subject alice --scope-roles developer
-dbward token create --subject agent-1 --subject-type agent --no-scope-ceiling
-dbward token create --subject bob --scope-roles developer,dba --expires 90d
+dbward token create                                    # Create token for yourself
+dbward token create --scope-roles developer            # With specific ceiling
+dbward token create --subject agent-1 --subject-type agent --no-scope-ceiling  # Agent token
 ```
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `--subject <ID>` | — | **Required.** Subject ID |
+| `--subject <ID>` | self | Subject ID. Defaults to your own identity when omitted. Required for agent tokens. |
 | `--scope-roles <ROLES>` | — | Comma-separated roles for scope ceiling. Optional. When omitted, defaults to the user's resolved roles (auto-ceiling). Conflicts with `--no-scope-ceiling`. |
 | `--subject-type <TYPE>` | user | `user` or `agent` |
 | `--name <NAME>` | | Token display name |
 | `--no-scope-ceiling` | false | Remove scope ceiling (agent tokens only). Token inherits all bound roles. Conflicts with `--scope-roles`. |
 | `--expires <DURATION>` | | Expiry: `90d`, `24h`, `30m`, ISO date, or datetime |
+
+Notes:
+- Creating tokens for other users is not allowed. Use `dbward user reissue-initial-token` instead.
+- Agent token creation requires `token.manage` permission.
 
 ### dbward token list
 
@@ -318,7 +321,7 @@ dbward token revoke <ID>
 
 ### dbward token inspect
 
-Show a token's current effective permissions. Token owners can inspect their own tokens; otherwise requires `token.write` permission.
+Show a token's current effective permissions. Token owners can inspect their own tokens; otherwise requires `token.manage` permission.
 
 ```bash
 dbward token inspect <ID>
@@ -410,6 +413,17 @@ Remove a user (soft-delete: revokes tokens, removes group memberships, retains r
 
 ```bash
 dbward user rm alice
+```
+
+### dbward user reissue-initial-token
+
+Reissue a user's initial token. Revokes the existing initial token and creates a new one.
+If Slack is configured and the user has a linked Slack ID, the token is delivered via DM.
+
+Permission: `token.manage`
+
+```bash
+dbward user reissue-initial-token alice
 ```
 
 ---
