@@ -14,27 +14,29 @@ use crate::state::AppState;
 static LOGIN_AUDIT_CACHE: std::sync::LazyLock<Mutex<HashMap<String, std::time::Instant>>> =
     std::sync::LazyLock::new(|| Mutex::new(HashMap::new()));
 
-fn auth_error_response(e: AuthError) -> (StatusCode, String) {
+fn auth_error_response(e: AuthError) -> (StatusCode, axum::Json<serde_json::Value>) {
     match e {
         AuthError::Internal(_) => (
             StatusCode::INTERNAL_SERVER_ERROR,
-            serde_json::json!({"error": "internal server error", "code": "internal_error"})
-                .to_string(),
+            axum::Json(
+                serde_json::json!({"error": "internal server error", "code": "internal_error"}),
+            ),
         ),
         AuthError::UserLimitReached => (
             StatusCode::PAYMENT_REQUIRED,
-            serde_json::json!({"error": "user limit reached", "code": "policy.limit_exceeded", "hint": "contact your administrator or upgrade to Team"})
-                .to_string(),
+            axum::Json(
+                serde_json::json!({"error": "user limit reached", "code": "policy.limit_exceeded", "hint": "contact your administrator or upgrade to Team"}),
+            ),
         ),
         AuthError::NoRolesResolved | AuthError::InsufficientScope => (
             StatusCode::FORBIDDEN,
-            serde_json::json!({"error": "insufficient permissions", "code": e.code()})
-                .to_string(),
+            axum::Json(serde_json::json!({"error": "insufficient permissions", "code": e.code()})),
         ),
         _ => (
             StatusCode::UNAUTHORIZED,
-            serde_json::json!({"error": "authentication failed", "code": "unauthorized"})
-                .to_string(),
+            axum::Json(
+                serde_json::json!({"error": "authentication failed", "code": "unauthorized"}),
+            ),
         ),
     }
 }
@@ -83,7 +85,7 @@ pub async fn auth_middleware(
     State(state): State<AppState>,
     mut req: Request,
     next: Next,
-) -> Result<Response, (StatusCode, String)> {
+) -> Result<Response, (StatusCode, axum::Json<serde_json::Value>)> {
     let token = req
         .headers()
         .get("authorization")
@@ -91,8 +93,9 @@ pub async fn auth_middleware(
         .and_then(|v| v.strip_prefix("Bearer "))
         .ok_or((
             StatusCode::UNAUTHORIZED,
-            serde_json::json!({"error": "authentication failed", "code": "unauthorized"})
-                .to_string(),
+            axum::Json(
+                serde_json::json!({"error": "authentication failed", "code": "unauthorized"}),
+            ),
         ))?;
 
     // H-17: Reject JWTs when OIDC is not active
@@ -396,7 +399,9 @@ pub async fn auth_middleware(
         if !path.starts_with("/api/agent/") && path != "/api/public-key" {
             return Err((
                 StatusCode::FORBIDDEN,
-                serde_json::json!({"error": "agent tokens cannot access this endpoint", "code": "forbidden"}).to_string(),
+                axum::Json(
+                    serde_json::json!({"error": "agent tokens cannot access this endpoint", "code": "forbidden"}),
+                ),
             ));
         }
     }
