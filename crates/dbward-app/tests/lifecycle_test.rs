@@ -1069,7 +1069,6 @@ impl TestHarness {
             result_channel: self.result_channel.clone(),
             uow: self.uow.clone(),
             notifier: self.notifier.clone(),
-            policy_repo: Arc::new(FakePolicyRepoForDispatch),
             clock: self.clock.clone(),
         }
     }

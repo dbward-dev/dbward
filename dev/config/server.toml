@@ -167,7 +167,7 @@ no_where_update = "off"
 database = "app"
 environment = "production"
 retention_days = 30
-delivery_mode = "store_only"
+delivery_mode = "both"
 access = ["requester"]
 
 [[notification_policies]]

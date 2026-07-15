@@ -16,7 +16,6 @@ pub struct ResumeRequest {
     pub uow: Arc<dyn UnitOfWork>,
     pub result_channel: Arc<dyn ResultChannel>,
     pub notifier: Arc<dyn Notifier>,
-    pub policy_repo: Arc<dyn PolicyRepo>,
     pub clock: Arc<dyn Clock>,
 }
 
@@ -142,15 +141,7 @@ impl ResumeRequest {
         }))?;
 
         // Pre-create result slot so subscribers can wait before agent completes
-        // M-21: Skip streaming slot if policy says StoreOnly
-        let delivery_mode = self
-            .policy_repo
-            .find_result_policy(&request.database, &request.environment)?
-            .map(|p| p.delivery_mode)
-            .unwrap_or_default();
-        if delivery_mode != dbward_domain::policies::DeliveryMode::StoreOnly {
-            self.result_channel.create_slot(&request.id);
-        }
+        self.result_channel.create_slot(&request.id);
 
         // Post-commit: best-effort notification
         self.notifier
@@ -209,125 +200,6 @@ mod tests {
             Ok(None)
         }
         async fn notify_all(&self) {}
-    }
-
-    struct FakePolicyRepo;
-    impl PolicyRepo for FakePolicyRepo {
-        fn create_workflow(&self, _: &dbward_domain::policies::Workflow) -> Result<(), AppError> {
-            Ok(())
-        }
-        fn get_workflow(
-            &self,
-            _: &str,
-        ) -> Result<Option<dbward_domain::policies::Workflow>, AppError> {
-            Ok(None)
-        }
-        fn list_workflows(&self) -> Result<Vec<dbward_domain::policies::Workflow>, AppError> {
-            Ok(vec![])
-        }
-        fn delete_workflow(&self, _: &str) -> Result<bool, AppError> {
-            Ok(true)
-        }
-        fn count_workflows(&self) -> Result<u32, AppError> {
-            Ok(0)
-        }
-        fn create_execution_policy(
-            &self,
-            _: &dbward_domain::policies::ExecutionPolicy,
-        ) -> Result<(), AppError> {
-            Ok(())
-        }
-        fn get_execution_policy(
-            &self,
-            _: &str,
-        ) -> Result<Option<dbward_domain::policies::ExecutionPolicy>, AppError> {
-            Ok(None)
-        }
-        fn list_execution_policies(
-            &self,
-        ) -> Result<Vec<dbward_domain::policies::ExecutionPolicy>, AppError> {
-            Ok(vec![])
-        }
-        fn delete_execution_policy(&self, _: &str) -> Result<bool, AppError> {
-            Ok(true)
-        }
-        fn find_result_policy(
-            &self,
-            _: &DatabaseName,
-            _: &Environment,
-        ) -> Result<Option<dbward_domain::policies::ResultPolicy>, AppError> {
-            Ok(None)
-        }
-        fn create_result_policy(
-            &self,
-            _: &dbward_domain::policies::ResultPolicy,
-        ) -> Result<(), AppError> {
-            Ok(())
-        }
-        fn get_result_policy(
-            &self,
-            _: &str,
-        ) -> Result<Option<dbward_domain::policies::ResultPolicy>, AppError> {
-            Ok(None)
-        }
-        fn list_result_policies(
-            &self,
-        ) -> Result<Vec<dbward_domain::policies::ResultPolicy>, AppError> {
-            Ok(vec![])
-        }
-        fn update_result_policy(
-            &self,
-            _: &dbward_domain::policies::ResultPolicy,
-        ) -> Result<bool, AppError> {
-            Ok(false)
-        }
-        fn delete_result_policy(&self, _: &str) -> Result<bool, AppError> {
-            Ok(false)
-        }
-        fn create_notification_policy(
-            &self,
-            _: &dbward_domain::policies::NotificationPolicy,
-        ) -> Result<(), AppError> {
-            Ok(())
-        }
-        fn get_notification_policy(
-            &self,
-            _: &str,
-        ) -> Result<Option<dbward_domain::policies::NotificationPolicy>, AppError> {
-            Ok(None)
-        }
-        fn list_notification_policies(
-            &self,
-        ) -> Result<Vec<dbward_domain::policies::NotificationPolicy>, AppError> {
-            Ok(vec![])
-        }
-        fn update_notification_policy(
-            &self,
-            _: &dbward_domain::policies::NotificationPolicy,
-        ) -> Result<bool, AppError> {
-            Ok(false)
-        }
-        fn delete_notification_policy(&self, _: &str) -> Result<bool, AppError> {
-            Ok(false)
-        }
-        fn create_role(&self, _: &dbward_domain::auth::RoleDefinition) -> Result<(), AppError> {
-            Ok(())
-        }
-        fn list_roles(&self) -> Result<Vec<dbward_domain::auth::RoleDefinition>, AppError> {
-            Ok(vec![])
-        }
-        fn get_roles_by_names(
-            &self,
-            _: &[String],
-        ) -> Result<Vec<dbward_domain::auth::RoleDefinition>, AppError> {
-            Ok(vec![])
-        }
-        fn delete_role(&self, _: &str) -> Result<bool, AppError> {
-            Ok(true)
-        }
-        fn count_roles(&self) -> Result<u32, AppError> {
-            Ok(0)
-        }
     }
 
     struct FakeDispatchReader {
@@ -497,7 +369,6 @@ mod tests {
             uow: Arc::new(NoopUnitOfWork),
             result_channel: Arc::new(FakeResultChannel),
             notifier: Arc::new(NoopNotifier),
-            policy_repo: Arc::new(FakePolicyRepo),
             clock: Arc::new(FixedClock::now_utc()),
         }
     }
@@ -751,7 +622,6 @@ mod tests {
             uow: Arc::new(NoopUnitOfWork),
             result_channel: Arc::new(FakeResultChannel),
             notifier: Arc::new(NoopNotifier),
-            policy_repo: Arc::new(FakePolicyRepo),
             clock: Arc::new(FixedClock(now)),
         };
 
@@ -789,7 +659,6 @@ mod tests {
             uow: Arc::new(NoopUnitOfWork),
             result_channel: Arc::new(FakeResultChannel),
             notifier: Arc::new(NoopNotifier),
-            policy_repo: Arc::new(FakePolicyRepo),
             clock: Arc::new(FixedClock::now_utc()),
         };
 
@@ -835,7 +704,6 @@ mod tests {
             uow: Arc::new(NoopUnitOfWork),
             result_channel: Arc::new(FakeResultChannel),
             notifier: Arc::new(NoopNotifier),
-            policy_repo: Arc::new(FakePolicyRepo),
             clock: Arc::new(FixedClock(now)),
         };
 
@@ -878,7 +746,6 @@ mod tests {
             uow: Arc::new(NoopUnitOfWork),
             result_channel: Arc::new(FakeResultChannel),
             notifier: Arc::new(NoopNotifier),
-            policy_repo: Arc::new(FakePolicyRepo),
             clock: Arc::new(FixedClock::now_utc()),
         };
 

@@ -8,7 +8,6 @@ use crate::values::{DatabaseName, Environment, Selector};
 pub enum DeliveryMode {
     #[default]
     Both,
-    StoreOnly,
     Stream,
 }
 

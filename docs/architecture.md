@@ -171,7 +171,7 @@ Control result access:
 
 | Field | Default | Description |
 |---|---|---|
-| `delivery_mode` | `direct` | How results are delivered |
+| `delivery_mode` | `both` | How results are delivered |
 | `access` | `["requester", "admin"]` | Roles that can access results |
 
 ### Notification Policies

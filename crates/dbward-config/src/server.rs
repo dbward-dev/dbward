@@ -310,10 +310,10 @@ impl ServerConfig {
         // Result policy delivery_mode validation
         for (i, rp) in self.result_policies.iter().enumerate() {
             match rp.delivery_mode.as_str() {
-                "both" | "store_only" | "stream" => {}
+                "both" | "stream" => {}
                 other => {
                     return Err(ConfigError::Validation(format!(
-                        "result_policies[{i}].delivery_mode: unknown value '{other}' (expected: both, store_only, stream)"
+                        "result_policies[{i}].delivery_mode: unknown value '{other}' (expected: both, stream)"
                     )));
                 }
             }
@@ -1269,7 +1269,7 @@ url = "https://example.com"
 database = "app"
 environment = "production"
 retention_days = 7
-delivery_mode = "store_only"
+delivery_mode = "both"
 access = ["requester", "role:admin"]
 "#,
         );

@@ -470,7 +470,6 @@ impl SyncPolicyOps for SqliteTxScope<'_> {
         let access_json = serde_json::to_string(&rp.access)
             .map_err(|e| AppError::Internal(format!("json: {e}")))?;
         let dm = match rp.delivery_mode {
-            dbward_domain::policies::DeliveryMode::StoreOnly => "store_only",
             dbward_domain::policies::DeliveryMode::Stream => "stream",
             dbward_domain::policies::DeliveryMode::Both => "both",
         };
