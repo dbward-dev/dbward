@@ -128,6 +128,7 @@ pub struct ListRequestsResponse {
 pub struct RequestSummary {
     pub id: String,
     pub status: RequestStatus,
+    #[serde(alias = "requester")]
     pub created_by: String,
     pub database: String,
     pub environment: String,
@@ -147,6 +148,7 @@ pub struct RequestSummary {
 pub struct RequestDetail {
     pub id: String,
     pub status: RequestStatus,
+    #[serde(alias = "requester")]
     pub created_by: String,
     pub database: String,
     pub environment: String,

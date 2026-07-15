@@ -408,6 +408,7 @@ pub async fn stream_result(
             stream_result::StreamResultData::Result(summary) => Ok((
                 StatusCode::OK,
                 Json(json!({
+                    "_dbward_result": true,
                     "execution_id": summary.execution_id,
                     "success": summary.success,
                     "rows_affected": summary.rows_affected,
