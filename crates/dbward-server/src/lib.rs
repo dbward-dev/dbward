@@ -47,15 +47,30 @@ fn build_role_definition(
         .permissions
         .iter()
         .map(|s| {
-            let perm: dbward_domain::auth::Permission = s
+            // Format: "perm_name" (default Own) or "perm_name:ownership"
+            let (perm_str, ownership) = if let Some(idx) = s.rfind(':') {
+                let (p, o) = s.split_at(idx);
+                let o_str = &o[1..];
+                match o_str.parse::<dbward_domain::auth::OwnershipScope>() {
+                    Ok(scope) => (p, scope),
+                    Err(_) => (s.as_str(), dbward_domain::auth::OwnershipScope::Own),
+                }
+            } else {
+                (s.as_str(), dbward_domain::auth::OwnershipScope::Own)
+            };
+            let perm: dbward_domain::auth::Permission = perm_str
                 .parse()
                 .map_err(|_| format!("role '{}': invalid permission '{}'", rc.name, s))?;
-            let ownership = if perm == dbward_domain::auth::Permission::All {
+            // `*` always means Any regardless of explicit suffix
+            let final_ownership = if perm == dbward_domain::auth::Permission::All {
                 dbward_domain::auth::OwnershipScope::Any
             } else {
-                dbward_domain::auth::OwnershipScope::Own
+                ownership
             };
-            Ok(dbward_domain::auth::PermissionEntry { perm, ownership })
+            Ok(dbward_domain::auth::PermissionEntry {
+                perm,
+                ownership: final_ownership,
+            })
         })
         .collect::<Result<Vec<_>, String>>()?;
     let databases = if rc.databases.is_empty() {
