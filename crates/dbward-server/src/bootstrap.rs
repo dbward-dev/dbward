@@ -10,7 +10,7 @@ use crate::state::AppState;
 pub fn create_bootstrap_token(
     state: &AppState,
     subject_id: &str,
-    role: &str,
+    roles: &[&str],
     is_agent: bool,
 ) -> Result<String, Box<dyn std::error::Error>> {
     let subject_type = if is_agent {
@@ -19,12 +19,12 @@ pub fn create_bootstrap_token(
         SubjectType::User
     };
 
-    // scope_ceiling: explicit role for user tokens, None for agent tokens.
+    // scope_ceiling: explicit roles for user tokens, None for agent tokens.
     let scope_ceiling = if is_agent {
         None
     } else {
         Some(dbward_domain::entities::ScopeCeiling {
-            roles: vec![role.to_string()],
+            roles: roles.iter().map(|r| r.to_string()).collect(),
         })
     };
 
@@ -183,8 +183,8 @@ pub fn auto_bootstrap(
     }
 
     // Create bootstrap tokens
-    let admin_token = create_bootstrap_token(state, "admin", "admin", false)?;
-    let agent_token = create_bootstrap_token(state, "agent", "agent-default", true)?;
+    let admin_token = create_bootstrap_token(state, "admin", &["admin", "requester"], false)?;
+    let agent_token = create_bootstrap_token(state, "agent", &["agent-default"], true)?;
 
     // Write token files (0600)
     write_token_file(&admin_token_path, &admin_token)?;
