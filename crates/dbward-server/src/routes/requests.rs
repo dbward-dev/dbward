@@ -377,7 +377,10 @@ pub async fn resume(
     );
     let uc = state.requests().resume();
 
-    let input = dbward_app::use_cases::resume_request::ResumeRequestInput { request_id: id };
+    let input = dbward_app::use_cases::resume_request::ResumeRequestInput {
+        request_id: id,
+        reason: None,
+    };
 
     match uc.execute(input, &user, &audit_ctx) {
         Ok(out) => Ok((

@@ -233,6 +233,7 @@ impl<'a> RequestUseCases<'a> {
         StreamResult {
             authorizer: s.authorizer.clone(),
             request_reader: s.request_reader.clone(),
+            approval_repo: s.approval_repo.clone(),
             result_channel: s.result_channel.clone(),
             policy_repo: s.policy_repo.clone(),
         }
@@ -243,6 +244,7 @@ impl<'a> RequestUseCases<'a> {
         GetResult {
             authorizer: s.authorizer.clone(),
             request_reader: s.request_reader.clone(),
+            approval_repo: s.approval_repo.clone(),
             agent_repo: s.agent_repo.clone(),
             result_store: s.result_store.clone(),
             policy_repo: s.policy_repo.clone(),

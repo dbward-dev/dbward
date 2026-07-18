@@ -50,10 +50,12 @@ fn build_role_definition(
             let perm: dbward_domain::auth::Permission = s
                 .parse()
                 .map_err(|_| format!("role '{}': invalid permission '{}'", rc.name, s))?;
-            Ok(dbward_domain::auth::PermissionEntry {
-                perm,
-                ownership: dbward_domain::auth::OwnershipScope::Own,
-            })
+            let ownership = if perm == dbward_domain::auth::Permission::All {
+                dbward_domain::auth::OwnershipScope::Any
+            } else {
+                dbward_domain::auth::OwnershipScope::Own
+            };
+            Ok(dbward_domain::auth::PermissionEntry { perm, ownership })
         })
         .collect::<Result<Vec<_>, String>>()?;
     let databases = if rc.databases.is_empty() {

@@ -62,6 +62,13 @@ impl CancelRequest {
             )
             .map_err(AppError::Forbidden)?;
 
+        // Non-owner cancel requires a reason
+        if user.subject_id != request.requester && input.reason.is_none() {
+            return Err(AppError::Validation(
+                "reason required for non-owner cancel".into(),
+            ));
+        }
+
         let now = self.clock.now();
         let result = status_machine::transition(
             request.status,

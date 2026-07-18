@@ -21,6 +21,7 @@ pub struct ResumeRequest {
 
 pub struct ResumeRequestInput {
     pub request_id: String,
+    pub reason: Option<String>,
 }
 
 #[derive(Debug)]
@@ -54,6 +55,13 @@ impl ResumeRequest {
                 },
             )
             .map_err(AppError::Forbidden)?;
+
+        // Non-owner resume requires a reason
+        if user.subject_id != request.requester && input.reason.is_none() {
+            return Err(AppError::Validation(
+                "reason required for non-owner resume".into(),
+            ));
+        }
 
         // 3. Status check via status_machine
         let now = self.clock.now();
@@ -394,6 +402,7 @@ mod tests {
             .execute(
                 ResumeRequestInput {
                     request_id: "req-001".into(),
+                    reason: None,
                 },
                 &user,
                 &dbward_domain::entities::AuditContext::System,
@@ -422,7 +431,8 @@ mod tests {
         assert!(matches!(
             uc.execute(
                 ResumeRequestInput {
-                    request_id: "req-001".into()
+                    request_id: "req-001".into(),
+                    reason: None,
                 },
                 &user,
                 &dbward_domain::entities::AuditContext::System
@@ -452,6 +462,7 @@ mod tests {
             .execute(
                 ResumeRequestInput {
                     request_id: "req-001".into(),
+                    reason: None,
                 },
                 &user,
                 &dbward_domain::entities::AuditContext::System,
@@ -575,6 +586,7 @@ mod tests {
     fn exec_input() -> ResumeRequestInput {
         ResumeRequestInput {
             request_id: "req-001".into(),
+            reason: None,
         }
     }
 

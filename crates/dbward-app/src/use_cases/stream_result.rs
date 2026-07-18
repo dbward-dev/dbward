@@ -9,6 +9,7 @@ use crate::ports::*;
 pub struct StreamResult {
     pub authorizer: Arc<dyn Authorizer>,
     pub request_reader: Arc<dyn RequestReader>,
+    pub approval_repo: Arc<dyn ApprovalRepo>,
     pub result_channel: Arc<dyn ResultChannel>,
     pub policy_repo: Arc<dyn PolicyRepo>,
 }
@@ -42,12 +43,27 @@ impl StreamResult {
             .get(&input.request_id)?
             .ok_or_else(|| AppError::NotFound("request not found".into()))?;
 
-        // Live stream access: only requester + admin + ResultPolicy.access (NOT share_with)
-        let policy_access: Vec<String> = self
+        // Live stream access: requester + share_with + ResultPolicy.access + approver selectors
+        let mut access_selectors = request.share_with.clone();
+        if let Some(policy) = self
             .policy_repo
             .find_result_policy(&request.database, &request.environment)?
-            .map(|p| p.access.iter().map(|s| s.to_string()).collect())
-            .unwrap_or_default();
+        {
+            for sel in &policy.access {
+                let s = sel.to_string();
+                if !access_selectors.contains(&s) {
+                    access_selectors.push(s);
+                }
+            }
+        }
+        // Include approvers so they can stream the result they approved
+        let approvals = self.approval_repo.get_approvals(&request.id)?;
+        for approval in &approvals {
+            let sel = format!("user:{}", approval.actor_id);
+            if !access_selectors.contains(&sel) {
+                access_selectors.push(sel);
+            }
+        }
         self.authorizer
             .authorize_scoped(
                 user,
@@ -56,7 +72,7 @@ impl StreamResult {
                 &request.environment,
                 &ResourceContext::Result {
                     requester_id: request.requester.clone(),
-                    access_selectors: policy_access,
+                    access_selectors,
                 },
             )
             .map_err(AppError::Forbidden)?;
@@ -107,6 +123,7 @@ impl StreamResult {
 mod tests {
     use super::*;
     use crate::error::AuthzError;
+    use crate::test_support::FakeApprovalRepo;
     use async_trait::async_trait;
     use dbward_domain::auth::{ResourceContext, SubjectType};
     use dbward_domain::entities::{Request as DomainRequest, RequestStatus};
@@ -402,6 +419,7 @@ mod tests {
         let uc = StreamResult {
             authorizer: Arc::new(AllowAll),
             request_reader: Arc::new(FakeRequestRepo::empty()),
+            approval_repo: Arc::new(FakeApprovalRepo::new()),
             result_channel: Arc::new(FakeResultChannel),
             policy_repo: Arc::new(FakePolicyRepo),
         };
@@ -422,6 +440,7 @@ mod tests {
         let uc = StreamResult {
             authorizer: Arc::new(AllowAll),
             request_reader: Arc::new(FakeRequestRepo::with_status(RequestStatus::Executed)),
+            approval_repo: Arc::new(FakeApprovalRepo::new()),
             result_channel: Arc::new(FakeResultChannel),
             policy_repo: Arc::new(FakePolicyRepo),
         };
@@ -446,6 +465,7 @@ mod tests {
         let uc = StreamResult {
             authorizer: Arc::new(AllowAll),
             request_reader: Arc::new(FakeRequestRepo::with_status(RequestStatus::Pending)),
+            approval_repo: Arc::new(FakeApprovalRepo::new()),
             result_channel: Arc::new(FakeResultChannel),
             policy_repo: Arc::new(FakePolicyRepo),
         };
@@ -467,6 +487,7 @@ mod tests {
         let uc = StreamResult {
             authorizer: Arc::new(AllowAll),
             request_reader: Arc::new(FakeRequestRepo::with_status(RequestStatus::Failed)),
+            approval_repo: Arc::new(FakeApprovalRepo::new()),
             result_channel: Arc::new(FakeResultChannel),
             policy_repo: Arc::new(FakePolicyRepo),
         };
@@ -491,6 +512,7 @@ mod tests {
         let uc = StreamResult {
             authorizer: Arc::new(AllowAll),
             request_reader: Arc::new(FakeRequestRepo::with_status(RequestStatus::Rejected)),
+            approval_repo: Arc::new(FakeApprovalRepo::new()),
             result_channel: Arc::new(FakeResultChannel),
             policy_repo: Arc::new(FakePolicyRepo),
         };

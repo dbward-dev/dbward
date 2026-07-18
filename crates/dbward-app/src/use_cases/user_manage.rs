@@ -1049,7 +1049,7 @@ mod tests {
             Ok(1)
         }
         fn get_roles(&self, _: &str) -> Result<Vec<String>, AppError> {
-            Ok(vec!["developer".into()])
+            Ok(vec!["requester".into()])
         }
         fn is_deleted(&self, _: &str) -> Result<bool, AppError> {
             Ok(false)

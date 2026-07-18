@@ -1090,7 +1090,7 @@ impl TestHarness {
 #[test]
 fn emergency_without_reason_rejected() {
     let h = TestHarness::new(Some(single_step_workflow()));
-    let requester = make_user("alice", &["developer"]);
+    let requester = make_user("alice", &["requester"]);
     let mut input = make_input();
     input.emergency = true;
     // No reason provided
@@ -1105,7 +1105,7 @@ fn emergency_without_reason_rejected() {
 #[test]
 fn emergency_request_skips_approval() {
     let h = TestHarness::new(Some(single_step_workflow()));
-    let requester = make_user("alice", &["developer"]);
+    let requester = make_user("alice", &["requester"]);
 
     let mut input = make_input();
     input.emergency = true;
@@ -1150,7 +1150,7 @@ fn auto_approved_request_dispatches_directly() {
         updated_at: None,
     };
     let h = TestHarness::new(Some(auto_wf));
-    let requester = make_user("alice", &["developer"]);
+    let requester = make_user("alice", &["requester"]);
 
     let created = h
         .create_uc()
@@ -1384,7 +1384,7 @@ impl RoleResolver for FakeRoleResolverForAgent {
         _: &[String],
     ) -> Result<Vec<dbward_domain::auth::ResolvedRole>, dbward_app::error::AuthError> {
         Ok(vec![dbward_domain::auth::ResolvedRole {
-            name: "developer".into(),
+            name: "requester".into(),
             permissions: Default::default(),
             databases: vec![],
             environments: vec![],
@@ -1412,7 +1412,7 @@ fn make_agent_user(id: &str) -> AuthUser {
 #[test]
 fn event_dispatcher_records_break_glass_auto_dispatch() {
     let h = TestHarness::new(None);
-    let requester = make_user("alice", &["developer"]);
+    let requester = make_user("alice", &["requester"]);
     let mut input = make_input();
     input.emergency = true;
     input.reason = Some("critical fix".into());
@@ -1456,7 +1456,7 @@ fn event_dispatcher_records_auto_approved_two_events() {
         updated_at: None,
     };
     let h = TestHarness::new(Some(auto_wf));
-    let requester = make_user("alice", &["developer"]);
+    let requester = make_user("alice", &["requester"]);
 
     let created = h
         .create_uc()
@@ -1475,7 +1475,7 @@ fn event_dispatcher_records_auto_approved_two_events() {
 #[test]
 fn no_workflow_configured_rejects_non_emergency() {
     let h = TestHarness::new(None); // PolicyEvaluator returns None
-    let requester = make_user("alice", &["developer"]);
+    let requester = make_user("alice", &["requester"]);
     let input = make_input(); // emergency = false
 
     let result = h.create_uc().execute(
@@ -1497,7 +1497,7 @@ fn no_workflow_configured_rejects_non_emergency() {
 #[test]
 fn no_workflow_configured_allows_break_glass() {
     let h = TestHarness::new(None); // PolicyEvaluator returns None
-    let requester = make_user("alice", &["developer"]);
+    let requester = make_user("alice", &["requester"]);
     let mut input = make_input();
     input.emergency = true;
     input.reason = Some("incident #999".into());
@@ -1795,7 +1795,7 @@ fn token_prefix_is_raw_4_to_12() {
 #[test]
 fn break_glass_ddl_drop_table_succeeds() {
     let h = TestHarness::new(Some(single_step_workflow()));
-    let requester = make_user("alice", &["developer"]);
+    let requester = make_user("alice", &["requester"]);
     let mut input = make_input();
     input.detail = "DROP TABLE broken_cache".into();
     input.emergency = true;
@@ -1816,7 +1816,7 @@ fn break_glass_ddl_drop_table_succeeds() {
 #[test]
 fn break_glass_ddl_without_allow_ddl_rejected_with_hint() {
     let h = TestHarness::new(Some(single_step_workflow()));
-    let requester = make_user("alice", &["developer"]);
+    let requester = make_user("alice", &["requester"]);
     let mut input = make_input();
     input.detail = "DROP TABLE t".into();
     input.emergency = true;
@@ -1836,7 +1836,7 @@ fn break_glass_ddl_without_allow_ddl_rejected_with_hint() {
 #[test]
 fn break_glass_ddl_allow_ddl_without_emergency_rejected() {
     let h = TestHarness::new(Some(single_step_workflow()));
-    let requester = make_user("alice", &["developer"]);
+    let requester = make_user("alice", &["requester"]);
     let mut input = make_input();
     input.detail = "DROP TABLE t".into();
     input.emergency = false;
@@ -1858,7 +1858,7 @@ fn break_glass_ddl_allow_ddl_without_emergency_rejected() {
 #[test]
 fn break_glass_ddl_grant_stays_rejected() {
     let h = TestHarness::new(Some(single_step_workflow()));
-    let requester = make_user("alice", &["developer"]);
+    let requester = make_user("alice", &["requester"]);
     let mut input = make_input();
     input.detail = "GRANT ALL ON users TO public".into();
     input.emergency = true;
@@ -1876,7 +1876,7 @@ fn break_glass_ddl_grant_stays_rejected() {
 #[test]
 fn break_glass_ddl_begin_stays_rejected() {
     let h = TestHarness::new(Some(single_step_workflow()));
-    let requester = make_user("alice", &["developer"]);
+    let requester = make_user("alice", &["requester"]);
     let mut input = make_input();
     input.detail = "BEGIN".into();
     input.emergency = true;
@@ -1894,7 +1894,7 @@ fn break_glass_ddl_begin_stays_rejected() {
 #[test]
 fn break_glass_ddl_mixed_batch_rejected() {
     let h = TestHarness::new(Some(single_step_workflow()));
-    let requester = make_user("alice", &["developer"]);
+    let requester = make_user("alice", &["requester"]);
     let mut input = make_input();
     input.detail = "DROP TABLE t; DELETE FROM users".into();
     input.emergency = true;
@@ -1912,7 +1912,7 @@ fn break_glass_ddl_mixed_batch_rejected() {
 #[test]
 fn break_glass_ddl_multi_stmt_repair_succeeds() {
     let h = TestHarness::new(Some(single_step_workflow()));
-    let requester = make_user("alice", &["developer"]);
+    let requester = make_user("alice", &["requester"]);
     let mut input = make_input();
     input.detail = "DROP TABLE t; CREATE TABLE t (id INT PRIMARY KEY)".into();
     input.emergency = true;
@@ -1933,7 +1933,7 @@ fn break_glass_ddl_multi_stmt_repair_succeeds() {
 #[test]
 fn break_glass_ddl_mcp_rejected() {
     let h = TestHarness::new(Some(single_step_workflow()));
-    let requester = make_user("alice", &["developer"]);
+    let requester = make_user("alice", &["requester"]);
     let mut input = make_input();
     input.detail = "DROP TABLE t".into();
     input.emergency = true;
@@ -1994,7 +1994,7 @@ fn break_glass_ddl_denied_without_permission() {
     let mut h = TestHarness::new(Some(single_step_workflow()));
     h.authorizer = Arc::new(DenyDdlBypass);
 
-    let requester = make_user("alice", &["developer"]);
+    let requester = make_user("alice", &["requester"]);
     let mut input = make_input();
     input.detail = "DROP TABLE t".into();
     input.emergency = true;

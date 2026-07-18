@@ -446,7 +446,7 @@ async fn admin_can_cancel_others_request() {
             "POST",
             &format!("/api/requests/{id}/cancel"),
             "admin-token",
-            serde_json::json!({}),
+            serde_json::json!({"reason": "administrative cancellation"}),
         ))
         .await
         .unwrap();

@@ -49,26 +49,21 @@ impl GetRequest {
             false
         };
 
-        let scoped_ok = self.authorizer.authorize_scoped(
-            user,
-            Permission::RequestView,
-            &req.database,
-            &req.environment,
-            &ResourceContext::RequestView {
-                requester_id: req.requester.clone(),
-                is_pending_approver,
-                has_approved,
-            },
-        );
+        self.authorizer
+            .authorize_scoped(
+                user,
+                Permission::RequestView,
+                &req.database,
+                &req.environment,
+                &ResourceContext::RequestView {
+                    requester_id: req.requester.clone(),
+                    is_pending_approver,
+                    has_approved,
+                },
+            )
+            .map_err(AppError::Forbidden)?;
 
-        let is_approver_view = if let Err(authz_err) = scoped_ok {
-            if !is_pending_approver && !has_approved {
-                return Err(AppError::Forbidden(authz_err));
-            }
-            true
-        } else {
-            false
-        };
+        let is_approver_view = is_pending_approver || has_approved;
 
         let detail = req.detail.clone();
 
@@ -190,6 +185,8 @@ mod tests {
 
     struct AllowAuthorizer;
     struct DenyAuthorizer;
+    /// Authorizer that respects RequestView relationship fields
+    struct RequestViewAwareAuthorizer;
 
     impl Authorizer for AllowAuthorizer {
         fn authorize_scoped(
@@ -224,6 +221,48 @@ mod tests {
             _: &Environment,
             _: &ResourceContext,
         ) -> Result<(), AuthzError> {
+            Err(AuthzError::Forbidden {
+                permission: Permission::RequestView,
+                reason: "denied".into(),
+            })
+        }
+        fn authorize_global(&self, _: &AuthUser, _: Permission) -> Result<(), AuthzError> {
+            Err(AuthzError::Forbidden {
+                permission: Permission::RequestView,
+                reason: "denied".into(),
+            })
+        }
+        fn authorize_approval(
+            &self,
+            _: &AuthUser,
+            _: &DatabaseName,
+            _: &Environment,
+            _: &ResourceContext,
+        ) -> Result<(), AuthzError> {
+            Err(AuthzError::Forbidden {
+                permission: Permission::RequestView,
+                reason: "denied".into(),
+            })
+        }
+    }
+    impl Authorizer for RequestViewAwareAuthorizer {
+        fn authorize_scoped(
+            &self,
+            _: &AuthUser,
+            _: Permission,
+            _: &DatabaseName,
+            _: &Environment,
+            ctx: &ResourceContext,
+        ) -> Result<(), AuthzError> {
+            if let ResourceContext::RequestView {
+                is_pending_approver,
+                has_approved,
+                ..
+            } = ctx
+                && (*is_pending_approver || *has_approved)
+            {
+                return Ok(());
+            }
             Err(AuthzError::Forbidden {
                 permission: Permission::RequestView,
                 reason: "denied".into(),
@@ -345,7 +384,7 @@ mod tests {
                 is_approver: true,
             }),
             approval_repo: Arc::new(FakeApprovalRepo::new()),
-            authorizer: Arc::new(DenyAuthorizer),
+            authorizer: Arc::new(RequestViewAwareAuthorizer),
             context_repo: Arc::new(FakeContextRepo),
         };
         let out = uc.execute("req-1", &test_user("u2")).unwrap();

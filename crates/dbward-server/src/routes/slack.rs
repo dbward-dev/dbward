@@ -901,6 +901,7 @@ async fn handle_resume_submission(state: &AppState, payload: &serde_json::Value)
     let uc = state.requests().resume();
     let input = dbward_app::use_cases::resume_request::ResumeRequestInput {
         request_id: request_id.clone(),
+        reason: None,
     };
     let audit_ctx =
         dbward_domain::entities::AuditContext::Request(dbward_domain::entities::ClientInfo {

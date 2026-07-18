@@ -83,6 +83,7 @@ impl McpBackend for ServerMcpBackend {
         let resume_output = match self.state.requests().resume().execute(
             ResumeRequestInput {
                 request_id: request_id.into(),
+                reason: None,
             },
             user,
             &ctx,
@@ -328,6 +329,7 @@ impl McpBackend for ServerMcpBackend {
         if output.status != RequestStatus::Pending {
             let resume_input = ResumeRequestInput {
                 request_id: output.id.clone(),
+                reason: None,
             };
             match self
                 .state

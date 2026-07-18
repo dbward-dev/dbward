@@ -180,7 +180,7 @@ fn user_get_list_activate() {
         display_name: Some("Alice".into()),
         email: Some("alice@example.com".into()),
         groups: vec!["backend".into()],
-        roles: vec!["developer".into()],
+        roles: vec!["requester".into()],
         status: UserStatus::Active,
         last_seen_at: None,
         created_at: Utc::now(),

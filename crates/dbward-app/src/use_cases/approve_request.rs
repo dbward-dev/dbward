@@ -769,7 +769,7 @@ mod tests {
         let reader = Arc::new(FakeRequestReader::with_request(make_pending_request(&wf)));
         let approval = Arc::new(FakeApprovalRepo::new());
         let uc = make_uc(reader, approval);
-        let user = make_user("bob", &["developer"]); // no dba role
+        let user = make_user("bob", &["requester"]); // no dba role
 
         let result = uc.execute(
             ApproveRequestInput {

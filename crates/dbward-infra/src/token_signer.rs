@@ -127,7 +127,7 @@ mod tests {
             environment: "production".into(),
             database: "app".into(),
             detail_hash: "abc123".into(),
-            requester_role: "developer".into(),
+            requester_role: "requester".into(),
             requester: "alice".into(),
         };
         let token_json = signer.sign(&claims);
@@ -205,7 +205,7 @@ mod tests {
             environment: "production".into(),
             database: "app".into(),
             detail_hash: "hash123".into(),
-            requester_role: "developer".into(),
+            requester_role: "requester".into(),
             requester: "alice".into(),
         };
         let token_json = signer.sign(&claims);
@@ -245,7 +245,7 @@ mod tests {
             environment: "production".into(),
             database: "app".into(),
             detail_hash: "correct_hash".into(),
-            requester_role: "developer".into(),
+            requester_role: "requester".into(),
             requester: "alice".into(),
         };
         let token_json = signer.sign(&claims);
@@ -285,7 +285,7 @@ mod tests {
             environment: "staging".into(),
             database: "app".into(),
             detail_hash: "hash456".into(),
-            requester_role: "developer".into(),
+            requester_role: "requester".into(),
             requester: "alice".into(),
         };
         let token_json = signer.sign(&claims);
@@ -325,7 +325,7 @@ mod tests {
             environment: "staging".into(),
             database: "app".into(),
             detail_hash: "hash789".into(),
-            requester_role: "developer".into(),
+            requester_role: "requester".into(),
             requester: "alice".into(),
         };
         let token_json = signer.sign(&claims);

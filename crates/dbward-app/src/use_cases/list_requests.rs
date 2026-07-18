@@ -412,7 +412,7 @@ mod tests {
             request_reader: Arc::new(FakeListReader::new(requests)),
             authorizer: Arc::new(AllowAll),
         };
-        let user = make_user("alice", &["developer"]);
+        let user = make_user("alice", &["requester"]);
         let out = uc
             .execute(
                 ListRequestsInput {

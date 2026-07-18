@@ -140,7 +140,7 @@ impl GetSchema {
                     .authorizer
                     .authorize_scoped(
                         user,
-                        Permission::RequestView,
+                        Permission::SchemaRead,
                         &db_name,
                         &env_val,
                         &ResourceContext::Global,
@@ -153,7 +153,7 @@ impl GetSchema {
         }
         if any_ready {
             Err(AppError::Forbidden(crate::error::AuthzError::Forbidden {
-                permission: Permission::RequestView,
+                permission: Permission::SchemaRead,
                 reason: "no authorized environment".into(),
             }))
         } else {

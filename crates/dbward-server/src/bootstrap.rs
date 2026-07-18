@@ -151,7 +151,7 @@ pub fn auto_bootstrap(
     } else if count > 0 {
         // Partial state (1-2 tokens) — fail-closed
         return Err(format!(
-            "incomplete bootstrap state: {count}/3 tokens found.\n  \
+            "incomplete bootstrap state: {count}/2 tokens found.\n  \
              Run with --force-bootstrap to reset and regenerate tokens."
         )
         .into());
