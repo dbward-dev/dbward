@@ -128,4 +128,56 @@ if [ -n "${OPERATOR_TOKEN:-}" ] && [ -n "$DEV_TOKEN" ]; then
   fi
 fi
 
+# --- 5. Break-glass boundary: operator vs admin ---
+echo ""
+echo "--- Break-glass boundary ---"
+
+# Admin alone cannot break-glass (no request.break_glass_*)
+ADMIN_ONLY_TOKEN=$(create_token "sec-admin-only" admin)
+if [ -n "$ADMIN_ONLY_TOKEN" ]; then
+  STATUS=$(api_status POST /api/requests "$ADMIN_ONLY_TOKEN" \
+    -d '{"operation":"execute_select","environment":"production","database":"app","detail":"SELECT 1","emergency":true,"reason":"admin emergency"}')
+  [ "$STATUS" = "403" ] && pass "Admin alone cannot break-glass (403)" || fail "Admin break-glass" "got $STATUS"
+fi
+
+# Operator alone can break-glass
+OPERATOR_ONLY_TOKEN=$(create_token "sec-operator-only" operator)
+if [ -n "$OPERATOR_ONLY_TOKEN" ]; then
+  STATUS=$(api_status POST /api/requests "$OPERATOR_ONLY_TOKEN" \
+    -d '{"operation":"execute_select","environment":"production","database":"app","detail":"SELECT 1","emergency":true,"reason":"operator emergency"}')
+  [ "$STATUS" = "201" ] && pass "Operator alone can break-glass (201)" || fail "Operator break-glass" "got $STATUS"
+fi
+
+# --- 6. Approval is selector-only (no system role dependency) ---
+echo ""
+echo "--- Selector-only approval ---"
+
+# Create a request from dev
+REQ_FOR_APPROVAL=$(api POST /api/requests "$DEV_TOKEN" \
+  -d '{"operation":"execute_query","environment":"production","database":"app","detail":"SELECT 2","reason":"selector test"}' | json_field id)
+
+if [ -n "$REQ_FOR_APPROVAL" ]; then
+  # User with NO system role but matching group selector can approve
+  # workflow for production requires group:backend-team or group:dba-team
+  PLAIN_USER_TOKEN=$(create_token "sec-plain-approver" requester --groups backend-team)
+  if [ -n "$PLAIN_USER_TOKEN" ]; then
+    STATUS=$(api_status POST "/api/requests/$REQ_FOR_APPROVAL/approve" "$PLAIN_USER_TOKEN" \
+      -d '{"comment":"selector-only"}')
+    [ "$STATUS" = "200" ] && pass "Plain user with matching selector can approve" || fail "Selector approve" "got $STATUS"
+  fi
+
+  # User with admin role but NO matching selector cannot approve
+  REQ2=$(api POST /api/requests "$DEV_TOKEN" \
+    -d '{"operation":"execute_query","environment":"production","database":"app","detail":"SELECT 3","reason":"selector test 2"}' | json_field id)
+  if [ -n "$REQ2" ]; then
+    # admin without backend-team or dba-team group
+    ADMIN_NO_GROUP_TOKEN=$(create_token "sec-admin-no-group" admin)
+    if [ -n "$ADMIN_NO_GROUP_TOKEN" ]; then
+      STATUS=$(api_status POST "/api/requests/$REQ2/approve" "$ADMIN_NO_GROUP_TOKEN" \
+        -d '{"comment":"should fail"}')
+      [ "$STATUS" = "403" ] && pass "Admin without matching selector cannot approve (403)" || fail "Admin no-selector approve" "got $STATUS"
+    fi
+  fi
+fi
+
 summary
