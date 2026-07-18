@@ -169,7 +169,7 @@ create_token() {
         local -a rm_arr=()
         for g in $all_groups_raw; do
           local keep=false
-          for rg in "${all_groups[@]}"; do
+          for rg in "${all_groups[@]+"${all_groups[@]}"}"; do
             [ "$g" = "$rg" ] && keep=true && break
           done
           [ "$keep" = "false" ] && rm_arr+=("$g")
@@ -195,14 +195,14 @@ create_token() {
     # Build scope_ceiling: include requested role + approver (default_role) to ensure resolve ∩ ceiling is non-empty
     local ceiling_roles="\"$role\""
     if [ "$role" = "admin" ]; then
-      ceiling_roles="\"admin\",\"slack-user\",\"requester\",\"approver\""
+      ceiling_roles="\"admin\",\"requester\",\"approver\""
     elif [ "$role" != "approver" ]; then
       ceiling_roles="\"$role\",\"approver\""
     fi
-    result=$(curl -sf -X POST "${SERVER_URL}/api/tokens" \
+    # Use reissue-initial-token (creating tokens for others is not allowed)
+    result=$(curl -sf -X POST "${SERVER_URL}/api/users/${user}/reissue-initial-token" \
       -H "Authorization: Bearer $admin_token" \
-      -H "Content-Type: application/json" \
-      -d "{\"subject_id\":\"$user\",\"scope_ceiling\":{\"roles\":[$ceiling_roles]},\"subject_type\":\"$subject_type\"}" 2>&1) || true
+      -H "Content-Type: application/json" 2>&1) || true
   fi
   local token
   token=$(echo "$result" | grep -o '"token":"[^"]*"' | sed 's/"token":"//;s/"//')
