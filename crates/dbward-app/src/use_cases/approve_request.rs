@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use dbward_domain::auth::{AuthUser, Permission, ResourceContext};
+use dbward_domain::auth::{AuthUser, ResourceContext};
 use dbward_domain::entities::{Approval, ApprovalAction, RequestStatus};
 use dbward_domain::policies::workflow::Workflow;
 use dbward_domain::services::status_machine::{
@@ -207,8 +207,7 @@ impl ApproveRequest {
                 wf_allow_self,
                 wf_allow_cross,
             ) {
-                return Err(AppError::Forbidden(AuthzError::Forbidden {
-                    permission: Permission::RequestView,
+                return Err(AppError::Forbidden(AuthzError::ApprovalDenied {
                     reason: "not eligible to approve this step (recheck)".into(),
                 }));
             }
@@ -264,8 +263,7 @@ impl ApproveRequest {
                 // Auto-select
                 match all_matched.len() {
                     0 => {
-                        return Err(AppError::Forbidden(AuthzError::Forbidden {
-                            permission: Permission::RequestView,
+                        return Err(AppError::Forbidden(AuthzError::ApprovalDenied {
                             reason: "not eligible to approve this step".into(),
                         }));
                     }
@@ -425,7 +423,7 @@ mod tests {
     use super::*;
     use crate::test_support::*;
     use chrono::Utc;
-    use dbward_domain::auth::{OwnershipScope, ResolvedRole, SubjectType};
+    use dbward_domain::auth::{OwnershipScope, Permission, ResolvedRole, SubjectType};
     use dbward_domain::entities::Request;
     use dbward_domain::policies::workflow::{ApproverGroup, WorkflowStep, WorkflowStepMode};
     use dbward_domain::values::{DatabaseName, Environment, Operation, Selector};

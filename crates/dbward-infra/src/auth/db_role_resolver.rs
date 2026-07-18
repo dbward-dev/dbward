@@ -469,8 +469,8 @@ impl RoleResolver for DbRoleResolver {
 
 fn builtin_roles() -> Vec<(String, ResolvedRole)> {
     use dbward_domain::auth::OwnershipScope;
-    let wildcard_db = DatabaseName::new("*").unwrap();
-    let wildcard_env = Environment::new("*").unwrap();
+    let wildcard_db = DatabaseName::wildcard();
+    let wildcard_env = Environment::wildcard();
     vec![
         (
             "requester".to_string(),

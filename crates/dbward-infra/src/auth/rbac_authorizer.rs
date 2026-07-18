@@ -77,8 +77,7 @@ impl Authorizer for RbacAuthorizer {
     ) -> Result<(), AuthzError> {
         // Agent tokens cannot approve
         if user.subject_type == SubjectType::Agent {
-            return Err(AuthzError::Forbidden {
-                permission: Permission::RequestView, // placeholder
+            return Err(AuthzError::ApprovalDenied {
                 reason: "agent tokens cannot approve".into(),
             });
         }

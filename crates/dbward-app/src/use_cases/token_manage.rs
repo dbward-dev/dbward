@@ -343,8 +343,9 @@ impl TokenManage {
             .authorize_scoped(
                 user,
                 Permission::TokenRevoke,
-                &DatabaseName::new("*").unwrap(),
-                &Environment::new("*").unwrap(),
+                // SAFETY: "*" is always valid for DatabaseName/Environment
+                &DatabaseName::wildcard(),
+                &Environment::wildcard(),
                 &ResourceContext::Token {
                     owner_id: token.subject_id.clone(),
                 },
@@ -381,7 +382,7 @@ impl TokenManage {
         target_user_id: &str,
         user: &AuthUser,
     ) -> Result<ReissueInitialOutput, AppError> {
-        // Authorization: token.manage required
+        // Authorization
         self.authorizer
             .authorize_global(user, Permission::TokenReissue)
             .map_err(AppError::Forbidden)?;
