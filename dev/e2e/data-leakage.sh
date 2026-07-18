@@ -13,6 +13,8 @@ echo ""
 
 ADMIN_TOKEN=$(create_token e2e-leak-admin admin)
 DEV_TOKEN=$(create_token e2e-leak-dev requester)
+# Operator token to verify request visibility (has request.view:Any)
+OPERATOR_TOKEN=$(create_token e2e-leak-operator operator)
 [ -z "$ADMIN_TOKEN" ] && { echo "Failed to create tokens"; exit 1; }
 
 # --- Token hash not exposed in list API (SEC-1) ---
@@ -72,9 +74,9 @@ REQ_ID=$(echo "$RESP" | json_field id)
 
 if [ -n "$REQ_ID" ]; then
   # Another requester should see it (same org) but approver should have limited view
-  # Admin should see full detail
-  ADMIN_VIEW=$(api GET "/api/requests/$REQ_ID" "$ADMIN_TOKEN" | json_field detail)
-  [ -n "$ADMIN_VIEW" ] && pass "Admin can view request detail" || fail "Admin view" "no detail field"
+  # Operator should see full detail (has request.view:Any)
+  OPERATOR_VIEW=$(api GET "/api/requests/$REQ_ID" "$OPERATOR_TOKEN" | json_field detail)
+  [ -n "$OPERATOR_VIEW" ] && pass "Operator can view request detail" || fail "Operator view" "no detail field"
 fi
 
 # --- Health endpoint does not leak version details beyond header ---

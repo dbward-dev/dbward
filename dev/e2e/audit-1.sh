@@ -47,8 +47,13 @@ if [ "$APPROVE1_STATUS" = "pending" ]; then
   ADMIN2_TOKEN=$(create_token carol admin --groups dba-team)
   APPROVE2=$(api POST "/api/requests/$REQ_ID/approve" "$ADMIN2_TOKEN" -d '{"comment":"step 2"}')
   APPROVE2_STATUS=$(echo "$APPROVE2" | json_field status)
-  [ "$APPROVE2_STATUS" = "dispatched" ] && pass "Approve step 2 → dispatched" || fail "Approve step 2" "$APPROVE2_STATUS"
+  [ "$APPROVE2_STATUS" = "approved" ] && pass "Approve step 2 → approved" || fail "Approve step 2" "got: $APPROVE2_STATUS"
 fi
+
+# Resume (manual dispatch)
+RESUME=$(api POST "/api/requests/$REQ_ID/resume" "$DEV_TOKEN")
+RESUME_STATUS=$(echo "$RESUME" | json_field status)
+[ "$RESUME_STATUS" = "dispatched" ] && pass "Resume → dispatched" || fail "Resume" "got: $RESUME_STATUS"
 
 # Wait for agent to claim + execute
 sleep 5

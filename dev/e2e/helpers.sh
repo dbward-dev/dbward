@@ -119,9 +119,11 @@ show_server_logs() {
 
 # Create API token via dbward-server CLI (PR#16+ format)
 # Tracks created tokens for cleanup via temp file
+# Usage: create_token <user_id> <roles> [--groups g1,g2] [--agent]
+#   roles: comma-separated, e.g. "admin,operator" or "requester"
 CREATED_TOKENS_FILE=$(mktemp)
 create_token() {
-  local user=$1 role=$2
+  local user=$1 roles_str=$2
   shift 2
   local extra_args=""
   local -a all_groups=()
@@ -138,7 +140,13 @@ create_token() {
       *) shift ;;
     esac
   done
-  # Build JSON array from collected groups
+  # Build JSON arrays from roles_str (comma-separated) and groups
+  local -a role_arr=()
+  local OLD_IFS="$IFS"
+  IFS=','
+  for r in $roles_str; do role_arr+=("$r"); done
+  IFS="$OLD_IFS"
+  local roles_json="[$(printf '"%s",' "${role_arr[@]}" | sed 's/,$//')]"
   local groups_json="[]"
   if [ ${#all_groups[@]} -gt 0 ]; then
     groups_json="[$(printf '"%s",' "${all_groups[@]}" | sed 's/,$//')]"
@@ -156,7 +164,7 @@ create_token() {
     create_status=$(curl -s -o /dev/null -w "%{http_code}" -X POST "${SERVER_URL}/api/users" \
       -H "Authorization: Bearer $admin_token" \
       -H "Content-Type: application/json" \
-      -d "{\"id\":\"$user\",\"roles\":[\"$role\"],\"groups\":$groups_json}" 2>/dev/null)
+      -d "{\"id\":\"$user\",\"roles\":$roles_json,\"groups\":$groups_json}" 2>/dev/null)
     if [ "$create_status" = "409" ]; then
       # User exists — converge to exact desired roles/groups state
       # Get all defined groups to compute rm_groups = all_groups - requested_groups
@@ -181,7 +189,7 @@ create_token() {
       curl -sf -X PATCH "${SERVER_URL}/api/users/${user}" \
         -H "Authorization: Bearer $admin_token" \
         -H "Content-Type: application/json" \
-        -d "{\"roles\":[\"$role\"],\"add_groups\":$groups_json,\"rm_groups\":$rm_json}" >/dev/null 2>&1 || true
+        -d "{\"roles\":$roles_json,\"add_groups\":$groups_json,\"rm_groups\":$rm_json}" >/dev/null 2>&1 || true
     fi
   fi
   local result
@@ -192,13 +200,6 @@ create_token() {
       -H "Content-Type: application/json" \
       -d "{\"subject_id\":\"$user\",\"subject_type\":\"agent\"}" 2>&1) || true
   else
-    # Build scope_ceiling: include requested role + approver (default_role) to ensure resolve ∩ ceiling is non-empty
-    local ceiling_roles="\"$role\""
-    if [ "$role" = "admin" ]; then
-      ceiling_roles="\"admin\",\"requester\",\"approver\""
-    elif [ "$role" != "approver" ]; then
-      ceiling_roles="\"$role\",\"approver\""
-    fi
     # Use reissue-initial-token (creating tokens for others is not allowed)
     result=$(curl -sf -X POST "${SERVER_URL}/api/users/${user}/reissue-initial-token" \
       -H "Authorization: Bearer $admin_token" \

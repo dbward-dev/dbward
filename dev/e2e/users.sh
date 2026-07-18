@@ -21,10 +21,10 @@ echo "--- Readonly user ---"
 READONLY_TOKEN=$(create_token "um-ro-$TS" approver)
 [ -n "$READONLY_TOKEN" ] && pass "Created approver token" || fail "Token creation failed" ""
 
-# --- 2. Readonly can SELECT ---
+# --- 2. Approver cannot create SELECT (no request.query) ---
 STATUS=$(api_status POST /api/requests "$READONLY_TOKEN" \
   -d '{"operation":"execute_query","environment":"development","database":"app","detail":"SELECT 1"}')
-[ "$STATUS" = "201" ] && pass "Readonly can create SELECT (201)" || fail "Readonly SELECT" "got $STATUS"
+[ "$STATUS" = "403" ] && pass "Approver cannot create SELECT (403)" || fail "Approver SELECT" "got $STATUS"
 
 # --- 3. Readonly cannot DML (use WHERE clause to pass SQL review, hit authz) ---
 STATUS=$(api_status POST /api/requests "$READONLY_TOKEN" \
@@ -36,10 +36,10 @@ STATUS=$(api_status POST /api/requests "$READONLY_TOKEN" \
   -d '{"operation":"migrate_up","environment":"development","database":"app","detail":"{}"}')
 [ "$STATUS" = "403" ] && pass "Readonly cannot migrate (403)" || fail "Readonly migrate" "got $STATUS"
 
-# --- 5. Readonly can create SELECT with share_with ---
+# --- 5. Approver cannot create SELECT with share_with either ---
 STATUS=$(api_status POST /api/requests "$READONLY_TOKEN" \
   -d '{"operation":"execute_query","environment":"development","database":"app","detail":"SELECT 1","share_with":["group:all"]}')
-[ "$STATUS" = "201" ] && pass "Readonly can create SELECT with share_with (201)" || fail "Readonly share" "got $STATUS"
+[ "$STATUS" = "403" ] && pass "Approver cannot create SELECT with share_with (403)" || fail "Approver share" "got $STATUS"
 
 # --- 6. Readonly cannot read audit (no AuditView permission) ---
 STATUS=$(api_status GET "/api/audit/events" "$READONLY_TOKEN")

@@ -13,8 +13,11 @@ echo "=== E2E Lifecycle Tests ==="
 echo ""
 
 # Create tokens
-ADMIN_BACKEND=$(create_token alice admin --groups backend-team)
+# alice: admin + operator (system management + break-glass + audit)
+ADMIN_BACKEND=$(create_token alice admin,operator --groups backend-team)
+# carol: admin (system management, approves via dba-team group selector)
 ADMIN_DBA=$(create_token carol admin --groups dba-team)
+# bob: requester (creates requests)
 DEV_TOKEN=$(create_token bob requester)
 
 [ -z "$ADMIN_BACKEND" ] && { echo "Failed to create admin token"; exit 1; }
@@ -114,11 +117,11 @@ echo "--- Idempotency ---"
 
 IDEM_KEY="e2e-test-$(date +%s)"
 REQ1=$(api POST /api/requests "$DEV_TOKEN" \
-  -d "{\"operation\":\"execute_select\",\"environment\":\"development\",\"database\":\"app\",\"detail\":\"SELECT 1\",\"idempotency_key\":\"$IDEM_KEY\"}")
+  -d "{\"operation\":\"execute_select\",\"environment\":\"development\",\"database\":\"app\",\"detail\":\"SELECT 42\",\"idempotency_key\":\"$IDEM_KEY\"}")
 ID1=$(echo "$REQ1" | json_field id)
 
 REQ2=$(api POST /api/requests "$DEV_TOKEN" \
-  -d "{\"operation\":\"execute_select\",\"environment\":\"development\",\"database\":\"app\",\"detail\":\"SELECT 2\",\"idempotency_key\":\"$IDEM_KEY\"}")
+  -d "{\"operation\":\"execute_select\",\"environment\":\"development\",\"database\":\"app\",\"detail\":\"SELECT 42\",\"idempotency_key\":\"$IDEM_KEY\"}")
 ID2=$(echo "$REQ2" | json_field id)
 IDEM=$(echo "$REQ2" | python3 -c "import sys,json; v=json.load(sys.stdin).get('idempotent',''); print('true' if v else 'false')")
 

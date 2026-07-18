@@ -51,11 +51,11 @@ echo ""
 echo "--- Role enforcement tests ---"
 
 if [ -n "$ADMIN_TOKEN" ]; then
-  # Admin can list all
+  # Admin cannot list requests (no request.view in new model)
   STATUS=$(api_status GET /api/requests "$ADMIN_TOKEN")
-  [ "$STATUS" = "200" ] && pass "Admin can list requests" || fail "Admin list" "got $STATUS"
+  [ "$STATUS" = "403" ] && pass "Admin cannot list requests (no request.view)" || fail "Admin list" "got $STATUS"
 
-  # Admin can CRUD policies
+  # Admin can CRUD policies/workflows
   STATUS=$(api_status GET /api/workflows "$ADMIN_TOKEN")
   [ "$STATUS" = "200" ] && pass "Admin can list workflows" || fail "Admin workflows" "got $STATUS"
 
@@ -74,17 +74,17 @@ if [ -n "$DEV_TOKEN" ]; then
 fi
 
 if [ -n "${READONLY_TOKEN:-}" ]; then
-  # Readonly can create SELECT request
+  # Approver cannot create SELECT request (no request.query permission)
   STATUS=$(api_status POST /api/requests "$READONLY_TOKEN" -d '{"operation":"execute_query","environment":"development","database":"app","detail":"SELECT 1"}')
-  [ "$STATUS" = "201" ] && pass "Readonly can create SELECT request" || fail "Readonly create SELECT" "got $STATUS"
+  [ "$STATUS" = "403" ] && pass "Approver cannot create SELECT request (no request.query)" || fail "Approver create SELECT" "got $STATUS"
 
-  # Readonly cannot create DML request (use WHERE clause to pass SQL review, hit authz)
+  # Approver cannot create DML request
   STATUS=$(api_status POST /api/requests "$READONLY_TOKEN" -d '{"operation":"execute_dml","environment":"development","database":"app","detail":"DELETE FROM users WHERE id = 999"}')
-  [ "$STATUS" = "403" ] && pass "Readonly cannot create DML request" || fail "Readonly create DML" "got $STATUS"
+  [ "$STATUS" = "403" ] && pass "Approver cannot create DML request" || fail "Approver create DML" "got $STATUS"
 
-  # Readonly can read own audit
+  # Approver cannot read audit (no audit.read)
   STATUS=$(api_status GET "/api/audit/events?user=e2e-readonly" "$READONLY_TOKEN")
-  [ "$STATUS" = "403" ] && pass "Readonly cannot read audit (no AuditView)" || fail "Readonly audit" "got $STATUS"
+  [ "$STATUS" = "403" ] && pass "Approver cannot read audit (no audit.read)" || fail "Approver audit" "got $STATUS"
 fi
 
 if [ -n "${AGENT_TOKEN:-}" ]; then
@@ -109,15 +109,22 @@ fi
 echo ""
 echo "--- Cross-role isolation ---"
 
-if [ -n "$ADMIN_TOKEN" ] && [ -n "$DEV_TOKEN" ]; then
-  # Dev creates request, other dev cannot see it
+# Create an operator token to test request visibility (operator has request.view:Any)
+OPERATOR_TOKEN=$(create_token e2e-operator operator)
+
+if [ -n "${OPERATOR_TOKEN:-}" ] && [ -n "$DEV_TOKEN" ]; then
+  # Dev creates request, operator can see it (request.view:Any)
   REQ_ID=$(api POST /api/requests "$DEV_TOKEN" -d '{"operation":"execute_query","environment":"production","detail":"SELECT 1","database":"default","reason":"security test"}' | json_field id)
   if [ -n "$REQ_ID" ]; then
     pass "Developer created request: ${REQ_ID:0:8}"
 
-    # Admin can see it
+    # Operator can see it (has request.view:Any)
+    STATUS=$(api_status GET "/api/requests/$REQ_ID" "$OPERATOR_TOKEN")
+    [ "$STATUS" = "200" ] && pass "Operator can see requester's request (request.view:Any)" || fail "Operator get dev request" "got $STATUS"
+
+    # Admin cannot see it (no request.view)
     STATUS=$(api_status GET "/api/requests/$REQ_ID" "$ADMIN_TOKEN")
-    [ "$STATUS" = "200" ] && pass "Admin can see requester's request" || fail "Admin get dev request" "got $STATUS"
+    [ "$STATUS" = "403" ] && pass "Admin cannot see requester's request (no request.view)" || fail "Admin get dev request" "got $STATUS"
   fi
 fi
 

@@ -19,9 +19,9 @@ AGENT_TOKEN=$(create_token e2e-authz-agent agent-default --agent)
 # --- Self-approval ---
 echo "--- Self-approval prevention ---"
 
-# Developer creates a request
+# Developer creates a request (production requires approval)
 RESP=$(api POST /api/requests "$DEV_TOKEN" \
-  -d '{"detail":"DELETE FROM logs","database":"app","environment":"staging"}')
+  -d '{"detail":"DELETE FROM logs WHERE id = 1","database":"app","environment":"production","reason":"self-approval test"}')
 REQ_ID=$(echo "$RESP" | json_field id)
 
 if [ -n "$REQ_ID" ]; then
@@ -72,9 +72,10 @@ echo ""
 echo "--- Readonly boundaries ---"
 
 READONLY_TOKEN=$(create_token e2e-authz-ro approver)
+# Use WHERE clause to pass SQL review — the permission check (no request.dml) should reject
 STATUS=$(api_status POST /api/requests "$READONLY_TOKEN" \
-  -d '{"detail":"DELETE FROM users","database":"app","environment":"development"}')
-[ "$STATUS" = "403" ] || [ "$STATUS" = "400" ] && pass "Readonly cannot execute DML ($STATUS)" || fail "Readonly DML" "got $STATUS"
+  -d '{"detail":"DELETE FROM users WHERE id = 999","database":"app","environment":"development"}')
+[ "$STATUS" = "403" ] && pass "Approver cannot execute DML (403 no request.dml)" || fail "Approver DML" "got $STATUS"
 
 # --- Bootstrap agent token cannot access non-agent endpoints ---
 echo ""
