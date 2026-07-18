@@ -26,7 +26,9 @@ impl RoleResolver for NoopRoleResolver {
         if subject_type == SubjectType::Agent {
             Ok(vec![ResolvedRole {
                 name: "agent-default".into(),
-                permissions: [Permission::AgentOperate].into_iter().collect(),
+                permissions: [(Permission::AgentOperate, OwnershipScope::Own)]
+                    .into_iter()
+                    .collect(),
                 databases: vec![DatabaseName::new("*").unwrap()],
                 environments: vec![Environment::new("*").unwrap()],
             }])
@@ -34,23 +36,24 @@ impl RoleResolver for NoopRoleResolver {
             Ok(vec![
                 ResolvedRole {
                     name: "admin".into(),
-                    permissions: [Permission::All].into_iter().collect(),
+                    permissions: [(Permission::All, OwnershipScope::Any)]
+                        .into_iter()
+                        .collect(),
                     databases: vec![DatabaseName::new("*").unwrap()],
                     environments: vec![Environment::new("*").unwrap()],
                 },
                 ResolvedRole {
-                    name: "developer".into(),
+                    name: "requester".into(),
                     permissions: [
-                        Permission::RequestExecute,
-                        Permission::RequestQuery,
-                        Permission::RequestView,
-                        Permission::RequestCancel,
-                        Permission::RequestResume,
-                        Permission::RequestApprove,
-                        Permission::ResultView,
-                        Permission::WorkflowRead,
-                        Permission::TokenCreateOwn,
-                        Permission::TokenRevokeOwn,
+                        (Permission::RequestDml, OwnershipScope::Own),
+                        (Permission::RequestQuery, OwnershipScope::Own),
+                        (Permission::RequestView, OwnershipScope::Own),
+                        (Permission::RequestCancel, OwnershipScope::Own),
+                        (Permission::RequestResume, OwnershipScope::Own),
+                        (Permission::ResultView, OwnershipScope::Own),
+                        (Permission::WorkflowRead, OwnershipScope::Own),
+                        (Permission::TokenCreate, OwnershipScope::Own),
+                        (Permission::TokenRevoke, OwnershipScope::Own),
                     ]
                     .into_iter()
                     .collect(),

@@ -966,10 +966,11 @@ CREATE INDEX IF NOT EXISTS idx_pending_approvers_selector ON request_pending_app
 
 -- Seed built-in roles
 INSERT OR IGNORE INTO roles (name, permissions_json, databases_json, environments_json, built_in) VALUES
-('admin', '[\"*\"]', '[\"*\"]', '[\"*\"]', 1),
-('developer', '[\"request.execute\",\"request.query\",\"request.view\",\"request.cancel\",\"request.resume\",\"result.view\",\"workflow.read\",\"token.revoke_own\"]', '[\"*\"]', '[\"*\"]', 1),
-('readonly', '[\"request.query\",\"request.view\",\"result.view\",\"workflow.read\"]', '[\"*\"]', '[\"*\"]', 1),
-('agent-default', '[\"agent.operate\"]', '[\"*\"]', '[\"*\"]', 1);
+('requester', '[{\"perm\":\"request.dml\"},{\"perm\":\"request.query\"},{\"perm\":\"request.view\",\"ownership\":\"own\"},{\"perm\":\"request.cancel\",\"ownership\":\"own\"},{\"perm\":\"request.resume\",\"ownership\":\"own\"},{\"perm\":\"request.preflight\"},{\"perm\":\"request.preflight_explain\"},{\"perm\":\"result.view\",\"ownership\":\"own\"},{\"perm\":\"schema.read\"},{\"perm\":\"workflow.read\"},{\"perm\":\"token.create\"},{\"perm\":\"token.revoke\",\"ownership\":\"own\"}]', '[\"*\"]', '[\"*\"]', 1),
+('approver', '[{\"perm\":\"request.view\",\"ownership\":\"own\"},{\"perm\":\"result.view\",\"ownership\":\"own\"},{\"perm\":\"schema.read\"},{\"perm\":\"workflow.read\"},{\"perm\":\"token.create\"},{\"perm\":\"token.revoke\",\"ownership\":\"own\"}]', '[\"*\"]', '[\"*\"]', 1),
+('operator', '[{\"perm\":\"request.view\",\"ownership\":\"any\"},{\"perm\":\"request.cancel\",\"ownership\":\"any\"},{\"perm\":\"request.resume\",\"ownership\":\"any\"},{\"perm\":\"request.break_glass_query\"},{\"perm\":\"request.break_glass_dml\"},{\"perm\":\"request.break_glass_ddl\"},{\"perm\":\"result.view\",\"ownership\":\"any\"},{\"perm\":\"schema.read\"},{\"perm\":\"audit.read\"},{\"perm\":\"metrics.view\"},{\"perm\":\"workflow.read\"},{\"perm\":\"token.create\"},{\"perm\":\"token.revoke\",\"ownership\":\"own\"}]', '[\"*\"]', '[\"*\"]', 1),
+('admin', '[{\"perm\":\"workflow.read\"},{\"perm\":\"workflow.write\"},{\"perm\":\"policy.write\"},{\"perm\":\"role.write\"},{\"perm\":\"user.read\"},{\"perm\":\"user.write\"},{\"perm\":\"webhook.write\"},{\"perm\":\"token.create\"},{\"perm\":\"token.revoke\",\"ownership\":\"any\"},{\"perm\":\"token.list\"},{\"perm\":\"token.create_agent\"},{\"perm\":\"token.reissue\"},{\"perm\":\"audit.read\"},{\"perm\":\"metrics.view\"}]', '[\"*\"]', '[\"*\"]', 1),
+('agent-default', '[{\"perm\":\"agent.operate\"}]', '[\"*\"]', '[\"*\"]', 1);
 
 -- Validation triggers
 CREATE TRIGGER IF NOT EXISTS chk_audit_event_hash_insert

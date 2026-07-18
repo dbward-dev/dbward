@@ -2,7 +2,7 @@ use rusqlite::{OptionalExtension, params};
 
 use dbward_app::error::AppError;
 use dbward_app::ports::{PolicyEvaluator, PolicyRepo};
-use dbward_domain::auth::{Permission, RoleDefinition};
+use dbward_domain::auth::{PermissionEntry, RoleDefinition};
 use dbward_domain::policies::{ExecutionPolicy, Workflow};
 use dbward_domain::values::{DatabaseName, Environment, Operation};
 
@@ -605,14 +605,8 @@ impl PolicyRepo for SqlitePolicyRepo {
 
     fn create_role(&self, role: &RoleDefinition) -> Result<(), AppError> {
         let conn = self.conn.lock();
-        let perms_json = serde_json::to_string(
-            &role
-                .permissions
-                .iter()
-                .map(|p| p.as_str())
-                .collect::<Vec<_>>(),
-        )
-        .map_err(json_err("policy: create_role"))?;
+        let perms_json =
+            serde_json::to_string(&role.permissions).map_err(json_err("policy: create_role"))?;
         let dbs_json = serde_json::to_string(
             &role
                 .databases
@@ -1192,12 +1186,8 @@ fn row_to_role(row: &rusqlite::Row) -> rusqlite::Result<Result<RoleDefinition, A
     let envs_json: String = row.get(3)?;
 
     Ok((|| {
-        let perm_strs: Vec<String> =
+        let permissions: Vec<PermissionEntry> =
             serde_json::from_str(&perms_json).map_err(json_err("policy: row_to_role"))?;
-        let permissions: Vec<Permission> = perm_strs
-            .iter()
-            .map(|s| s.parse::<Permission>().map_err(AppError::Internal))
-            .collect::<Result<_, _>>()?;
         let db_strs: Vec<String> =
             serde_json::from_str(&dbs_json).map_err(json_err("policy: row_to_role"))?;
         let databases: Vec<DatabaseName> = db_strs

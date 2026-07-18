@@ -283,7 +283,7 @@ Manage API tokens.
 
 ```bash
 dbward token create                                    # Create token for yourself
-dbward token create --scope-roles developer            # With specific ceiling
+dbward token create --scope-roles requester            # With specific ceiling
 dbward token create --subject agent-1 --subject-type agent --no-scope-ceiling  # Agent token
 ```
 
@@ -298,7 +298,7 @@ dbward token create --subject agent-1 --subject-type agent --no-scope-ceiling  #
 
 Notes:
 - Creating tokens for other users is not allowed. Use `dbward user reissue-initial-token` instead.
-- Agent token creation requires `token.manage` permission.
+- Agent token creation requires `token.create_agent` permission.
 
 ### dbward token list
 
@@ -321,7 +321,7 @@ dbward token revoke <ID>
 
 ### dbward token inspect
 
-Show a token's current effective permissions. Token owners can inspect their own tokens; otherwise requires `token.manage` permission.
+Show a token's current effective permissions. Token owners can inspect their own tokens; otherwise requires `token.list` permission.
 
 ```bash
 dbward token inspect <ID>
@@ -338,7 +338,7 @@ Manage users.
 Register a new user.
 
 ```bash
-dbward user add alice --role developer
+dbward user add alice --role requester
 dbward user add bob --role dba --group backend-team
 ```
 
@@ -358,7 +358,7 @@ Update an existing user.
 dbward user update alice --role admin
 dbward user update alice --slack-user-id U02CR3TMKKJ
 dbward user update alice --add-group dba-team --rm-group backend-team
-dbward user update alice --add-role dba --rm-role readonly
+dbward user update alice --add-role dba --rm-role approver
 ```
 
 | Option | Description |
@@ -420,7 +420,7 @@ dbward user rm alice
 Reissue a user's initial token. Revokes the existing initial token and creates a new one.
 If Slack is configured and the user has a linked Slack ID, the token is delivered via DM.
 
-Permission: `token.manage`
+Permission: `token.reissue`
 
 ```bash
 dbward user reissue-initial-token alice

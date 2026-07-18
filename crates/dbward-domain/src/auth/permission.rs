@@ -4,61 +4,76 @@ use std::str::FromStr;
 /// Fine-grained permission in the `resource.action` format.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Permission {
-    RequestExecute,
+    // --- Operation Plane ---
     RequestQuery,
-    RequestApprove,
-    RequestResume,
-    RequestCancel,
-    RequestView,
-    RequestBreakGlass,
+    RequestDml,
+    RequestDdl,
+    RequestBreakGlassQuery,
+    RequestBreakGlassDml,
     RequestBreakGlassDdl,
+    RequestView,
+    RequestCancel,
+    RequestResume,
     RequestPreflight,
     RequestPreflightExplain,
     ResultView,
-    AuditRead,
+    SchemaRead,
+
+    // --- System Plane ---
     WorkflowRead,
     WorkflowWrite,
     PolicyWrite,
     RoleWrite,
-    WebhookWrite,
-    UserWrite,
     UserRead,
-    TokenCreateOwn,
-    TokenRevokeOwn,
-    TokenManage,
-    AgentOperate,
+    UserWrite,
+    WebhookWrite,
+    TokenCreate,
+    TokenRevoke,
+    TokenList,
+    TokenCreateAgent,
+    TokenReissue,
+    AuditRead,
     MetricsView,
-    /// Wildcard: grants all permissions.
+
+    // --- Infrastructure ---
+    AgentOperate,
+
+    // --- Wildcard ---
+    /// Grants all permissions with ownership `Any`.
     All,
 }
 
 impl Permission {
     pub fn as_str(&self) -> &'static str {
         match self {
-            Self::RequestExecute => "request.execute",
             Self::RequestQuery => "request.query",
-            Self::RequestApprove => "request.approve",
-            Self::RequestResume => "request.resume",
-            Self::RequestCancel => "request.cancel",
-            Self::RequestView => "request.view",
-            Self::RequestBreakGlass => "request.break_glass",
+            Self::RequestDml => "request.dml",
+            Self::RequestDdl => "request.ddl",
+            Self::RequestBreakGlassQuery => "request.break_glass_query",
+            Self::RequestBreakGlassDml => "request.break_glass_dml",
             Self::RequestBreakGlassDdl => "request.break_glass_ddl",
+            Self::RequestView => "request.view",
+            Self::RequestCancel => "request.cancel",
+            Self::RequestResume => "request.resume",
             Self::RequestPreflight => "request.preflight",
             Self::RequestPreflightExplain => "request.preflight_explain",
             Self::ResultView => "result.view",
-            Self::AuditRead => "audit.read",
+            Self::SchemaRead => "schema.read",
             Self::WorkflowRead => "workflow.read",
             Self::WorkflowWrite => "workflow.write",
             Self::PolicyWrite => "policy.write",
             Self::RoleWrite => "role.write",
-            Self::WebhookWrite => "webhook.write",
-            Self::UserWrite => "user.write",
             Self::UserRead => "user.read",
-            Self::TokenCreateOwn => "token.create_own",
-            Self::TokenRevokeOwn => "token.revoke_own",
-            Self::TokenManage => "token.manage",
-            Self::AgentOperate => "agent.operate",
+            Self::UserWrite => "user.write",
+            Self::WebhookWrite => "webhook.write",
+            Self::TokenCreate => "token.create",
+            Self::TokenRevoke => "token.revoke",
+            Self::TokenList => "token.list",
+            Self::TokenCreateAgent => "token.create_agent",
+            Self::TokenReissue => "token.reissue",
+            Self::AuditRead => "audit.read",
             Self::MetricsView => "metrics.view",
+            Self::AgentOperate => "agent.operate",
             Self::All => "*",
         }
     }
@@ -75,30 +90,34 @@ impl FromStr for Permission {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
-            "request.execute" => Ok(Self::RequestExecute),
             "request.query" => Ok(Self::RequestQuery),
-            "request.approve" => Ok(Self::RequestApprove),
-            "request.resume" => Ok(Self::RequestResume),
-            "request.cancel" => Ok(Self::RequestCancel),
-            "request.view" => Ok(Self::RequestView),
-            "request.break_glass" => Ok(Self::RequestBreakGlass),
+            "request.dml" => Ok(Self::RequestDml),
+            "request.ddl" => Ok(Self::RequestDdl),
+            "request.break_glass_query" => Ok(Self::RequestBreakGlassQuery),
+            "request.break_glass_dml" => Ok(Self::RequestBreakGlassDml),
             "request.break_glass_ddl" => Ok(Self::RequestBreakGlassDdl),
+            "request.view" => Ok(Self::RequestView),
+            "request.cancel" => Ok(Self::RequestCancel),
+            "request.resume" => Ok(Self::RequestResume),
             "request.preflight" => Ok(Self::RequestPreflight),
             "request.preflight_explain" => Ok(Self::RequestPreflightExplain),
             "result.view" => Ok(Self::ResultView),
-            "audit.read" => Ok(Self::AuditRead),
+            "schema.read" => Ok(Self::SchemaRead),
             "workflow.read" => Ok(Self::WorkflowRead),
             "workflow.write" => Ok(Self::WorkflowWrite),
             "policy.write" => Ok(Self::PolicyWrite),
             "role.write" => Ok(Self::RoleWrite),
-            "webhook.write" => Ok(Self::WebhookWrite),
-            "user.write" => Ok(Self::UserWrite),
             "user.read" => Ok(Self::UserRead),
-            "token.create_own" => Ok(Self::TokenCreateOwn),
-            "token.revoke_own" => Ok(Self::TokenRevokeOwn),
-            "token.manage" => Ok(Self::TokenManage),
-            "agent.operate" => Ok(Self::AgentOperate),
+            "user.write" => Ok(Self::UserWrite),
+            "webhook.write" => Ok(Self::WebhookWrite),
+            "token.create" => Ok(Self::TokenCreate),
+            "token.revoke" => Ok(Self::TokenRevoke),
+            "token.list" => Ok(Self::TokenList),
+            "token.create_agent" => Ok(Self::TokenCreateAgent),
+            "token.reissue" => Ok(Self::TokenReissue),
+            "audit.read" => Ok(Self::AuditRead),
             "metrics.view" => Ok(Self::MetricsView),
+            "agent.operate" => Ok(Self::AgentOperate),
             "*" => Ok(Self::All),
             other => Err(format!("unknown permission: {other}")),
         }
@@ -125,30 +144,34 @@ mod tests {
     #[test]
     fn roundtrip_all_variants() {
         let all = [
-            Permission::RequestExecute,
             Permission::RequestQuery,
-            Permission::RequestApprove,
-            Permission::RequestResume,
-            Permission::RequestCancel,
-            Permission::RequestView,
-            Permission::RequestBreakGlass,
+            Permission::RequestDml,
+            Permission::RequestDdl,
+            Permission::RequestBreakGlassQuery,
+            Permission::RequestBreakGlassDml,
             Permission::RequestBreakGlassDdl,
+            Permission::RequestView,
+            Permission::RequestCancel,
+            Permission::RequestResume,
             Permission::RequestPreflight,
             Permission::RequestPreflightExplain,
             Permission::ResultView,
-            Permission::AuditRead,
+            Permission::SchemaRead,
             Permission::WorkflowRead,
             Permission::WorkflowWrite,
             Permission::PolicyWrite,
             Permission::RoleWrite,
-            Permission::WebhookWrite,
-            Permission::UserWrite,
             Permission::UserRead,
-            Permission::TokenCreateOwn,
-            Permission::TokenRevokeOwn,
-            Permission::TokenManage,
-            Permission::AgentOperate,
+            Permission::UserWrite,
+            Permission::WebhookWrite,
+            Permission::TokenCreate,
+            Permission::TokenRevoke,
+            Permission::TokenList,
+            Permission::TokenCreateAgent,
+            Permission::TokenReissue,
+            Permission::AuditRead,
             Permission::MetricsView,
+            Permission::AgentOperate,
             Permission::All,
         ];
         for p in all {
@@ -167,7 +190,12 @@ mod tests {
     }
 
     #[test]
-    fn token_write_is_rejected() {
-        assert!("token.write".parse::<Permission>().is_err());
+    fn deprecated_permissions_are_rejected() {
+        assert!("request.execute".parse::<Permission>().is_err());
+        assert!("request.approve".parse::<Permission>().is_err());
+        assert!("request.break_glass".parse::<Permission>().is_err());
+        assert!("token.create_own".parse::<Permission>().is_err());
+        assert!("token.revoke_own".parse::<Permission>().is_err());
+        assert!("token.manage".parse::<Permission>().is_err());
     }
 }

@@ -13,7 +13,7 @@ echo ""
 echo "=== E2E Large Data & Slow Query Tests ==="
 echo ""
 
-DEV_TOKEN=$(create_token loadtest developer)
+DEV_TOKEN=$(create_token loadtest requester)
 [ -z "$DEV_TOKEN" ] && { echo "Failed to create token"; exit 1; }
 
 # --- 1. Large result set (10,000+ rows) ---

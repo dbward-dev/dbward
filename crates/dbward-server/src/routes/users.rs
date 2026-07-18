@@ -277,7 +277,7 @@ pub async fn me(Extension(user): Extension<AuthUser>) -> (StatusCode, Json<serde
         .map(|r| {
             serde_json::json!({
                 "name": r.name,
-                "permissions": r.permissions.iter().map(|p| p.as_str()).collect::<Vec<_>>(),
+                "permissions": r.permissions.keys().map(|p| p.as_str()).collect::<Vec<_>>(),
                 "databases": r.databases.iter().map(|d| d.as_str()).collect::<Vec<_>>(),
                 "environments": r.environments.iter().map(|e| e.as_str()).collect::<Vec<_>>(),
             })

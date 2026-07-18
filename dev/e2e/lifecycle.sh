@@ -15,7 +15,7 @@ echo ""
 # Create tokens
 ADMIN_BACKEND=$(create_token alice admin --groups backend-team)
 ADMIN_DBA=$(create_token carol admin --groups dba-team)
-DEV_TOKEN=$(create_token bob developer)
+DEV_TOKEN=$(create_token bob requester)
 
 [ -z "$ADMIN_BACKEND" ] && { echo "Failed to create admin token"; exit 1; }
 [ -z "$ADMIN_DBA" ] && { echo "Failed to create dba token"; exit 1; }

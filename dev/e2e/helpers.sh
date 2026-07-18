@@ -192,12 +192,12 @@ create_token() {
       -H "Content-Type: application/json" \
       -d "{\"subject_id\":\"$user\",\"subject_type\":\"agent\"}" 2>&1) || true
   else
-    # Build scope_ceiling: include requested role + readonly (default_role) to ensure resolve ∩ ceiling is non-empty
+    # Build scope_ceiling: include requested role + approver (default_role) to ensure resolve ∩ ceiling is non-empty
     local ceiling_roles="\"$role\""
     if [ "$role" = "admin" ]; then
-      ceiling_roles="\"admin\",\"slack-user\",\"developer\",\"readonly\""
-    elif [ "$role" != "readonly" ]; then
-      ceiling_roles="\"$role\",\"readonly\""
+      ceiling_roles="\"admin\",\"slack-user\",\"requester\",\"approver\""
+    elif [ "$role" != "approver" ]; then
+      ceiling_roles="\"$role\",\"approver\""
     fi
     result=$(curl -sf -X POST "${SERVER_URL}/api/tokens" \
       -H "Authorization: Bearer $admin_token" \

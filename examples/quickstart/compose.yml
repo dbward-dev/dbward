@@ -41,12 +41,12 @@ services:
     depends_on:
       server: { condition: service_healthy }
 
-  # CLI as alice (developer) — can submit queries
+  # CLI as alice (requester) — can submit queries
   alice:
     image: ghcr.io/dbward-dev/dbward:latest
     entrypoint: ["/bin/sh", "/config/cli-entrypoint.sh"]
     environment:
-      TOKEN_FILE: /data/developer-token
+      TOKEN_FILE: /data/requester-token
       DBWARD_YES: "true"
     volumes:
       - ./cli.toml:/config/cli.toml:ro

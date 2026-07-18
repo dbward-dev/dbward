@@ -56,7 +56,7 @@ impl CancelRequest {
                 Permission::RequestCancel,
                 &request.database,
                 &request.environment,
-                &ResourceContext::Request {
+                &ResourceContext::RequestMutate {
                     requester_id: request.requester.clone(),
                 },
             )

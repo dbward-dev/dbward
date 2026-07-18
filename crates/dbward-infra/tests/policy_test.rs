@@ -261,7 +261,16 @@ fn role_crud() {
 
     let role = RoleDefinition {
         name: "dba".into(),
-        permissions: vec![Permission::RequestExecute, Permission::RequestApprove],
+        permissions: vec![
+            PermissionEntry {
+                perm: Permission::RequestDml,
+                ownership: OwnershipScope::Own,
+            },
+            PermissionEntry {
+                perm: Permission::RequestView,
+                ownership: OwnershipScope::Any,
+            },
+        ],
         databases: vec![DatabaseName::new("app").unwrap()],
         environments: vec![Environment::new("production").unwrap()],
     };

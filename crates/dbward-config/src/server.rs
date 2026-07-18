@@ -160,10 +160,15 @@ impl ServerConfig {
     }
 
     fn validate_oidc_role_mappings(&self) -> Result<(), ConfigError> {
-        let builtin_roles: std::collections::HashSet<&str> =
-            ["admin", "developer", "readonly", "agent-default"]
-                .into_iter()
-                .collect();
+        let builtin_roles: std::collections::HashSet<&str> = [
+            "admin",
+            "requester",
+            "approver",
+            "operator",
+            "agent-default",
+        ]
+        .into_iter()
+        .collect();
         let custom: std::collections::HashSet<&str> =
             self.auth.roles.iter().map(|r| r.name.as_str()).collect();
         let all_roles: std::collections::HashSet<&str> = builtin_roles
@@ -347,9 +352,15 @@ impl ServerConfig {
         }
 
         // Custom role definitions
-        let builtin_roles: HashSet<&str> = ["admin", "developer", "readonly", "agent-default"]
-            .into_iter()
-            .collect();
+        let builtin_roles: HashSet<&str> = [
+            "admin",
+            "requester",
+            "approver",
+            "operator",
+            "agent-default",
+        ]
+        .into_iter()
+        .collect();
         let mut custom_role_names: HashSet<&str> = HashSet::new();
         for rc in &self.auth.roles {
             if builtin_roles.contains(rc.name.as_str()) {
@@ -1436,7 +1447,7 @@ no_where_update = "warn"
             r#"
 [[auth.roles]]
 name = "dba"
-permissions = ["request.approve", "request.view"]
+permissions = ["request.dml", "request.view"]
 databases = ["app"]
 environments = ["production"]
 "#,
@@ -1503,7 +1514,7 @@ permissions = ["request.fly"]
             r#"
 [[auth.roles]]
 name = "dba"
-permissions = ["request.approve"]
+permissions = ["request.dml"]
 
 [[auth.roles]]
 name = "dba"
@@ -1534,12 +1545,12 @@ subjects = ["alice"]
             r#"
 [[auth.groups]]
 name = "team-a"
-roles = ["developer"]
+roles = ["requester"]
 "#,
         ))
         .unwrap();
         assert_eq!(cfg.auth.groups.len(), 1);
-        assert_eq!(cfg.auth.groups[0].roles, vec!["developer"]);
+        assert_eq!(cfg.auth.groups[0].roles, vec!["requester"]);
     }
 
     #[test]
@@ -1561,7 +1572,7 @@ roles = []
             r#"
 [[auth.groups]]
 name = "team"
-roles = ["developer"]
+roles = ["requester"]
 
 [[auth.groups]]
 name = "team"
@@ -1740,7 +1751,7 @@ role = "nonexistent_role"
 
     #[test]
     fn validate_for_reload_skips_role_mappings_when_no_oidc() {
-        let full = "state_dir = \"/tmp\"\n[auth]\ndefault_role = \"readonly\"\n";
+        let full = "state_dir = \"/tmp\"\n[auth]\ndefault_role = \"requester\"\n";
         let expanded = crate::expand::expand_env_vars(full).unwrap();
         let cfg: ServerConfig = toml::from_str(&expanded).unwrap();
         assert!(cfg.validate_for_reload().is_ok());

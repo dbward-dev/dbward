@@ -49,7 +49,7 @@ impl ResumeRequest {
                 Permission::RequestResume,
                 &request.database,
                 &request.environment,
-                &ResourceContext::Request {
+                &ResourceContext::RequestMutate {
                     requester_id: request.requester.clone(),
                 },
             )

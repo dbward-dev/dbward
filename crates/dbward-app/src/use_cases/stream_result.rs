@@ -128,6 +128,15 @@ mod tests {
         ) -> Result<(), AuthzError> {
             Ok(())
         }
+        fn authorize_approval(
+            &self,
+            _: &AuthUser,
+            _: &DatabaseName,
+            _: &Environment,
+            _: &ResourceContext,
+        ) -> Result<(), AuthzError> {
+            Ok(())
+        }
     }
 
     struct FakeRequestRepo {

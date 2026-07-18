@@ -80,6 +80,15 @@ impl Authorizer for StubAuthorizer {
     fn authorize_global(&self, _: &AuthUser, _: Permission) -> Result<(), AuthzError> {
         Ok(())
     }
+    fn authorize_approval(
+        &self,
+        _: &AuthUser,
+        _: &DatabaseName,
+        _: &Environment,
+        _: &ResourceContext,
+    ) -> Result<(), AuthzError> {
+        Ok(())
+    }
 }
 
 struct StubRequestRepo;

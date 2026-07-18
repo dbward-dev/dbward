@@ -134,7 +134,7 @@ When a request lifecycle event occurs, dbward posts or updates messages in the c
 | Event | Trigger |
 |-------|---------|
 | `request.created` | Request submitted |
-| `request.break_glass` | Emergency request (bypass approval) |
+| `request.break_glass_dml` | Emergency request (bypass approval) |
 | `request.auto_approved` | Auto-approved by policy |
 
 Messages include: requester, database, environment, operation type, risk level (🔴/🟡/🟢), required approvers (@mentioned), and a **Review Request** button (for `request.created`).
@@ -202,7 +202,7 @@ Self-service user provisioning via `/dbward join`. Requires `[slack.onboarding]`
 ```toml
 [slack.onboarding]
 enabled = true
-assignable_roles = ["developer", "dba", "readonly"]
+assignable_roles = ["requester", "dba", "approver"]
 assignable_groups = ["backend-team", "dba-team"]
 restricted_roles = ["admin"]
 request_ttl_hours = 72
@@ -233,7 +233,7 @@ A background worker checks every 60 seconds for expired requests. When a request
 | Button click error | Verify Interactivity URL: `{server}/api/slack/interactions` |
 | "Account not linked" | Run `dbward user update <user> --slack-user-id <SLACK_UID>` |
 | `/dbward` not recognized | Register slash command in Slack App settings pointing to `{server}/api/slack/commands` |
-| "No databases available" | User needs `request.query` or `request.execute` permission |
+| "No databases available" | User needs `request.query` or `request.dml` permission |
 | Onboarding button does nothing | Ensure `[slack.onboarding] enabled = true` |
 
 Run `dbward doctor --server server.toml` to diagnose configuration issues.

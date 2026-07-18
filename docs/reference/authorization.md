@@ -12,8 +12,8 @@ dbward uses role-based access control (RBAC) with database and environment scopi
 | Role | Permissions | Scope |
 |------|-------------|-------|
 | `admin` | `*` (all) | All databases, all environments |
-| `developer` | `request.execute`, `request.query`, `request.view`, `request.cancel`, `request.resume`, `result.view`, `workflow.read`, `token.create_own`, `token.revoke_own` | All |
-| `readonly` | `request.query`, `request.view`, `result.view`, `workflow.read`, `token.create_own`, `token.revoke_own` | All |
+| `requester` | `request.dml`, `request.query`, `request.view`, `request.cancel`, `request.resume`, `result.view`, `workflow.read`, `token.create`, `token.revoke` | All |
+| `approver` | `request.query`, `request.view`, `result.view`, `workflow.read`, `token.create`, `token.revoke` | All |
 | `agent-default` | `agent.operate` | All |
 
 Built-in roles cannot be redefined in config.
@@ -23,7 +23,7 @@ Built-in roles cannot be redefined in config.
 ```toml
 [[auth.roles]]
 name = "dba"
-permissions = ["request.execute", "request.approve", "request.view", "result.view", "audit.read"]
+permissions = ["request.dml", "request.view", "result.view", "audit.read"]
 databases = ["app", "analytics"]       # Scope to specific databases (empty = all)
 environments = ["production", "staging"]  # Scope to environments (empty = all)
 ```
@@ -37,7 +37,7 @@ Groups are named collections of users with associated roles. Members inherit the
 ```toml
 [[auth.groups]]
 name = "backend-team"
-roles = ["developer"]
+roles = ["requester"]
 
 [[auth.groups]]
 name = "dba-team"
@@ -76,10 +76,10 @@ Users inherit roles from their group memberships. Groups define their roles in c
 ```toml
 [[auth.groups]]
 name = "dba-team"
-roles = ["dba", "developer"]
+roles = ["dba", "requester"]
 ```
 
-When a user belongs to `dba-team`, they automatically receive the `dba` and `developer` roles.
+When a user belongs to `dba-team`, they automatically receive the `dba` and `requester` roles.
 
 ### Effective roles
 
@@ -91,7 +91,7 @@ Assign a role to all authenticated users who don't have an explicit role (neithe
 
 ```toml
 [auth]
-default_role = "developer"
+default_role = "requester"
 ```
 
 ## Permissions
@@ -100,14 +100,13 @@ default_role = "developer"
 
 | Permission | Description |
 |-----------|-------------|
-| `request.execute` | Create requests (DML, DDL, migrations) |
+| `request.dml` | Create requests (DML, DDL, migrations) |
 | `request.query` | Create SELECT-only requests |
-| `request.approve` | Approve requests |
 | `request.resume` | Resume approved requests |
 | `request.cancel` | Cancel own requests |
 | `request.view` | View requests and status |
-| `request.break_glass` | Use emergency bypass |
-| `request.break_glass_ddl` | Allow DDL in emergency mode (requires `request.break_glass`) |
+| `request.break_glass_dml` | Use emergency bypass (DML) |
+| `request.break_glass_ddl` | Allow DDL in emergency mode (requires `request.break_glass_dml`) |
 | `request.preflight` | Run preflight SQL analysis |
 | `request.preflight_explain` | Run preflight with EXPLAIN |
 
@@ -139,9 +138,11 @@ default_role = "developer"
 |-----------|-------------|
 | `user.write` | Add, update, suspend, activate, and delete users |
 | `user.read` | List and view users and groups |
-| `token.create_own` | Create tokens for yourself |
-| `token.revoke_own` | Revoke own tokens |
-| `token.manage` | List all tokens, create agent tokens, revoke others' tokens, reissue initial tokens |
+| `token.create` | Create tokens for yourself |
+| `token.revoke` | Revoke own tokens |
+| `token.list` | List all tokens |
+| `token.create_agent` | Create agent tokens |
+| `token.reissue` | Reissue initial tokens for other users |
 
 ### Agent permissions
 
@@ -175,7 +176,7 @@ Map OIDC claims to dbward roles:
 [[auth.oidc.role_mappings]]
 claim = "groups"
 value = "engineering"
-role = "developer"
+role = "requester"
 
 [[auth.oidc.role_mappings]]
 claim = "groups"

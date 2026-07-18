@@ -77,6 +77,15 @@ mod tests {
         ) -> Result<(), AuthzError> {
             Ok(())
         }
+        fn authorize_approval(
+            &self,
+            _: &AuthUser,
+            _: &DatabaseName,
+            _: &Environment,
+            _: &ResourceContext,
+        ) -> Result<(), AuthzError> {
+            Ok(())
+        }
     }
     struct AllowViewOnly;
     impl Authorizer for AllowViewOnly {
@@ -94,6 +103,15 @@ mod tests {
             &self,
             _: &AuthUser,
             _: Permission,
+            _: &DatabaseName,
+            _: &Environment,
+            _: &ResourceContext,
+        ) -> Result<(), AuthzError> {
+            Ok(())
+        }
+        fn authorize_approval(
+            &self,
+            _: &AuthUser,
             _: &DatabaseName,
             _: &Environment,
             _: &ResourceContext,
@@ -119,6 +137,18 @@ mod tests {
         ) -> Result<(), AuthzError> {
             Err(AuthzError::Forbidden {
                 permission: Permission::AuditRead,
+                reason: "denied".into(),
+            })
+        }
+        fn authorize_approval(
+            &self,
+            _: &AuthUser,
+            _: &DatabaseName,
+            _: &Environment,
+            _: &ResourceContext,
+        ) -> Result<(), AuthzError> {
+            Err(AuthzError::Forbidden {
+                permission: Permission::RequestView,
                 reason: "denied".into(),
             })
         }
@@ -171,7 +201,9 @@ mod tests {
             subject_type: SubjectType::User,
             roles: vec![ResolvedRole {
                 name: "admin".into(),
-                permissions: [P::AuditRead].into_iter().collect(),
+                permissions: [(P::AuditRead, dbward_domain::auth::OwnershipScope::Own)]
+                    .into_iter()
+                    .collect(),
                 databases: vec![],
                 environments: vec![],
             }],

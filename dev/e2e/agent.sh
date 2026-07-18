@@ -12,7 +12,7 @@ echo ""
 echo "=== E2E Agent Tests ==="
 echo ""
 
-DEV_TOKEN=$(create_token bob developer)
+DEV_TOKEN=$(create_token bob requester)
 [ -z "$DEV_TOKEN" ] && { echo "Failed to create token"; exit 1; }
 
 # --- 1. Agent executes auto-approved request ---

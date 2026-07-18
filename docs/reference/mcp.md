@@ -231,7 +231,7 @@ dbward MCP is available over two transports:
 
 | Transport | Endpoint | Tools | Prompts | Use case |
 |---|---|---|---|---|
-| **stdio** | `dbward mcp` (local process) | 12 | 6 | Individual developer, IDE-native |
+| **stdio** | `dbward mcp` (local process) | 12 | 6 | Individual requester, IDE-native |
 | **Remote HTTP** | `POST /mcp` on the server | 9 | 4 | Team setup, no local binary needed |
 
 Remote HTTP excludes tools/prompts that require local filesystem access (`migrate_up`, `migrate_down`, `migrate_create`, `review_migration`, `draft_rollback`). Authentication uses the same token or OIDC as the REST API.

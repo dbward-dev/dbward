@@ -19,7 +19,7 @@ echo ""
 
 # Setup tokens
 ADMIN_TOKEN=$(create_token alice admin --groups backend-team --groups dba-team)
-DEV_TOKEN=$(create_token bob developer)
+DEV_TOKEN=$(create_token bob requester)
 [ -z "$ADMIN_TOKEN" ] && { echo "Failed to create admin token"; exit 1; }
 [ -z "$DEV_TOKEN" ] && { echo "Failed to create dev token"; exit 1; }
 
@@ -131,7 +131,7 @@ print(reject_events[0]['event_type'] if reject_events else '')
 echo ""
 echo "--- 5. Token create + revoke (atomic audit) ---"
 
-TOKEN_RESP=$(api POST "/api/tokens" "$ADMIN_TOKEN" -d '{"name":"test-audit","role":"developer"}')
+TOKEN_RESP=$(api POST "/api/tokens" "$ADMIN_TOKEN" -d '{"name":"test-audit","role":"requester"}')
 TOKEN_ID=$(echo "$TOKEN_RESP" | json_field id)
 [ -n "$TOKEN_ID" ] && pass "Token created: ${TOKEN_ID:0:8}" || fail "Token create" "empty id"
 
@@ -156,7 +156,7 @@ echo ""
 echo "--- 6. User operations (suspend/activate) ---"
 
 # Create a user via API
-USER_RESP=$(api POST "/api/users" "$ADMIN_TOKEN" -d '{"id":"test-user-audit","email":"test@example.com","roles":["developer"]}')
+USER_RESP=$(api POST "/api/users" "$ADMIN_TOKEN" -d '{"id":"test-user-audit","email":"test@example.com","roles":["requester"]}')
 USER_STATUS_CODE=$?
 
 SUSPEND=$(api POST "/api/users/test-user-audit/suspend" "$ADMIN_TOKEN" -d '{}')

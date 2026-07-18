@@ -13,15 +13,15 @@ wait_for_server
 ADMIN_TOKEN=$(docker compose exec -T dbward-server cat /data/admin-token 2>/dev/null || echo "")
 
 # ============================================================
-# 1. Bootstrap creates admin/developer/agent users + tokens
+# 1. Bootstrap creates admin/requester/agent users + tokens
 # ============================================================
 echo "--- 1. Bootstrap users exist ---"
 
 STATUS=$(api_status GET /api/users/admin "$ADMIN_TOKEN")
 [ "$STATUS" = "200" ] && pass "1a admin bootstrap user exists" || fail "1a" "got $STATUS"
 
-STATUS=$(api_status GET /api/users/developer "$ADMIN_TOKEN")
-[ "$STATUS" = "200" ] && pass "1b developer bootstrap user exists" || fail "1b" "got $STATUS"
+STATUS=$(api_status GET /api/users/requester "$ADMIN_TOKEN")
+[ "$STATUS" = "200" ] && pass "1b requester bootstrap user exists" || fail "1b" "got $STATUS"
 
 STATUS=$(api_status GET /api/users/agent "$ADMIN_TOKEN")
 [ "$STATUS" = "200" ] && pass "1c agent bootstrap user exists" || fail "1c" "got $STATUS"

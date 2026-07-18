@@ -275,6 +275,15 @@ mod tests {
         fn authorize_global(&self, _: &AuthUser, _: Permission) -> Result<(), AuthzError> {
             Ok(())
         }
+        fn authorize_approval(
+            &self,
+            _: &AuthUser,
+            _: &DatabaseName,
+            _: &Environment,
+            _: &ResourceContext,
+        ) -> Result<(), AuthzError> {
+            Ok(())
+        }
     }
 
     struct DenyAuth;
@@ -293,6 +302,18 @@ mod tests {
             })
         }
         fn authorize_global(&self, _: &AuthUser, _: Permission) -> Result<(), AuthzError> {
+            Err(AuthzError::Forbidden {
+                permission: Permission::RequestView,
+                reason: "denied".into(),
+            })
+        }
+        fn authorize_approval(
+            &self,
+            _: &AuthUser,
+            _: &DatabaseName,
+            _: &Environment,
+            _: &ResourceContext,
+        ) -> Result<(), AuthzError> {
             Err(AuthzError::Forbidden {
                 permission: Permission::RequestView,
                 reason: "denied".into(),

@@ -101,54 +101,28 @@ impl ApproveRequest {
 
         let step = &workflow.steps[current_step_index as usize];
 
-        // 6. Authorization: scoped permission + approval_checker
+        // 6. Authorization: fully delegated to Authorizer
         let previous_approver_ids: Vec<String> = approvals
             .iter()
             .filter(|a| a.step_index < current_step_index && a.action == ApprovalAction::Approve)
             .map(|a| a.actor_id.clone())
             .collect();
 
-        // Check if user is a workflow approver for this step (ADR-002: approver designation = permission grant)
-        let role_names: Vec<String> = user.roles.iter().map(|r| r.name.clone()).collect();
-        let is_designated_approver = step.approvers.iter().any(|ag| {
-            ag.selector
-                .matches(&role_names, &user.groups, &user.subject_id, false)
-        });
-
-        if !is_designated_approver {
-            self.authorizer
-                .authorize_scoped(
-                    user,
-                    Permission::RequestApprove,
-                    &request.database,
-                    &request.environment,
-                    &ResourceContext::ApprovalStep {
-                        requester_id: request.requester.clone(),
-                        step_index: current_step_index,
-                        approvers: step.approvers.clone(),
-                        allow_self_approve: workflow.allow_self_approve,
-                        allow_same_approver_across_steps: workflow.allow_same_approver_across_steps,
-                        previous_approver_ids: previous_approver_ids.clone(),
-                    },
-                )
-                .map_err(AppError::Forbidden)?;
-        }
-
-        // 7. Domain-level approvability check (redundant with Authorizer but explicit)
-
-        if !approval_checker::is_approvable_by(
-            user,
-            &step.approvers,
-            &request.requester,
-            &previous_approver_ids,
-            workflow.allow_self_approve,
-            workflow.allow_same_approver_across_steps,
-        ) {
-            return Err(AppError::Forbidden(AuthzError::Forbidden {
-                permission: Permission::RequestApprove,
-                reason: "not eligible to approve this step".into(),
-            }));
-        }
+        self.authorizer
+            .authorize_approval(
+                user,
+                &request.database,
+                &request.environment,
+                &ResourceContext::ApprovalStep {
+                    requester_id: request.requester.clone(),
+                    step_index: current_step_index,
+                    approvers: step.approvers.clone(),
+                    allow_self_approve: workflow.allow_self_approve,
+                    allow_same_approver_across_steps: workflow.allow_same_approver_across_steps,
+                    previous_approver_ids: previous_approver_ids.clone(),
+                },
+            )
+            .map_err(AppError::Forbidden)?;
 
         // 9. Check distinct actors within same step (fast-fail before TX)
         let already_approved_this_step = approvals.iter().any(|a| {
@@ -234,7 +208,7 @@ impl ApproveRequest {
                 wf_allow_cross,
             ) {
                 return Err(AppError::Forbidden(AuthzError::Forbidden {
-                    permission: Permission::RequestApprove,
+                    permission: Permission::RequestView,
                     reason: "not eligible to approve this step (recheck)".into(),
                 }));
             }
@@ -291,7 +265,7 @@ impl ApproveRequest {
                 match all_matched.len() {
                     0 => {
                         return Err(AppError::Forbidden(AuthzError::Forbidden {
-                            permission: Permission::RequestApprove,
+                            permission: Permission::RequestView,
                             reason: "not eligible to approve this step".into(),
                         }));
                     }
@@ -451,7 +425,7 @@ mod tests {
     use super::*;
     use crate::test_support::*;
     use chrono::Utc;
-    use dbward_domain::auth::{ResolvedRole, SubjectType};
+    use dbward_domain::auth::{OwnershipScope, ResolvedRole, SubjectType};
     use dbward_domain::entities::Request;
     use dbward_domain::policies::workflow::{ApproverGroup, WorkflowStep, WorkflowStepMode};
     use dbward_domain::values::{DatabaseName, Environment, Operation, Selector};
@@ -464,7 +438,9 @@ mod tests {
                 .iter()
                 .map(|name| ResolvedRole {
                     name: name.to_string(),
-                    permissions: [Permission::RequestApprove].into_iter().collect(),
+                    permissions: [(Permission::RequestView, OwnershipScope::Own)]
+                        .into_iter()
+                        .collect(),
                     databases: vec![],
                     environments: vec![],
                 })
@@ -713,7 +689,9 @@ mod tests {
                 .iter()
                 .map(|name| ResolvedRole {
                     name: name.to_string(),
-                    permissions: [Permission::RequestApprove].into_iter().collect(),
+                    permissions: [(Permission::RequestView, OwnershipScope::Own)]
+                        .into_iter()
+                        .collect(),
                     databases: vec![],
                     environments: vec![],
                 })

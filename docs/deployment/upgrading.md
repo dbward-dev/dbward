@@ -11,7 +11,7 @@ Always update in this order:
 
 1. **Server** (holds state, runs schema migrations)
 2. **Agent** (stateless, reconnects automatically)
-3. **CLI** (each developer, at their own pace)
+3. **CLI** (each user, at their own pace)
 
 ## Docker Compose
 

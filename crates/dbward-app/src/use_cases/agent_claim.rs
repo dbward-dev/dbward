@@ -548,7 +548,7 @@ mod tests {
         ) -> Result<Vec<ResolvedRole>, AuthError> {
             Ok(vec![ResolvedRole {
                 name: "admin".into(),
-                permissions: std::collections::HashSet::new(),
+                permissions: std::collections::HashMap::new(),
                 databases: vec![],
                 environments: vec![],
             }])

@@ -5,7 +5,7 @@ allow_private_networks = true
 [auth.oidc]
 issuer = "http://localhost:8080/realms/dbward"
 client_id = "dbward-cli"
-default_role = "readonly"
+default_role = "approver"
 jwks_uri = "http://keycloak:8080/realms/dbward/protocol/openid-connect/certs"
 
 [[auth.oidc.role_mappings]]
@@ -16,7 +16,7 @@ role = "admin"
 [[auth.oidc.role_mappings]]
 claim = "groups"
 value = "dbward-developers"
-role = "developer"
+role = "requester"
 
 # Workflow definitions (synced to SQLite on startup)
 

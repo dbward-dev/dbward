@@ -53,13 +53,13 @@ mod tests {
     #[test]
     fn resolve_roles_from_groups() {
         let mut bindings = HashMap::new();
-        bindings.insert("engineering".to_string(), vec!["developer".to_string()]);
+        bindings.insert("engineering".to_string(), vec!["requester".to_string()]);
         bindings.insert("dba-team".to_string(), vec!["admin".to_string()]);
 
         let resolver = GroupRoleResolver::new(bindings);
         let roles = resolver.resolve_roles(&["engineering".to_string(), "dba-team".to_string()]);
 
-        assert!(roles.contains(&"developer".to_string()));
+        assert!(roles.contains(&"requester".to_string()));
         assert!(roles.contains(&"admin".to_string()));
         assert_eq!(roles.len(), 2);
     }
@@ -67,7 +67,7 @@ mod tests {
     #[test]
     fn no_matching_groups_returns_empty() {
         let mut bindings = HashMap::new();
-        bindings.insert("engineering".to_string(), vec!["developer".to_string()]);
+        bindings.insert("engineering".to_string(), vec!["requester".to_string()]);
 
         let resolver = GroupRoleResolver::new(bindings);
         let roles = resolver.resolve_roles(&["marketing".to_string()]);

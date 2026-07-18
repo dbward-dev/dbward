@@ -31,33 +31,37 @@ impl GetRequest {
             .get(request_id)?
             .ok_or_else(|| AppError::NotFound("request not found".into()))?;
 
+        // Pre-compute approval relationship for ResourceContext
+        let role_names: Vec<String> = user.roles.iter().map(|r| r.name.clone()).collect();
+        let is_pending_approver = req.status == RequestStatus::Pending
+            && self.request_reader.is_pending_approver(
+                &req.id,
+                &user.subject_id,
+                &user.groups,
+                &role_names,
+            )?;
+        let has_approved = if !is_pending_approver {
+            self.approval_repo
+                .get_approvals(&req.id)?
+                .iter()
+                .any(|a| a.actor_id == user.subject_id)
+        } else {
+            false
+        };
+
         let scoped_ok = self.authorizer.authorize_scoped(
             user,
             Permission::RequestView,
             &req.database,
             &req.environment,
-            &ResourceContext::Request {
+            &ResourceContext::RequestView {
                 requester_id: req.requester.clone(),
+                is_pending_approver,
+                has_approved,
             },
         );
 
         let is_approver_view = if let Err(authz_err) = scoped_ok {
-            let role_names: Vec<String> = user.roles.iter().map(|r| r.name.clone()).collect();
-            let is_pending_approver = req.status == RequestStatus::Pending
-                && self.request_reader.is_pending_approver(
-                    &req.id,
-                    &user.subject_id,
-                    &user.groups,
-                    &role_names,
-                )?;
-            let has_approved = if !is_pending_approver {
-                self.approval_repo
-                    .get_approvals(&req.id)?
-                    .iter()
-                    .any(|a| a.actor_id == user.subject_id)
-            } else {
-                false
-            };
             if !is_pending_approver && !has_approved {
                 return Err(AppError::Forbidden(authz_err));
             }
@@ -201,6 +205,15 @@ mod tests {
         fn authorize_global(&self, _: &AuthUser, _: Permission) -> Result<(), AuthzError> {
             Ok(())
         }
+        fn authorize_approval(
+            &self,
+            _: &AuthUser,
+            _: &DatabaseName,
+            _: &Environment,
+            _: &ResourceContext,
+        ) -> Result<(), AuthzError> {
+            Ok(())
+        }
     }
     impl Authorizer for DenyAuthorizer {
         fn authorize_scoped(
@@ -217,6 +230,18 @@ mod tests {
             })
         }
         fn authorize_global(&self, _: &AuthUser, _: Permission) -> Result<(), AuthzError> {
+            Err(AuthzError::Forbidden {
+                permission: Permission::RequestView,
+                reason: "denied".into(),
+            })
+        }
+        fn authorize_approval(
+            &self,
+            _: &AuthUser,
+            _: &DatabaseName,
+            _: &Environment,
+            _: &ResourceContext,
+        ) -> Result<(), AuthzError> {
             Err(AuthzError::Forbidden {
                 permission: Permission::RequestView,
                 reason: "denied".into(),

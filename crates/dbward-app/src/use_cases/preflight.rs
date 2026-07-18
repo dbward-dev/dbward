@@ -406,7 +406,7 @@ impl PreflightUseCase {
         let op_permission = if operation.is_read_only() {
             Permission::RequestQuery
         } else {
-            Permission::RequestExecute
+            Permission::RequestDml
         };
         let caller_can_submit = self
             .authorizer
@@ -422,7 +422,7 @@ impl PreflightUseCase {
             .authorizer
             .authorize_scoped(
                 user,
-                Permission::RequestBreakGlass,
+                Permission::RequestBreakGlassDml,
                 &input.database,
                 &input.environment,
                 &ResourceContext::Global,
@@ -740,9 +740,10 @@ mod tests {
             subject_type: SubjectType::User,
             roles: vec![ResolvedRole {
                 name: "admin".into(),
-                permissions: std::collections::HashSet::from([
+                permissions: std::collections::HashMap::from([(
                     dbward_domain::auth::Permission::All,
-                ]),
+                    dbward_domain::auth::OwnershipScope::Any,
+                )]),
                 databases: vec![DatabaseName::wildcard()],
                 environments: vec![Environment::wildcard()],
             }],

@@ -7,23 +7,23 @@ trusted_proxies = ["172.16.0.0/12", "127.0.0.1"]
 allow_private_networks = true
 
 [auth]
-# E2E: subjects without explicit bindings resolve to readonly (minimum privilege)
-default_role = "readonly"
+# E2E: subjects without explicit bindings resolve to approver (minimum privilege)
+default_role = "approver"
 
 [[auth.roles]]
 name = "slack-user"
-permissions = ["request.execute", "request.query", "request.resume", "request.cancel", "request.approve", "result.view"]
+permissions = ["request.dml", "request.query", "request.resume", "request.cancel", "result.view"]
 databases = ["*"]
 environments = ["*"]
 
 # V25: Groups define name + roles. Members managed via API/CLI.
 [[auth.groups]]
 name = "backend-team"
-roles = ["developer"]
+roles = ["requester"]
 
 [[auth.groups]]
 name = "dba-team"
-roles = ["developer", "admin"]
+roles = ["requester", "admin"]
 
 # Database registry
 [[databases]]
@@ -96,7 +96,7 @@ min = 1
 id = "dev-receiver"
 url = "http://webhook-receiver:9999"
 format = "generic"
-events = ["request.created", "request.approved", "request.auto_approved", "request.rejected", "execution.completed", "execution.failed", "request.break_glass", "step.approved"]
+events = ["request.created", "request.approved", "request.auto_approved", "request.rejected", "execution.completed", "execution.failed", "request.break_glass_dml", "step.approved"]
 
 # Execution policies (synced to SQLite on startup)
 
@@ -184,6 +184,6 @@ channel = "C02C1EUJ0EN"
 
 [slack.onboarding]
 enabled = true
-assignable_roles = ["developer", "readonly"]
+assignable_roles = ["requester", "approver"]
 assignable_groups = ["backend-team", "dba-team"]
 restricted_roles = ["admin"]

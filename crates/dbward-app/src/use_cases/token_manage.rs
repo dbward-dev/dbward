@@ -3,8 +3,9 @@ use std::sync::Arc;
 use chrono::{DateTime, Utc};
 use sha2::{Digest, Sha256};
 
-use dbward_domain::auth::{AuthUser, Permission};
+use dbward_domain::auth::{AuthUser, Permission, ResourceContext};
 use dbward_domain::entities::ScopeCeiling;
+use dbward_domain::values::{DatabaseName, Environment};
 
 use crate::error::AppError;
 use crate::ports::*;
@@ -108,17 +109,17 @@ impl TokenManage {
         // Authorization: permission depends on subject_type and ownership
         if subject_type == dbward_domain::auth::SubjectType::Agent {
             self.authorizer
-                .authorize_global(user, Permission::TokenManage)
+                .authorize_global(user, Permission::TokenCreateAgent)
                 .map_err(AppError::Forbidden)?;
         } else if input.subject_id == user.subject_id {
             self.authorizer
-                .authorize_global(user, Permission::TokenCreateOwn)
+                .authorize_global(user, Permission::TokenCreate)
                 .map_err(AppError::Forbidden)?;
         } else {
             // Hard 403: creating tokens for other users is never allowed
             return Err(AppError::Forbidden(
                 crate::error::AuthzError::Forbidden {
-                    permission: Permission::TokenManage,
+                    permission: Permission::TokenCreate,
                     reason: "creating tokens for other users is not allowed; use reissue-initial-token instead".into(),
                 },
             ));
@@ -168,7 +169,7 @@ impl TokenManage {
                 if !known_names.contains(&role.as_str())
                     && !matches!(
                         role.as_str(),
-                        "admin" | "developer" | "readonly" | "agent-default"
+                        "admin" | "requester" | "approver" | "operator" | "agent-default"
                     )
                 {
                     return Err(AppError::Validation(format!("unknown role: {}", role)));
@@ -241,7 +242,7 @@ impl TokenManage {
             let mut perms = std::collections::HashSet::new();
             for r in &matching {
                 for p in &r.permissions {
-                    perms.insert(p.as_str().to_string());
+                    perms.insert(p.0.as_str().to_string());
                 }
             }
             let mut sorted: Vec<String> = perms.into_iter().collect();
@@ -308,7 +309,7 @@ impl TokenManage {
 
     pub fn list(&self, user: &AuthUser) -> Result<TokenListOutput, AppError> {
         self.authorizer
-            .authorize_global(user, Permission::TokenManage)
+            .authorize_global(user, Permission::TokenList)
             .map_err(AppError::Forbidden)?;
         let tokens = self.token_repo.list()?;
         // Exclude bootstrap tokens from user-visible list
@@ -337,16 +338,18 @@ impl TokenManage {
             return Err(AppError::NotFound("token not found".into()));
         }
 
-        // Owner can revoke own token with token.revoke_own; otherwise need TokenManage
-        if token.subject_id == user.subject_id && token.subject_type == user.subject_type {
-            self.authorizer
-                .authorize_global(user, Permission::TokenRevokeOwn)
-                .map_err(AppError::Forbidden)?;
-        } else {
-            self.authorizer
-                .authorize_global(user, Permission::TokenManage)
-                .map_err(AppError::Forbidden)?;
-        }
+        // Authorize revoke: uses ResourceContext::Token for ownership check
+        self.authorizer
+            .authorize_scoped(
+                user,
+                Permission::TokenRevoke,
+                &DatabaseName::new("*").unwrap(),
+                &Environment::new("*").unwrap(),
+                &ResourceContext::Token {
+                    owner_id: token.subject_id.clone(),
+                },
+            )
+            .map_err(AppError::Forbidden)?;
 
         let now = self.clock.now();
         let token_id = input.token_id.clone();
@@ -380,7 +383,7 @@ impl TokenManage {
     ) -> Result<ReissueInitialOutput, AppError> {
         // Authorization: token.manage required
         self.authorizer
-            .authorize_global(user, Permission::TokenManage)
+            .authorize_global(user, Permission::TokenReissue)
             .map_err(AppError::Forbidden)?;
 
         // User existence check
@@ -476,7 +479,9 @@ mod tests {
     use super::*;
     use crate::error::AuthzError;
     use crate::test_support::NoopUnitOfWork;
-    use dbward_domain::auth::{Permission, ResolvedRole, RoleDefinition, SubjectType};
+    use dbward_domain::auth::{
+        OwnershipScope, Permission, ResolvedRole, RoleDefinition, SubjectType,
+    };
     use dbward_domain::entities::Token;
 
     struct AllowAll;
@@ -495,6 +500,15 @@ mod tests {
             &self,
             _: &dbward_domain::auth::AuthUser,
             _: Permission,
+        ) -> Result<(), AuthzError> {
+            Ok(())
+        }
+        fn authorize_approval(
+            &self,
+            _: &dbward_domain::auth::AuthUser,
+            _: &dbward_domain::values::DatabaseName,
+            _: &dbward_domain::values::Environment,
+            _: &dbward_domain::auth::ResourceContext,
         ) -> Result<(), AuthzError> {
             Ok(())
         }
@@ -763,7 +777,7 @@ mod tests {
             if subject_type == SubjectType::Agent {
                 return Ok(vec![ResolvedRole {
                     name: "agent-default".into(),
-                    permissions: std::collections::HashSet::new(),
+                    permissions: std::collections::HashMap::new(),
                     databases: vec![],
                     environments: vec![],
                 }]);
@@ -774,13 +788,17 @@ mod tests {
             Ok(vec![
                 ResolvedRole {
                     name: "admin".into(),
-                    permissions: [Permission::All].into_iter().collect(),
+                    permissions: [(Permission::All, OwnershipScope::Any)]
+                        .into_iter()
+                        .collect(),
                     databases: vec![],
                     environments: vec![],
                 },
                 ResolvedRole {
-                    name: "developer".into(),
-                    permissions: [Permission::RequestExecute].into_iter().collect(),
+                    name: "requester".into(),
+                    permissions: [(Permission::RequestDml, OwnershipScope::Own)]
+                        .into_iter()
+                        .collect(),
                     databases: vec![],
                     environments: vec![],
                 },
@@ -993,8 +1011,8 @@ mod tests {
 
     #[test]
     fn create_rejects_ceiling_with_no_overlap_validation7() {
-        // Validation 7: ceiling roles exist (builtin "readonly") but resolver returns
-        // only ["admin","developer"] → intersection is empty
+        // Validation 7: ceiling roles exist (builtin "approver") but resolver returns
+        // only ["admin","requester"] → intersection is empty
         let uc = make_uc(vec![]);
         let result = uc.create(
             TokenCreateInput {
@@ -1002,7 +1020,7 @@ mod tests {
                 subject_type: "user".into(),
                 name: None,
                 scope_ceiling: Some(ScopeCeiling {
-                    roles: vec!["readonly".into()],
+                    roles: vec!["approver".into()],
                 }),
                 expires_at: None,
                 issued_by: None,
@@ -1043,6 +1061,15 @@ mod tests {
                 })
             }
         }
+        fn authorize_approval(
+            &self,
+            _: &dbward_domain::auth::AuthUser,
+            _: &dbward_domain::values::DatabaseName,
+            _: &dbward_domain::values::Environment,
+            _: &dbward_domain::auth::ResourceContext,
+        ) -> Result<(), AuthzError> {
+            Ok(())
+        }
     }
 
     fn make_uc_with_authorizer(auth: Arc<dyn Authorizer>) -> TokenManage {
@@ -1063,7 +1090,7 @@ mod tests {
 
     #[test]
     fn create_self_user_requires_token_create_own() {
-        let uc = make_uc_with_authorizer(Arc::new(AllowOnly(Permission::TokenCreateOwn)));
+        let uc = make_uc_with_authorizer(Arc::new(AllowOnly(Permission::TokenCreate)));
         let result = uc.create(
             TokenCreateInput {
                 subject_id: "alice".into(),
@@ -1082,7 +1109,7 @@ mod tests {
 
     #[test]
     fn create_self_user_denied_without_token_create_own() {
-        let uc = make_uc_with_authorizer(Arc::new(AllowOnly(Permission::TokenManage)));
+        let uc = make_uc_with_authorizer(Arc::new(AllowOnly(Permission::TokenCreateAgent)));
         let result = uc.create(
             TokenCreateInput {
                 subject_id: "alice".into(),
@@ -1101,7 +1128,7 @@ mod tests {
 
     #[test]
     fn create_agent_requires_token_manage() {
-        let uc = make_uc_with_authorizer(Arc::new(AllowOnly(Permission::TokenManage)));
+        let uc = make_uc_with_authorizer(Arc::new(AllowOnly(Permission::TokenCreateAgent)));
         let result = uc.create(
             TokenCreateInput {
                 subject_id: "my-agent".into(),
@@ -1120,7 +1147,7 @@ mod tests {
 
     #[test]
     fn create_agent_denied_with_only_token_create_own() {
-        let uc = make_uc_with_authorizer(Arc::new(AllowOnly(Permission::TokenCreateOwn)));
+        let uc = make_uc_with_authorizer(Arc::new(AllowOnly(Permission::TokenCreate)));
         let result = uc.create(
             TokenCreateInput {
                 subject_id: "my-agent".into(),
@@ -1139,13 +1166,13 @@ mod tests {
 
     #[test]
     fn list_requires_token_manage() {
-        let uc = make_uc_with_authorizer(Arc::new(AllowOnly(Permission::TokenManage)));
+        let uc = make_uc_with_authorizer(Arc::new(AllowOnly(Permission::TokenList)));
         assert!(uc.list(&make_user()).is_ok());
     }
 
     #[test]
     fn list_denied_without_token_manage() {
-        let uc = make_uc_with_authorizer(Arc::new(AllowOnly(Permission::TokenCreateOwn)));
+        let uc = make_uc_with_authorizer(Arc::new(AllowOnly(Permission::TokenCreate)));
         assert!(matches!(uc.list(&make_user()), Err(AppError::Forbidden(_))));
     }
 

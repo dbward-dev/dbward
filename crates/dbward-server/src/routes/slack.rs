@@ -252,7 +252,7 @@ async fn handle_block_actions(
                         dbward_domain::auth::Permission::RequestResume,
                         &get_output.request.database,
                         &get_output.request.environment,
-                        &dbward_domain::auth::ResourceContext::Request {
+                        &dbward_domain::auth::ResourceContext::RequestMutate {
                             requester_id: get_output.request.requester.clone(),
                         },
                     )

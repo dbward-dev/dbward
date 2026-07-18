@@ -14,8 +14,8 @@ echo ""
 
 # Create tokens via docker compose exec (tokens live in Docker volume, not host filesystem)
 ADMIN_TOKEN=$(create_token e2e-admin admin)
-DEV_TOKEN=$(create_token e2e-dev developer)
-READONLY_TOKEN=$(create_token e2e-readonly readonly)
+DEV_TOKEN=$(create_token e2e-dev requester)
+READONLY_TOKEN=$(create_token e2e-readonly approver)
 AGENT_TOKEN=$(create_token agent1 agent-default --agent)
 
 [ -z "$ADMIN_TOKEN" ] && { echo "Failed to create admin token"; exit 1; }
@@ -117,7 +117,7 @@ if [ -n "$ADMIN_TOKEN" ] && [ -n "$DEV_TOKEN" ]; then
 
     # Admin can see it
     STATUS=$(api_status GET "/api/requests/$REQ_ID" "$ADMIN_TOKEN")
-    [ "$STATUS" = "200" ] && pass "Admin can see developer's request" || fail "Admin get dev request" "got $STATUS"
+    [ "$STATUS" = "200" ] && pass "Admin can see requester's request" || fail "Admin get dev request" "got $STATUS"
   fi
 fi
 

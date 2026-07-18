@@ -43,7 +43,7 @@ impl TokenVerifier for MultiUserVerifier {
                 subject_id: "developer".into(),
                 subject_type: SubjectType::User,
                 scope_ceiling: Some(dbward_domain::entities::ScopeCeiling {
-                    roles: vec!["developer".into()],
+                    roles: vec!["requester".into()],
                 }),
             }),
             "approver-token" => Ok(dbward_app::ports::VerifiedToken {
@@ -51,7 +51,7 @@ impl TokenVerifier for MultiUserVerifier {
                 subject_id: "approver".into(),
                 subject_type: SubjectType::User,
                 scope_ceiling: Some(dbward_domain::entities::ScopeCeiling {
-                    roles: vec!["developer".into()],
+                    roles: vec!["requester".into()],
                 }),
             }),
             "dba-token" => Ok(dbward_app::ports::VerifiedToken {
@@ -59,7 +59,7 @@ impl TokenVerifier for MultiUserVerifier {
                 subject_id: "dba".into(),
                 subject_type: SubjectType::User,
                 scope_ceiling: Some(dbward_domain::entities::ScopeCeiling {
-                    roles: vec!["developer".into()],
+                    roles: vec!["requester".into()],
                 }),
             }),
             _ => Err(AuthError::InvalidToken),

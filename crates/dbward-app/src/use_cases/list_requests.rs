@@ -100,14 +100,10 @@ impl ListRequests {
                 .authorizer
                 .authorize_global(user, Permission::RequestView)
                 .is_ok();
-            let has_approve = self
-                .authorizer
-                .authorize_global(user, Permission::RequestApprove)
-                .is_ok();
-            if !has_view && !has_approve {
+            if !has_view {
                 return Err(AppError::Forbidden(crate::error::AuthzError::Forbidden {
                     permission: Permission::RequestView,
-                    reason: "requires RequestView or RequestApprove".into(),
+                    reason: "requires RequestView".into(),
                 }));
             }
         } else {
@@ -225,7 +221,7 @@ mod tests {
     use super::*;
     use crate::test_support::*;
     use chrono::Utc;
-    use dbward_domain::auth::{ResolvedRole, SubjectType};
+    use dbward_domain::auth::{OwnershipScope, ResolvedRole, SubjectType};
     use dbward_domain::entities::RequestStatus;
     use dbward_domain::values::{DatabaseName, Environment, Operation};
     use std::sync::Mutex;
@@ -333,9 +329,11 @@ mod tests {
                 .map(|name| ResolvedRole {
                     name: name.to_string(),
                     permissions: if *name == "admin" {
-                        [Permission::All].into_iter().collect()
+                        [(Permission::All, OwnershipScope::Any)]
+                            .into_iter()
+                            .collect()
                     } else {
-                        [Permission::RequestView, Permission::RequestApprove]
+                        [(Permission::RequestView, OwnershipScope::Own)]
                             .into_iter()
                             .collect()
                     },

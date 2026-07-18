@@ -224,7 +224,7 @@ Managed via `dbward token create/list/revoke (via API)`. Used when OIDC is not p
 issuer = "https://accounts.google.com"
 client_id = "xxx.apps.googleusercontent.com"
 jwks_uri = "..."  # optional override for Docker environments
-default_role = "readonly"
+default_role = "approver"
 
 [[auth.oidc.role_mappings]]
 subject = "alice@example.com"
@@ -233,7 +233,7 @@ role = "admin"
 [[auth.oidc.role_mappings]]
 claim = "groups"
 value = "dbward-developers"
-role = "developer"
+role = "requester"
 ```
 
 Role mapping fallback: subject match → claim match → default_role.

@@ -30,6 +30,15 @@ impl Authorizer for AllowAll {
     fn authorize_global(&self, _: &AuthUser, _: Permission) -> Result<(), AuthzError> {
         Ok(())
     }
+    fn authorize_approval(
+        &self,
+        _: &AuthUser,
+        _: &DatabaseName,
+        _: &Environment,
+        _: &ResourceContext,
+    ) -> Result<(), AuthzError> {
+        Ok(())
+    }
 }
 
 pub struct DenyAll;
@@ -50,6 +59,18 @@ impl Authorizer for DenyAll {
     fn authorize_global(&self, _: &AuthUser, p: Permission) -> Result<(), AuthzError> {
         Err(AuthzError::Forbidden {
             permission: p,
+            reason: "denied".into(),
+        })
+    }
+    fn authorize_approval(
+        &self,
+        _: &AuthUser,
+        _: &DatabaseName,
+        _: &Environment,
+        _: &ResourceContext,
+    ) -> Result<(), AuthzError> {
+        Err(AuthzError::Forbidden {
+            permission: Permission::RequestView,
             reason: "denied".into(),
         })
     }

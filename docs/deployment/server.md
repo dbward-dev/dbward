@@ -249,7 +249,7 @@ cat /data/agent-token    # agent token
 
 # Additional tokens via CLI (requires admin token):
 dbward token create --subject alice --scope-roles admin
-dbward token create --subject bob --scope-roles developer
+dbward token create --subject bob --scope-roles requester
 dbward token create --subject prod-agent --subject-type agent --no-scope-ceiling
 ```
 

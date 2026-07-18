@@ -12,7 +12,7 @@ echo "=== Logic Abuse Tests ==="
 echo ""
 
 ADMIN_TOKEN=$(create_token e2e-logic-admin admin)
-DEV_TOKEN=$(create_token e2e-logic-dev developer)
+DEV_TOKEN=$(create_token e2e-logic-dev requester)
 [ -z "$ADMIN_TOKEN" ] && { echo "Failed to create tokens"; exit 1; }
 
 # --- Break-glass requires reason ---

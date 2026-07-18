@@ -117,9 +117,15 @@ impl UserManage {
             .iter()
             .map(|r| r.name.as_str())
             .chain(
-                ["admin", "developer", "readonly", "agent-default"]
-                    .iter()
-                    .copied(),
+                [
+                    "admin",
+                    "requester",
+                    "approver",
+                    "operator",
+                    "agent-default",
+                ]
+                .iter()
+                .copied(),
             )
             .collect();
         for role in &input.roles {
@@ -374,9 +380,15 @@ impl UserManage {
             .iter()
             .map(|r| r.name.as_str())
             .chain(
-                ["admin", "developer", "readonly", "agent-default"]
-                    .iter()
-                    .copied(),
+                [
+                    "admin",
+                    "requester",
+                    "approver",
+                    "operator",
+                    "agent-default",
+                ]
+                .iter()
+                .copied(),
             )
             .collect();
         for role in &current_roles {
@@ -766,6 +778,15 @@ mod tests {
         ) -> Result<(), AuthzError> {
             Ok(())
         }
+        fn authorize_approval(
+            &self,
+            _: &AuthUser,
+            _: &DatabaseName,
+            _: &Environment,
+            _: &ResourceContext,
+        ) -> Result<(), AuthzError> {
+            Ok(())
+        }
     }
     struct DenyAll;
     impl Authorizer for DenyAll {
@@ -779,6 +800,18 @@ mod tests {
             &self,
             _: &AuthUser,
             _: Permission,
+            _: &DatabaseName,
+            _: &Environment,
+            _: &ResourceContext,
+        ) -> Result<(), AuthzError> {
+            Err(AuthzError::Forbidden {
+                permission: P::UserWrite,
+                reason: "denied".into(),
+            })
+        }
+        fn authorize_approval(
+            &self,
+            _: &AuthUser,
             _: &DatabaseName,
             _: &Environment,
             _: &ResourceContext,
@@ -1175,7 +1208,9 @@ mod tests {
             subject_type: SubjectType::User,
             roles: vec![ResolvedRole {
                 name: "admin".into(),
-                permissions: [P::All].into_iter().collect(),
+                permissions: [(P::All, dbward_domain::auth::OwnershipScope::Any)]
+                    .into_iter()
+                    .collect(),
                 databases: vec![],
                 environments: vec![],
             }],

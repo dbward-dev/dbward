@@ -581,11 +581,11 @@ impl CreateRequest {
 
         // 1b. Permission + DB/env scope check
         let perm = if input.emergency {
-            Permission::RequestBreakGlass
+            Permission::RequestBreakGlassDml
         } else if operation == Operation::ExecuteSelect {
             Permission::RequestQuery
         } else {
-            Permission::RequestExecute
+            Permission::RequestDml
         };
         self.authorizer
             .authorize_scoped(
@@ -1298,7 +1298,7 @@ fn sha256_hex(data: &[u8]) -> String {
 mod tests {
     use super::*;
     use crate::test_support::*;
-    use dbward_domain::auth::{ResolvedRole, SubjectType};
+    use dbward_domain::auth::{OwnershipScope, ResolvedRole, SubjectType};
 
     fn make_uc(authorizer: Arc<dyn Authorizer>) -> CreateRequest {
         CreateRequest {
@@ -1326,9 +1326,12 @@ mod tests {
             subject_type: SubjectType::User,
             roles: vec![ResolvedRole {
                 name: "app-dev".into(),
-                permissions: [Permission::RequestExecute, Permission::RequestView]
-                    .into_iter()
-                    .collect(),
+                permissions: [
+                    (Permission::RequestDml, OwnershipScope::Own),
+                    (Permission::RequestView, OwnershipScope::Own),
+                ]
+                .into_iter()
+                .collect(),
                 databases: vec![DatabaseName::new("app").unwrap()],
                 environments: vec![Environment::new("production").unwrap()],
             }],

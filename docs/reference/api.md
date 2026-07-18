@@ -45,7 +45,7 @@ Most error responses follow this structure:
 
 Create a new SQL execution or migration request.
 
-Permission: `request.execute` | `request.query` | `request.break_glass` (scoped by database/environment). `allow_ddl=true` additionally requires `request.break_glass_ddl`.
+Permission: `request.dml` | `request.query` | `request.break_glass_dml` (scoped by database/environment). `allow_ddl=true` additionally requires `request.break_glass_ddl`.
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
@@ -65,7 +65,7 @@ Permission: `request.execute` | `request.query` | `request.break_glass` (scoped 
 
 List requests with optional filtering. Non-admins see only: own requests, requests where they are a designated approver, and requests matching their `share_with` selectors.
 
-Permission: `request.view` or `request.approve` (when `pending_for_me=true`)
+Permission: `request.view` (when `pending_for_me=true`, accessible to designated approvers)
 
 | Param | Default | Description |
 |-------|---------|-------------|
@@ -297,14 +297,14 @@ Permission: `user.read`
 
 Create a new API token. The raw token value is returned only once — store it securely.
 
-Permission: `token.create_own` (self user) or `token.manage` (agent)
+Permission: `token.create` (self user) or `token.create_agent` (agent)
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
 | `subject_id` | string | ✓ | Subject the token authenticates as |
 | `subject_type` | string | ✓ | `user` or `agent` |
 | `name` | string | | Human-readable label |
-| `scope_ceiling` | object | | Max effective roles: `{"roles": ["developer"]}` |
+| `scope_ceiling` | object | | Max effective roles: `{"roles": ["requester"]}` |
 | `expires_at` | DateTime | | Expiration time (ISO 8601) |
 
 Notes:
@@ -317,25 +317,25 @@ Notes:
 
 List all tokens with metadata and status.
 
-Permission: `token.manage`
+Permission: `token.list`
 
 ### DELETE /api/tokens/{id}
 
 Revoke a token immediately.
 
-Permission: `token.manage` or `token.revoke_own` (for own tokens)
+Permission: `token.list` or `token.revoke` (for own tokens)
 
 ### GET /api/tokens/{id}/inspect
 
 Show the token's effective roles and permissions after ceiling application.
 
-Permission: Token owner or `token.manage`
+Permission: Token owner or `token.list`
 
 ### POST /api/users/{id}/reissue-initial-token
 
 Reissue a user's initial token. Revokes the existing initial token (if any), creates a new one, and attempts Slack DM delivery.
 
-Permission: `token.manage`
+Permission: `token.reissue`
 
 ---
 

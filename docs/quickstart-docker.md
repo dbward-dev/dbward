@@ -44,7 +44,7 @@ docker compose run --rm alice execute "SELECT version()" -e development
 Completed in 52ms
 ```
 
-**That's the 30-second check.** dbward is working. Alice (developer) submitted a query, the agent executed it on PostgreSQL, and the result came back.
+**That's the 30-second check.** dbward is working. Alice (requester) submitted a query, the agent executed it on PostgreSQL, and the result came back.
 
 ## 3. Submit a query that needs approval
 
@@ -101,9 +101,9 @@ docker compose run --rm bob audit --limit 4
 ```
 ID         TIMESTAMP              USER        EVENT              ENV      DATABASE  OUTCOME
 96af1a07   2026-06-08T08:15:23    agent       request_executed   staging  app       success
-d3e4f5a6   2026-06-08T08:15:22    developer   request_dispatched staging  app       success
+d3e4f5a6   2026-06-08T08:15:22    requester   request_dispatched staging  app       success
 c646583f   2026-06-08T08:15:20    admin       request_approved   staging  app       success
-8f8c35a4   2026-06-08T08:15:16    developer   request_created    staging  app       success
+8f8c35a4   2026-06-08T08:15:16    requester   request_created    staging  app       success
 ```
 
 Every action is recorded. Verify the tamper-evident hash chain:
@@ -127,7 +127,7 @@ docker compose down -v
 ## What just happened?
 
 ```
-alice (developer)          bob (admin)              agent
+alice (requester)          bob (admin)              agent
      │                          │                      │
      ├─ execute (staging) ─────►│                      │
      │  "pending approval"      │                      │
@@ -170,7 +170,7 @@ Change the config, change the rules.
 ### How does alice/bob work?
 
 The compose file has two CLI containers with different tokens:
-- **alice** uses `developer-token` (can submit queries)
+- **alice** uses `requester-token` (can submit queries)
 - **bob** uses `admin-token` (can approve requests)
 
 Both read their token from files that the server creates on first startup.
@@ -192,7 +192,7 @@ docker compose logs server  # check for startup errors
 Most common: the server needs a few more seconds. Wait and retry.
 
 **"requires approval" but you can't approve:**
-You're using alice (developer). Switch to bob (admin):
+You're using alice (requester). Switch to bob (admin):
 ```bash
 docker compose run --rm bob request approve <ID>
 ```

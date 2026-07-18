@@ -1,13 +1,13 @@
 use std::sync::Arc;
 
-use dbward_domain::auth::{AuthUser, Permission};
+use dbward_domain::auth::{AuthUser, ResourceContext};
 use dbward_domain::entities::{Approval, ApprovalAction, RequestStatus};
 use dbward_domain::policies::workflow::Workflow;
 use dbward_domain::services::status_machine::{
     self, EventMetadata, RequestTrigger, TransitionContext,
 };
 
-use crate::error::{AppError, AuthzError};
+use crate::error::AppError;
 use crate::ports::*;
 use crate::services::audit_event_builder;
 use crate::services::audit_event_builder::build_webhook_event;
@@ -54,7 +54,7 @@ impl RejectRequest {
             .get(&input.request_id)?
             .ok_or_else(|| AppError::NotFound("request not found".into()))?;
 
-        // 2. Authorization: requester can self-reject, or approvers can reject
+        // 2. Authorization: approvers can reject (selector match only, like approve)
         let is_requester = user.subject_id == request.requester;
 
         // Parse workflow and approvals (needed for both authz and record)
@@ -74,53 +74,51 @@ impl RejectRequest {
             })
             .unwrap_or(0);
 
-        if !is_requester {
-            let wf = workflow
-                .as_ref()
-                .ok_or_else(|| AppError::Conflict("request has no workflow snapshot".into()))?;
+        let wf = workflow
+            .as_ref()
+            .ok_or_else(|| AppError::Conflict("request has no workflow snapshot".into()))?;
 
-            if current_step_index >= wf.steps.len() as u32 {
-                return Err(AppError::Conflict("all steps already satisfied".into()));
-            }
-
-            let step = &wf.steps[current_step_index as usize];
-
-            // Reject requires matching any approver selector in the current step
-            let role_names: Vec<String> = user.roles.iter().map(|r| r.name.clone()).collect();
-            let is_eligible = step.approvers.iter().any(|ag| {
-                ag.selector
-                    .matches(&role_names, &user.groups, &user.subject_id, false)
-            });
-
-            if !is_eligible {
-                return Err(AppError::Forbidden(AuthzError::Forbidden {
-                    permission: Permission::RequestApprove,
-                    reason: "not eligible to reject this step".into(),
-                }));
-            }
+        if current_step_index >= wf.steps.len() as u32 {
+            return Err(AppError::Conflict("all steps already satisfied".into()));
         }
+
+        let step = &wf.steps[current_step_index as usize];
+
+        let previous_approver_ids: Vec<String> = approvals
+            .iter()
+            .filter(|a| a.step_index < current_step_index && a.action == ApprovalAction::Approve)
+            .map(|a| a.actor_id.clone())
+            .collect();
+
+        self.authorizer
+            .authorize_approval(
+                user,
+                &request.database,
+                &request.environment,
+                &ResourceContext::ApprovalStep {
+                    requester_id: request.requester.clone(),
+                    step_index: current_step_index,
+                    approvers: step.approvers.clone(),
+                    allow_self_approve: wf.allow_self_approve,
+                    allow_same_approver_across_steps: wf.allow_same_approver_across_steps,
+                    previous_approver_ids,
+                },
+            )
+            .map_err(AppError::Forbidden)?;
 
         // 4. Determine matched_selector for the rejection record
         let matched_selector = if is_requester {
             "requester".to_string()
         } else {
-            let wf = workflow
-                .as_ref()
-                .expect("workflow validated in !is_requester branch");
-            if current_step_index < wf.steps.len() as u32 {
-                let role_names: Vec<String> = user.roles.iter().map(|r| r.name.clone()).collect();
-                wf.steps[current_step_index as usize]
-                    .approvers
-                    .iter()
-                    .find(|ag| {
-                        ag.selector
-                            .matches(&role_names, &user.groups, &user.subject_id, false)
-                    })
-                    .map(|ag| ag.selector.to_string())
-                    .unwrap_or_else(|| "unknown".to_string())
-            } else {
-                "unknown".to_string()
-            }
+            let role_names: Vec<String> = user.roles.iter().map(|r| r.name.clone()).collect();
+            step.approvers
+                .iter()
+                .find(|ag| {
+                    ag.selector
+                        .matches(&role_names, &user.groups, &user.subject_id, false)
+                })
+                .map(|ag| ag.selector.to_string())
+                .unwrap_or_else(|| "unknown".to_string())
         };
 
         // 5. Expiry check

@@ -109,10 +109,10 @@ pub fn auto_bootstrap(
         if count > 0 {
             eprintln!("[init] existing bootstrap tokens revoked ({count})");
         }
-    } else if count == 3 {
+    } else if count == 2 {
         // Fully bootstrapped — verify token files exist
-        let dev_token_path = state_dir.join("developer-token");
-        let missing: Vec<_> = [&agent_token_path, &admin_token_path, &dev_token_path]
+        let requester_token_path = state_dir.join("requester-token");
+        let missing: Vec<_> = [&agent_token_path, &admin_token_path, &requester_token_path]
             .iter()
             .filter(|p| !p.exists())
             .map(|p| p.display().to_string())
@@ -161,8 +161,7 @@ pub fn auto_bootstrap(
     let user_repo = state.user_repo();
     let now = chrono::Utc::now();
     let bootstrap_users = [
-        ("admin", vec!["admin".to_string()]),
-        ("developer", vec!["developer".to_string()]),
+        ("admin", vec!["admin".to_string(), "requester".to_string()]),
         ("agent", vec!["agent-default".to_string()]),
     ];
     for (id, roles) in &bootstrap_users {
@@ -185,16 +184,15 @@ pub fn auto_bootstrap(
 
     // Create bootstrap tokens
     let admin_token = create_bootstrap_token(state, "admin", "admin", false)?;
-    let dev_token = create_bootstrap_token(state, "developer", "developer", false)?;
     let agent_token = create_bootstrap_token(state, "agent", "agent-default", true)?;
 
     // Write token files (0600)
     write_token_file(&admin_token_path, &admin_token)?;
     write_token_file(&agent_token_path, &agent_token)?;
 
-    // Also write developer token for dev convenience
-    let dev_token_path = state_dir.join("developer-token");
-    write_token_file(&dev_token_path, &dev_token)?;
+    // Also write requester token for dev convenience
+    let requester_token_path = state_dir.join("requester-token");
+    write_token_file(&requester_token_path, &admin_token)?;
 
     eprintln!(
         "[init] bootstrap tokens written to {}, {}",

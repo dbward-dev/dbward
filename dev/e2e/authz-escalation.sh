@@ -12,7 +12,7 @@ echo "=== Authorization Escalation Tests ==="
 echo ""
 
 ADMIN_TOKEN=$(docker compose exec -T dbward-server cat /data/admin-token 2>/dev/null || echo "")
-DEV_TOKEN=$(create_token e2e-authz-dev developer)
+DEV_TOKEN=$(create_token e2e-authz-dev requester)
 AGENT_TOKEN=$(create_token e2e-authz-agent agent-default --agent)
 [ -z "$ADMIN_TOKEN" ] && { echo "Failed to create tokens"; exit 1; }
 
@@ -67,11 +67,11 @@ STATUS=$(api_status POST /api/users/someone/suspend "$DEV_TOKEN")
 STATUS=$(api_status GET /api/tokens "$DEV_TOKEN")
 [ "$STATUS" = "403" ] && pass "Developer cannot list tokens" || fail "Dev list tokens" "got $STATUS"
 
-# --- Cross-role: readonly cannot execute DML ---
+# --- Cross-role: approver cannot execute DML ---
 echo ""
 echo "--- Readonly boundaries ---"
 
-READONLY_TOKEN=$(create_token e2e-authz-ro readonly)
+READONLY_TOKEN=$(create_token e2e-authz-ro approver)
 STATUS=$(api_status POST /api/requests "$READONLY_TOKEN" \
   -d '{"detail":"DELETE FROM users","database":"app","environment":"development"}')
 [ "$STATUS" = "403" ] || [ "$STATUS" = "400" ] && pass "Readonly cannot execute DML ($STATUS)" || fail "Readonly DML" "got $STATUS"

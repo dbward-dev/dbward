@@ -24,7 +24,7 @@ echo "$RESP" | python3 -c "import sys,json;json.load(sys.stdin)" 2>/dev/null \
 # --- 2. Create + revoke ---
 echo ""
 echo "--- Create and revoke ---"
-EXTRA_TOKEN=$(create_token "e2e-tok-extra-$TS" developer)
+EXTRA_TOKEN=$(create_token "e2e-tok-extra-$TS" requester)
 [ -n "$EXTRA_TOKEN" ] && pass "Created extra token" || fail "Create token" ""
 
 # Find the token ID

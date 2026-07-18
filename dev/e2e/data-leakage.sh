@@ -12,7 +12,7 @@ echo "=== Data Leakage Tests ==="
 echo ""
 
 ADMIN_TOKEN=$(create_token e2e-leak-admin admin)
-DEV_TOKEN=$(create_token e2e-leak-dev developer)
+DEV_TOKEN=$(create_token e2e-leak-dev requester)
 [ -z "$ADMIN_TOKEN" ] && { echo "Failed to create tokens"; exit 1; }
 
 # --- Token hash not exposed in list API (SEC-1) ---
@@ -71,7 +71,7 @@ RESP=$(api POST /api/requests "$DEV_TOKEN" \
 REQ_ID=$(echo "$RESP" | json_field id)
 
 if [ -n "$REQ_ID" ]; then
-  # Another developer should see it (same org) but readonly should have limited view
+  # Another requester should see it (same org) but approver should have limited view
   # Admin should see full detail
   ADMIN_VIEW=$(api GET "/api/requests/$REQ_ID" "$ADMIN_TOKEN" | json_field detail)
   [ -n "$ADMIN_VIEW" ] && pass "Admin can view request detail" || fail "Admin view" "no detail field"

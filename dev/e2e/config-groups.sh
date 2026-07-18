@@ -23,10 +23,10 @@ echo "--- 8.4 Deprecated [[users]] field ---"
 cat > /tmp/server-bad-users.toml << 'EOF'
 state_dir = "/data"
 [auth]
-default_role = "readonly"
+default_role = "approver"
 [[users]]
 id = "alice"
-role = "developer"
+role = "requester"
 [[databases]]
 name = "app"
 environments = ["development"]
@@ -41,10 +41,10 @@ echo "--- 8.5 Deprecated [[auth.role_bindings]] ---"
 cat > /tmp/server-bad-rb.toml << 'EOF'
 state_dir = "/data"
 [auth]
-default_role = "readonly"
+default_role = "approver"
 [[auth.role_bindings]]
 subjects = ["alice"]
-role = "developer"
+role = "requester"
 [[databases]]
 name = "app"
 environments = ["development"]
@@ -59,10 +59,10 @@ echo "--- 8.6 Deprecated [[auth.groups]].members ---"
 cat > /tmp/server-bad-members.toml << 'EOF'
 state_dir = "/data"
 [auth]
-default_role = "readonly"
+default_role = "approver"
 [[auth.groups]]
 name = "team"
-roles = ["developer"]
+roles = ["requester"]
 members = ["alice", "bob"]
 [[databases]]
 name = "app"
@@ -78,7 +78,7 @@ echo "--- 8.7 Undefined role in groups.roles ---"
 cat > /tmp/server-bad-groles.toml << 'EOF'
 state_dir = "/data"
 [auth]
-default_role = "readonly"
+default_role = "approver"
 [[auth.groups]]
 name = "team"
 roles = ["nonexistent_role_xyz"]

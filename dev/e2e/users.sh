@@ -16,10 +16,10 @@ wait_for_server
 
 ADMIN_TOKEN=$(docker compose exec -T dbward-server cat /data/admin-token 2>/dev/null || echo "")
 
-# --- 1. Create readonly user ---
+# --- 1. Create approver user ---
 echo "--- Readonly user ---"
-READONLY_TOKEN=$(create_token "um-ro-$TS" readonly)
-[ -n "$READONLY_TOKEN" ] && pass "Created readonly token" || fail "Token creation failed" ""
+READONLY_TOKEN=$(create_token "um-ro-$TS" approver)
+[ -n "$READONLY_TOKEN" ] && pass "Created approver token" || fail "Token creation failed" ""
 
 # --- 2. Readonly can SELECT ---
 STATUS=$(api_status POST /api/requests "$READONLY_TOKEN" \
@@ -48,7 +48,7 @@ STATUS=$(api_status GET "/api/audit/events" "$READONLY_TOKEN")
 # --- 7. Suspend user ---
 echo ""
 echo "--- Suspend user ---"
-SUSPEND_TOKEN=$(create_token "um-sus-$TS" developer)
+SUSPEND_TOKEN=$(create_token "um-sus-$TS" requester)
 # Trigger auto-create by using the token
 api GET /api/requests "$SUSPEND_TOKEN" > /dev/null
 
@@ -66,7 +66,7 @@ STATUS=$(api_status POST "/api/users/um-sus-$TS/activate" "$ADMIN_TOKEN")
 [ "$STATUS" = "200" ] && pass "User activated (200)" || fail "Activate" "got $STATUS"
 
 # Token was revoked on suspend (by design), so create a new one
-REACTIVATED_TOKEN=$(create_token "um-sus-$TS" developer)
+REACTIVATED_TOKEN=$(create_token "um-sus-$TS" requester)
 STATUS=$(api_status GET /api/requests "$REACTIVATED_TOKEN")
 [ "$STATUS" = "200" ] && pass "Activated user can access with new token (200)" || fail "Activated auth" "got $STATUS"
 

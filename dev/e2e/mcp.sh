@@ -14,7 +14,7 @@ echo ""
 
 wait_for_server
 
-MCP_TOKEN=$(create_token mcp-user developer)
+MCP_TOKEN=$(create_token mcp-user requester)
 [ -z "$MCP_TOKEN" ] && { echo "Failed to create token"; exit 1; }
 
 # Write CLI config for MCP

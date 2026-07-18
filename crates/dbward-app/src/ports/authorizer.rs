@@ -76,9 +76,9 @@ pub trait RoleResolver: Send + Sync {
     }
 }
 
-/// Authorization: 2-method design per ADR-002.
+/// Authorization: 2-layer model + approval path.
 pub trait Authorizer: Send + Sync {
-    /// Scoped operations (request.create, request.resume, etc.)
+    /// Scoped operations: Layer 1 (permission gate + scope) + Layer 2 (resource context).
     fn authorize_scoped(
         &self,
         user: &AuthUser,
@@ -90,6 +90,15 @@ pub trait Authorizer: Send + Sync {
 
     /// Global operations (workflow.manage, user.manage, etc. No DB scope.)
     fn authorize_global(&self, user: &AuthUser, permission: Permission) -> Result<(), AuthzError>;
+
+    /// Approval operations: Layer 1 skipped, selector match only.
+    fn authorize_approval(
+        &self,
+        user: &AuthUser,
+        database: &DatabaseName,
+        environment: &Environment,
+        context: &ResourceContext,
+    ) -> Result<(), AuthzError>;
 
     /// Filter DB/Env pairs to only those the user can submit requests to.
     fn filter_accessible(
@@ -111,7 +120,7 @@ pub trait Authorizer: Send + Sync {
                     || self
                         .authorize_scoped(
                             user,
-                            Permission::RequestExecute,
+                            Permission::RequestDml,
                             db,
                             env,
                             &ResourceContext::Global,
