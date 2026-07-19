@@ -81,6 +81,7 @@ fn map_error(e: AppError) -> (StatusCode, Json<serde_json::Value>) {
     };
     let message = match &e {
         AppError::Internal(_) => "internal server error".to_string(),
+        AppError::Forbidden(_) => "forbidden".to_string(),
         AppError::Validation(msg) if msg == "reason_required" => {
             "reason is required by workflow policy".to_string()
         }

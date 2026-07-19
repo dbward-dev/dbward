@@ -308,7 +308,7 @@ Permission: `token.create` (self user) or `token.create_agent` (agent)
 | `expires_at` | DateTime | | Expiration time (ISO 8601) |
 
 Notes:
-- `scope_ceiling` is optional for user tokens. When omitted, the ceiling is auto-derived from the user's resolved roles.
+- `scope_ceiling` is required for user tokens. Specifies which roles the token is limited to. If the ceiling roles have no intersection with the user's resolved roles at request time, authentication fails (fail-closed).
 - Agent tokens may omit `scope_ceiling` (unrestricted).
 - Effective permissions = resolved roles ∩ scope_ceiling.
 - Creating tokens for other users is not allowed. Use `POST /api/users/{id}/reissue-initial-token` instead.
