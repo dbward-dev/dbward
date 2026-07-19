@@ -53,7 +53,7 @@ pub async fn wait_for_completion(
             wait_and_resolve(sc, request_id, verbose).await
         }
         RequestStatus::Approved | RequestStatus::AutoApproved | RequestStatus::BreakGlass => {
-            match sc.resume(request_id).await {
+            match sc.resume(request_id, None).await {
                 Ok(_) => {}
                 Err(e) if e.status == 409 => {
                     // Verify the request is actually in-flight before proceeding to wait.
@@ -114,7 +114,7 @@ pub async fn submit_and_orchestrate(
             })
         }
         RequestStatus::AutoApproved | RequestStatus::BreakGlass => {
-            match sc.resume(&cr.request_id).await {
+            match sc.resume(&cr.request_id, None).await {
                 Ok(_) => {}
                 Err(e) if e.status == 409 => {
                     // Verify actual state — 409 can be concurrency or policy rejection
@@ -287,7 +287,7 @@ async fn poll_until_terminal(
             }
             RequestStatus::Approved | RequestStatus::AutoApproved | RequestStatus::BreakGlass => {
                 // Stream failed and resume lease expired. Re-resume.
-                match sc.resume(request_id).await {
+                match sc.resume(request_id, None).await {
                     Ok(_) => {
                         // Re-dispatched successfully; return None to retry stream
                         return Ok(None);

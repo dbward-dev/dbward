@@ -96,7 +96,7 @@ min = 1
 id = "dev-receiver"
 url = "http://webhook-receiver:9999"
 format = "generic"
-events = ["request.created", "request.approved", "request.auto_approved", "request.rejected", "execution.completed", "execution.failed", "request.break_glass_dml", "step.approved"]
+events = ["request.created", "request.approved", "request.auto_approved", "request.rejected", "execution.completed", "execution.failed", "request.break_glass", "step.approved"]
 
 # Execution policies (synced to SQLite on startup)
 

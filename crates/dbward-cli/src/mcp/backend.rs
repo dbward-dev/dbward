@@ -71,7 +71,7 @@ impl McpBackend for CliMcpBackend {
         _user: &AuthUser,
     ) -> McpResult<WaitOutput> {
         // Resume — on 409 Conflict, check current status to determine next action
-        let wait_status = match self.client.resume(request_id).await {
+        let wait_status = match self.client.resume(request_id, None).await {
             Ok(_) => dbward_api_types::requests::RequestStatus::Dispatched,
             Err(e) if e.status == 409 => {
                 // Check actual status — 409 can mean dispatched/running OR invalid state

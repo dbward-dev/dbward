@@ -49,6 +49,9 @@ pub enum RequestAction {
         /// Result display format
         #[arg(long, value_enum)]
         result_format: Option<ResultFormat>,
+        /// Reason for resuming (required when resuming another user's request)
+        #[arg(long)]
+        reason: Option<String>,
     },
     Result {
         id: String,
@@ -136,6 +139,7 @@ pub async fn run_request(
             id,
             output,
             result_format,
+            reason,
         } => {
             let resolved = resolve_request_id(sc, &id).await?;
             run_resume(
@@ -146,6 +150,7 @@ pub async fn run_request(
                 config_results_dir,
                 result_format.unwrap_or(default_format),
                 yes,
+                reason.as_deref(),
             )
             .await
         }
@@ -345,6 +350,7 @@ async fn run_resume(
     config_results_dir: Option<&Path>,
     result_format: ResultFormat,
     yes: bool,
+    reason: Option<&str>,
 ) -> Result<(), CliError> {
     // DML re-resume warning
     let req = sc.get_request(id).await?;
@@ -377,7 +383,7 @@ async fn run_resume(
         }
     }
 
-    if let Err(e) = sc.resume(id).await {
+    if let Err(e) = sc.resume(id, reason).await {
         if e.status == 409 {
             // Fetch current status for a helpful message
             if let Ok(req) = sc.get_request(id).await {
