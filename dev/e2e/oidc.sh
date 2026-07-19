@@ -63,7 +63,7 @@ echo "--- 7.6 OIDC groups → role_mappings ---"
 # Verify by calling an endpoint that requires authentication (requests list)
 STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:13000/api/requests \
   -H "Authorization: Bearer $ALICE_JWT")
-[ "$STATUS" = "200" ] && pass "7.6 OIDC alice (developer group) authenticated with role" || fail "7.6" "got $STATUS"
+[ "$STATUS" = "200" ] && pass "7.6 OIDC alice (developer group) authenticated with requester role" || fail "7.6" "got $STATUS"
 
 # Bob is in dbward-admins group → should resolve to admin
 BOB_JWT=$(get_oidc_token bob bob)

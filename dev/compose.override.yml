@@ -113,7 +113,7 @@ services:
   # === OIDC Profile ===
   # Usage: ./dev/up-oidc.sh [-d]
   # Keycloak: http://localhost:8080 (admin/admin)
-  # Users: alice/alice (developer, backend-team), bob/bob (admin, backend-team), carol/carol (dba-team)
+  # Users: alice/alice (requester, backend-team), bob/bob (admin, backend-team), carol/carol (dba-team)
   keycloak:
     image: quay.io/keycloak/keycloak:26.0
     command: ["start-dev", "--import-realm"]
