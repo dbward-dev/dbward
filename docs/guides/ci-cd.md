@@ -147,7 +147,7 @@ Combine with webhooks so approvers are notified immediately:
 ```toml
 [[webhooks]]
 url = "${SLACK_WEBHOOK_URL}"
-events = ["request_created"]
+events = ["request.created"]
 format = "slack"
 ```
 

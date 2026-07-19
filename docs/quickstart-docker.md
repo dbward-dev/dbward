@@ -100,10 +100,10 @@ docker compose run --rm bob audit --limit 4
 
 ```
 ID         TIMESTAMP              USER        EVENT              ENV      DATABASE  OUTCOME
-96af1a07   2026-06-08T08:15:23    agent       request_executed   staging  app       success
+96af1a07   2026-06-08T08:15:23    agent       request.executed   staging  app       success
 d3e4f5a6   2026-06-08T08:15:22    requester   request_dispatched staging  app       success
-c646583f   2026-06-08T08:15:20    admin       request_approved   staging  app       success
-8f8c35a4   2026-06-08T08:15:16    requester   request_created    staging  app       success
+c646583f   2026-06-08T08:15:20    admin       request.approved   staging  app       success
+8f8c35a4   2026-06-08T08:15:16    requester   request.created    staging  app       success
 ```
 
 Every action is recorded. Verify the tamper-evident hash chain:
