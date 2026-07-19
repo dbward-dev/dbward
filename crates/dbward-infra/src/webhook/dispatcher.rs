@@ -513,7 +513,7 @@ mod slack_body_tests {
 
     #[test]
     fn slack_body_expired_and_cancelled_handled() {
-        for event_type in ["request_expired", "request_cancelled"] {
+        for event_type in ["request.expired", "request.cancelled"] {
             let mut event = sample_event();
             event.event_type = event_type.into();
             event.redacted_detail = None;
