@@ -256,8 +256,11 @@ impl PolicyRepo for SqlitePolicyRepo {
             let score = specificity_score_ep(&policy_db, &policy_env, db, env);
             if score > best_score || best.is_none() {
                 let delivery_mode: dbward_domain::policies::DeliveryMode =
-                    serde_json::from_value(serde_json::Value::String(delivery_str))
-                        .map_err(json_err("result_policy: delivery_mode"))?;
+                    serde_json::from_value(serde_json::Value::String(delivery_str.clone()))
+                        .unwrap_or_else(|_| {
+                            tracing::warn!(value = %delivery_str, "unknown delivery_mode in DB, defaulting to both");
+                            Default::default()
+                        });
                 let access_strs: Vec<String> = serde_json::from_str(&access_json)
                     .map_err(json_err("result_policy: access"))?;
                 let access = access_strs
@@ -348,8 +351,11 @@ impl PolicyRepo for SqlitePolicyRepo {
             let environment =
                 Environment::new(&env_str).map_err(|e| AppError::Internal(e.to_string()))?;
             let delivery_mode: dbward_domain::policies::DeliveryMode =
-                serde_json::from_value(serde_json::Value::String(delivery_str))
-                    .unwrap_or_default();
+                serde_json::from_value(serde_json::Value::String(delivery_str.clone()))
+                    .unwrap_or_else(|_| {
+                        tracing::warn!(value = %delivery_str, "unknown delivery_mode in DB, defaulting to both");
+                        Default::default()
+                    });
             let access_strs: Vec<String> = serde_json::from_str(&access_json)
                 .map_err(json_err("policy: get_result_policy"))?;
             let access = access_strs
@@ -396,8 +402,11 @@ impl PolicyRepo for SqlitePolicyRepo {
             let environment =
                 Environment::new(&env_str).map_err(|e| AppError::Internal(e.to_string()))?;
             let delivery_mode: dbward_domain::policies::DeliveryMode =
-                serde_json::from_value(serde_json::Value::String(delivery_str))
-                    .map_err(json_err("result_policy: delivery_mode"))?;
+                serde_json::from_value(serde_json::Value::String(delivery_str.clone()))
+                    .unwrap_or_else(|_| {
+                        tracing::warn!(value = %delivery_str, "unknown delivery_mode in DB, defaulting to both");
+                        Default::default()
+                    });
             let access_strs: Vec<String> =
                 serde_json::from_str(&access_json).map_err(json_err("result_policy: access"))?;
             let access = access_strs

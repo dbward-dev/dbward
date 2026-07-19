@@ -135,10 +135,6 @@ impl AgentSubmitResult {
         // delivery_mode only applies to successful results; failures always store
         let should_store = !matches!(delivery_mode, dbward_domain::policies::DeliveryMode::Stream)
             || !input.success;
-        let should_stream = !matches!(
-            delivery_mode,
-            dbward_domain::policies::DeliveryMode::StoreOnly
-        ) || !input.success;
 
         // 7. Store result to external storage (success results, or failure with partial data)
         let mut result_manifest: Option<ExecutionResult> = None;
@@ -378,30 +374,28 @@ impl AgentSubmitResult {
         match outcome {
             CompletionOutcome::Normal => {
                 // 9. Publish result to long-poll channel
-                if should_stream {
-                    let summary = ResultSummary {
-                        execution_id: execution.id.clone(),
-                        success: input.success,
-                        rows_affected: if input.success {
-                            input.rows_affected
-                        } else {
-                            None
-                        },
-                        truncated: false,
-                        error_message: input.error_message.clone(),
-                        result_data: if input.success {
-                            input
-                                .result_data
-                                .as_ref()
-                                .map(|d| String::from_utf8_lossy(d).into_owned())
-                        } else {
-                            None
-                        },
-                    };
-                    self.result_channel
-                        .publish(&execution.request_id, summary)
-                        .await;
-                }
+                let summary = ResultSummary {
+                    execution_id: execution.id.clone(),
+                    success: input.success,
+                    rows_affected: if input.success {
+                        input.rows_affected
+                    } else {
+                        None
+                    },
+                    truncated: false,
+                    error_message: input.error_message.clone(),
+                    result_data: if input.success {
+                        input
+                            .result_data
+                            .as_ref()
+                            .map(|d| String::from_utf8_lossy(d).into_owned())
+                    } else {
+                        None
+                    },
+                };
+                self.result_channel
+                    .publish(&execution.request_id, summary)
+                    .await;
                 // Post-commit notification (audit already written by complete_execution)
                 let event = result.into_event();
                 self.notifier

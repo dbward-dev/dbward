@@ -224,7 +224,6 @@ impl<'a> RequestUseCases<'a> {
             uow: s.uow.clone(),
             result_channel: s.result_channel.clone(),
             notifier: s.notifier.clone(),
-            policy_repo: s.policy_repo.clone(),
             clock: s.clock.clone(),
         }
     }

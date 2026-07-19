@@ -37,7 +37,6 @@ Changes take effect on server restart or `dbward server reload`.
 | Mode | Behavior |
 |------|----------|
 | `both` | Stream result to client AND store on server |
-| `store_only` | Store result but don't stream (client fetches later) |
 | `stream` | Stream to client but don't persist on server |
 
 ## Access control

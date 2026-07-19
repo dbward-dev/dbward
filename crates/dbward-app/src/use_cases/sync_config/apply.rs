@@ -490,9 +490,13 @@ pub(super) fn sync_result_policies(
                 .map_err(|e| AppError::Validation(format!("result_policy[{i}] env: {e}")))?
         };
         let delivery_mode = match rp.delivery_mode.as_str() {
-            "store_only" => DeliveryMode::StoreOnly,
             "stream" => DeliveryMode::Stream,
-            _ => DeliveryMode::Both,
+            "both" => DeliveryMode::Both,
+            other => {
+                return Err(AppError::Validation(format!(
+                    "result_policy[{i}].delivery_mode: unknown value '{other}' (expected: both, stream)"
+                )));
+            }
         };
         let access = rp
             .access
