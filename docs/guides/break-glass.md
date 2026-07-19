@@ -35,7 +35,7 @@ dbward execute --emergency --allow-ddl --reason "Rebuild corrupted table" \
 
 | Requirement | Detail |
 |-------------|--------|
-| Permission | User must have `request.break_glass_dml` (admin role by default) |
+| Permission | User must have `request.break_glass_dml` (operator role) |
 | Permission (DDL) | Additionally requires `request.break_glass_ddl` when using `--allow-ddl` |
 | Reason | `--reason` is mandatory — explains why normal workflow was bypassed |
 | Channel | CLI and API only — **not available via MCP** |

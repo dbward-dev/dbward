@@ -21,7 +21,7 @@ id = "my-receiver"
 url = "https://your-service.com/dbward-events"
 format = "generic"
 secret = "${WEBHOOK_SECRET}"
-events = ["request.created", "request.approved", "execution.completed", "request.break_glass_dml"]
+events = ["request.created", "request.approved", "execution.completed", "request.break_glass"]
 ```
 
 | Field | Type | Default | Description |
@@ -37,7 +37,7 @@ events = ["request.created", "request.approved", "execution.completed", "request
 | Event | Category | Description |
 |-------|----------|-------------|
 | `request.created` | approval | New request submitted |
-| `request.break_glass_dml` | approval | Emergency request (bypass approval) |
+| `request.break_glass` | approval | Emergency request (bypass approval) |
 | `request.auto_approved` | approval | Auto-approved by policy |
 | `step.approved` | approval | Approval step completed |
 | `request.approved` | approval | Fully approved (all steps) |

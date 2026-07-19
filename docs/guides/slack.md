@@ -134,7 +134,7 @@ When a request lifecycle event occurs, dbward posts or updates messages in the c
 | Event | Trigger |
 |-------|---------|
 | `request.created` | Request submitted |
-| `request.break_glass_dml` | Emergency request (bypass approval) |
+| `request.break_glass` | Emergency request (bypass approval) |
 | `request.auto_approved` | Auto-approved by policy |
 
 Messages include: requester, database, environment, operation type, risk level (🔴/🟡/🟢), required approvers (@mentioned), and a **Review Request** button (for `request.created`).
