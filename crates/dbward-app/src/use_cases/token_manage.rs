@@ -126,8 +126,16 @@ impl TokenManage {
         }
 
         // Token sprawl guard: check active token count per subject.
-        // Note: count + insert are not in the same TX, but SQLite's single-writer
-        // lock serializes all writes, preventing TOCTOU races in practice.
+        //
+        // SAFETY(TOCTOU): count + insert are not in the same TX, but SQLite's
+        // single-writer lock (WAL mode or otherwise) serializes all write
+        // transactions at the DB level. Between our count query and the subsequent
+        // create_token inside uow.execute(), no other writer can commit an insert
+        // that would change the count. This makes the check-then-act safe in practice.
+        //
+        // TODO: If we migrate to PostgreSQL or another multi-writer DB, move this
+        // check inside the UoW transaction (e.g. SELECT ... FOR UPDATE or use a
+        // serializable isolation level) to prevent concurrent token creation races.
         if self.max_active_tokens_per_user > 0 {
             let count = self
                 .token_repo

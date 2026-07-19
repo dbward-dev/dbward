@@ -382,11 +382,38 @@ impl ServerConfig {
                 )));
             }
             for perm in &rc.permissions {
-                if perm.parse::<dbward_domain::auth::Permission>().is_err() {
+                // Format: "perm_name" or "perm_name:ownership" (own|any)
+                let (perm_part, ownership_part) = if let Some(idx) = perm.rfind(':') {
+                    let (p, o) = perm.split_at(idx);
+                    (p, Some(&o[1..]))
+                } else {
+                    (perm.as_str(), None)
+                };
+
+                // Validate the permission part
+                let parsed = perm_part.parse::<dbward_domain::auth::Permission>();
+                if parsed.is_err() {
                     return Err(ConfigError::Validation(format!(
                         "auth.roles[{}]: unknown permission '{}'",
                         rc.name, perm
                     )));
+                }
+
+                // Validate ownership suffix if present
+                if let Some(ownership) = ownership_part {
+                    // Wildcard `*` implies Any; explicit ownership suffix is not allowed
+                    if parsed.unwrap() == dbward_domain::auth::Permission::All {
+                        return Err(ConfigError::Validation(format!(
+                            "auth.roles[{}]: permission '*' cannot have an ownership suffix (it is implicitly 'any')",
+                            rc.name
+                        )));
+                    }
+                    if ownership != "own" && ownership != "any" {
+                        return Err(ConfigError::Validation(format!(
+                            "auth.roles[{}]: invalid ownership '{}' in '{}' (expected 'own' or 'any')",
+                            rc.name, ownership, perm
+                        )));
+                    }
                 }
             }
             for db in &rc.databases {

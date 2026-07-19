@@ -1,7 +1,8 @@
 use std::sync::Arc;
 
-use dbward_domain::auth::{AuthUser, Permission};
+use dbward_domain::auth::{AuthUser, Permission, ResourceContext};
 use dbward_domain::entities::AuditContext;
+use dbward_domain::values::{DatabaseName, Environment};
 
 use crate::error::AppError;
 use crate::ports::*;
@@ -311,7 +312,15 @@ impl UserManage {
 
     pub fn show(&self, user_id: &str, user: &AuthUser) -> Result<UserShowOutput, AppError> {
         self.authorizer
-            .authorize_global(user, Permission::UserRead)
+            .authorize_scoped(
+                user,
+                Permission::UserRead,
+                &DatabaseName::wildcard(),
+                &Environment::wildcard(),
+                &ResourceContext::User {
+                    target_id: user_id.to_string(),
+                },
+            )
             .map_err(AppError::Forbidden)?;
 
         let existing = self

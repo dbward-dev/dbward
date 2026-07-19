@@ -194,14 +194,29 @@ impl DbRoleResolver {
             .map_err(|e| AuthError::Internal(format!("pool: {e}")))?;
 
         // 1. Get direct roles from users.roles_json
-        let direct_roles: Vec<String> = conn
-            .query_row(
-                "SELECT roles_json FROM users WHERE id = ?1 AND lifecycle_state = 'active'",
-                rusqlite::params![subject_id],
-                |row| row.get::<_, String>(0),
-            )
-            .map(|json| serde_json::from_str::<Vec<String>>(&json).unwrap_or_default())
-            .unwrap_or_default();
+        let direct_roles: Vec<String> = match conn.query_row(
+            "SELECT roles_json FROM users WHERE id = ?1 AND lifecycle_state = 'active'",
+            rusqlite::params![subject_id],
+            |row| row.get::<_, String>(0),
+        ) {
+            Ok(json) => serde_json::from_str::<Vec<String>>(&json).map_err(|e| {
+                tracing::warn!(
+                    subject_id,
+                    error = %e,
+                    "roles_json is corrupted, failing closed"
+                );
+                AuthError::Internal(format!(
+                    "roles_json corrupted for subject '{subject_id}': {e}"
+                ))
+            })?,
+            // User row not found — no direct roles
+            Err(rusqlite::Error::QueryReturnedNoRows) => vec![],
+            Err(e) => {
+                return Err(AuthError::Internal(format!(
+                    "resolve: users query failed: {e}"
+                )));
+            }
+        };
 
         // 2. Get local group memberships
         let mut stmt = conn
@@ -210,7 +225,17 @@ impl DbRoleResolver {
         let local_groups: Vec<String> = stmt
             .query_map(rusqlite::params![subject_id], |row| row.get(0))
             .map_err(|e| AuthError::Internal(format!("resolve: group_members read: {e}")))?
-            .filter_map(|r| r.ok())
+            .filter_map(|r| match r {
+                Ok(v) => Some(v),
+                Err(e) => {
+                    tracing::warn!(
+                        subject_id,
+                        error = %e,
+                        "skipping corrupted group_members row"
+                    );
+                    None
+                }
+            })
             .collect();
 
         // 3. effective_groups = local_groups ∪ oidc_groups

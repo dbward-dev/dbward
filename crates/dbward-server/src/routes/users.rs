@@ -406,7 +406,15 @@ pub async fn reissue_initial_token(
     let mut plaintext_returned = false;
     let mut dm_error: Option<String> = None;
 
-    let slack_user_id = state.user_repo().get_slack_user_id(&user_id).ok().flatten();
+    let slack_user_id = state
+        .user_repo()
+        .get_slack_user_id(&user_id)
+        .map_err(|e| {
+            tracing::warn!(%e, %user_id, "slack_user_id lookup failed, falling back to HTTP response");
+            e
+        })
+        .ok()
+        .flatten();
 
     if let (Some(sc), Some(slack_id)) = (&state.slack_client, &slack_user_id) {
         delivery_channel = Some("slack_dm");

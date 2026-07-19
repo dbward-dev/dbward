@@ -251,10 +251,18 @@ pub async fn get(
                 serde_json::json!({
                     "status": c.status,
                     "explain_enabled": explain_enabled,
-                    "tables": c.tables_json.as_deref().and_then(|j| serde_json::from_str::<serde_json::Value>(j).ok()),
-                    "sql_review": c.sql_review_json.as_deref().and_then(|j| serde_json::from_str::<serde_json::Value>(j).ok()),
-                    "risk": c.risk_json.as_deref().and_then(|j| serde_json::from_str::<serde_json::Value>(j).ok()),
-                    "explain": c.explain_json.as_deref().and_then(|j| serde_json::from_str::<serde_json::Value>(j).ok()),
+                    "tables": c.tables_json.as_deref().and_then(|j| serde_json::from_str::<serde_json::Value>(j)
+                        .map_err(|e| { tracing::warn!(%e, "failed to parse tables_json"); e })
+                        .ok()),
+                    "sql_review": c.sql_review_json.as_deref().and_then(|j| serde_json::from_str::<serde_json::Value>(j)
+                        .map_err(|e| { tracing::warn!(%e, "failed to parse sql_review_json"); e })
+                        .ok()),
+                    "risk": c.risk_json.as_deref().and_then(|j| serde_json::from_str::<serde_json::Value>(j)
+                        .map_err(|e| { tracing::warn!(%e, "failed to parse risk_json"); e })
+                        .ok()),
+                    "explain": c.explain_json.as_deref().and_then(|j| serde_json::from_str::<serde_json::Value>(j)
+                        .map_err(|e| { tracing::warn!(%e, "failed to parse explain_json"); e })
+                        .ok()),
                 })
             }),
             "decision_trace": output.request.decision_trace_json.as_deref()

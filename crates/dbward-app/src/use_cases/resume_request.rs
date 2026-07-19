@@ -85,6 +85,10 @@ impl ResumeRequest {
         .map_err(|e| AppError::Conflict(e.to_string()))?;
 
         // 4. Approval TTL check (based on resolved_at = when approval was granted)
+        // NOTE: Steps 4–5b are outside the UoW transaction. SQLite single-writer
+        // serializes dispatch; re-check in TX if migrating to multi-writer DB.
+        // Unlike approve_request (which must atomically approve+dispatch), resume
+        // only dispatches an already-approved request, so the concern is different.
         if let Some(resolved_at) = request.resolved_at
             && let Some(wf_json) = &request.workflow_snapshot_json
         {
