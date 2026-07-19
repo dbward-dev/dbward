@@ -581,7 +581,11 @@ impl CreateRequest {
 
         // 1b. Permission + DB/env scope check
         let perm = if input.emergency {
-            Permission::RequestBreakGlassDml
+            if operation == Operation::ExecuteSelect {
+                Permission::RequestBreakGlassQuery
+            } else {
+                Permission::RequestBreakGlassDml
+            }
         } else if operation == Operation::ExecuteSelect {
             Permission::RequestQuery
         } else {

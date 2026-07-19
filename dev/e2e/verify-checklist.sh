@@ -107,6 +107,42 @@ STATUS=$(api_status POST "/api/requests/$REQ_R_ID/cancel" "$OPERATOR_TOKEN" \
 [ "$STATUS" = "200" ] && pass "Non-owner cancel with reason → success" || fail "Reason cancel ok" "got $STATUS"
 
 echo ""
+echo "--- §6.2 Resume reason validation ---"
+# Create and approve a request (production 2-step: backend-team then dba-team)
+DBA_APPROVER_TOKEN=$(create_token "vc-dba" approver --groups dba-team)
+REQ_RS=$(api POST /api/requests "$REQUESTER_TOKEN" \
+  -d '{"operation":"execute_query","environment":"production","database":"app","detail":"SELECT resume1","reason":"resume reason test"}')
+REQ_RS_ID=$(echo "$REQ_RS" | json_field id)
+# Step 1: backend-team (APPROVER_TOKEN has backend-team)
+api_status POST "/api/requests/$REQ_RS_ID/approve" "$APPROVER_TOKEN" -d '{"comment":"step1"}' >/dev/null
+# Step 2: dba-team
+api_status POST "/api/requests/$REQ_RS_ID/approve" "$DBA_APPROVER_TOKEN" -d '{"comment":"step2"}' >/dev/null
+
+# Operator resume without reason → error
+STATUS=$(api_status POST "/api/requests/$REQ_RS_ID/resume" "$OPERATOR_TOKEN" -d '{}')
+[ "$STATUS" = "400" ] || [ "$STATUS" = "422" ] && pass "Non-owner resume without reason → error" || fail "Resume reason" "got $STATUS"
+
+# Create another fully-approved request
+REQ_RS2=$(api POST /api/requests "$REQUESTER_TOKEN" \
+  -d '{"operation":"execute_query","environment":"production","database":"app","detail":"SELECT resume2","reason":"resume test 2"}')
+REQ_RS2_ID=$(echo "$REQ_RS2" | json_field id)
+api_status POST "/api/requests/$REQ_RS2_ID/approve" "$APPROVER_TOKEN" -d '{"comment":"s1"}' >/dev/null
+api_status POST "/api/requests/$REQ_RS2_ID/approve" "$DBA_APPROVER_TOKEN" -d '{"comment":"s2"}' >/dev/null
+
+# Operator resume with reason → success
+STATUS=$(api_status POST "/api/requests/$REQ_RS2_ID/resume" "$OPERATOR_TOKEN" \
+  -d '{"reason":"operator dispatch"}')
+[ "$STATUS" = "200" ] || [ "$STATUS" = "202" ] && pass "Non-owner resume with reason → success" || fail "Resume reason ok" "got $STATUS"
+
+echo ""
+echo "--- §6.3 Result.view non-owner ---"
+# Requester cannot view other's result (operator's break-glass result)
+if [ -n "$REQ_OP_ID" ]; then
+  STATUS=$(api_status GET "/api/requests/$REQ_OP_ID/result/content" "$REQUESTER_TOKEN")
+  [ "$STATUS" = "403" ] || [ "$STATUS" = "404" ] && pass "Requester(own) cannot view other's result" || fail "Result view other" "got $STATUS"
+fi
+
+echo ""
 echo "--- §7 Schema ---"
 STATUS=$(api_status GET "/api/schemas/app?environment=development" "$REQUESTER_TOKEN")
 [ "$STATUS" = "200" ] && pass "Requester(schema.read) can read schema" || fail "Req schema" "got $STATUS"

@@ -370,6 +370,7 @@ pub async fn resume(
     client_ip: Option<Extension<ClientIp>>,
     connect_info: Option<Extension<axum::extract::ConnectInfo<std::net::SocketAddr>>>,
     Path(id): Path<String>,
+    body: Option<Json<serde_json::Value>>,
 ) -> ApiResult {
     let audit_ctx = super::extract_audit_context(
         client_ip.as_ref().map(|e| &e.0),
@@ -379,7 +380,10 @@ pub async fn resume(
 
     let input = dbward_app::use_cases::resume_request::ResumeRequestInput {
         request_id: id,
-        reason: None,
+        reason: body
+            .as_ref()
+            .and_then(|b| b["reason"].as_str())
+            .map(String::from),
     };
 
     match uc.execute(input, &user, &audit_ctx) {

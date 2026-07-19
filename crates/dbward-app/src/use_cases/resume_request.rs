@@ -770,4 +770,68 @@ mod tests {
             .unwrap_err();
         assert!(matches!(err, AppError::Conflict(_)));
     }
+
+    #[test]
+    fn non_owner_resume_without_reason_fails() {
+        let reader = Arc::new(FakeDispatchReader {
+            request: Mutex::new(Some(make_request(RequestStatus::Approved))),
+        });
+        let writer = Arc::new(FakeDispatchWriter {
+            dispatched: Mutex::new(false),
+        });
+        let uc = make_uc(reader, writer);
+
+        // bob is NOT the requester (alice)
+        let bob = AuthUser {
+            subject_id: "bob".into(),
+            subject_type: SubjectType::User,
+            roles: vec![],
+            groups: vec![],
+            token_id: None,
+        };
+
+        let err = uc
+            .execute(
+                ResumeRequestInput {
+                    request_id: "req-001".into(),
+                    reason: None,
+                },
+                &bob,
+                &dbward_domain::entities::AuditContext::System,
+            )
+            .unwrap_err();
+        assert!(matches!(err, AppError::Validation(_)));
+    }
+
+    #[test]
+    fn non_owner_resume_with_reason_succeeds() {
+        let reader = Arc::new(FakeDispatchReader {
+            request: Mutex::new(Some(make_request(RequestStatus::Approved))),
+        });
+        let writer = Arc::new(FakeDispatchWriter {
+            dispatched: Mutex::new(false),
+        });
+        let uc = make_uc(reader, writer.clone());
+
+        // bob is NOT the requester (alice)
+        let bob = AuthUser {
+            subject_id: "bob".into(),
+            subject_type: SubjectType::User,
+            roles: vec![],
+            groups: vec![],
+            token_id: None,
+        };
+
+        let out = uc
+            .execute(
+                ResumeRequestInput {
+                    request_id: "req-001".into(),
+                    reason: Some("operator intervention".into()),
+                },
+                &bob,
+                &dbward_domain::entities::AuditContext::System,
+            )
+            .unwrap();
+        assert_eq!(out.status, RequestStatus::Dispatched);
+    }
 }
