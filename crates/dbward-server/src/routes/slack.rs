@@ -899,9 +899,15 @@ async fn handle_resume_submission(state: &AppState, payload: &serde_json::Value)
     };
 
     let uc = state.requests().resume();
+    // Extract reason from modal input (operator resume requires reason)
+    let reason = payload["view"]["state"]["values"]["reason_block"]["reason_input"]["value"]
+        .as_str()
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+        .map(String::from);
     let input = dbward_app::use_cases::resume_request::ResumeRequestInput {
         request_id: request_id.clone(),
-        reason: None,
+        reason,
     };
     let audit_ctx =
         dbward_domain::entities::AuditContext::Request(dbward_domain::entities::ClientInfo {
@@ -915,6 +921,9 @@ async fn handle_resume_submission(state: &AppState, payload: &serde_json::Value)
         Err(e) => {
             let m = match &e {
                 dbward_app::error::AppError::Forbidden(_) => msg::PERMISSION_DENIED_RESUME,
+                dbward_app::error::AppError::Validation(_) => {
+                    "Reason is required when resuming another user's request."
+                }
                 dbward_app::error::AppError::Conflict(m) => m.as_str(),
                 dbward_app::error::AppError::NotFound(_) => msg::REQUEST_NOT_FOUND,
                 dbward_app::error::AppError::Gone(_) => msg::REQUEST_EXPIRED,
