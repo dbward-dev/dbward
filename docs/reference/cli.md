@@ -108,11 +108,12 @@ Wait for execution and display result.
 
 ```bash
 dbward request resume <ID>
-dbward request resume <ID> --result-format json --output results.json
+dbward request resume <ID> --reason "operator dispatch" --result-format json
 ```
 
 | Option | Default | Description |
 |--------|---------|-------------|
+| `--reason <TEXT>` | | Reason for resuming (required when resuming another user's request) |
 | `--output <PATH>` | | Save result to file |
 | `--result-format <FMT>` | table | Display format: `table`, `json`, `csv`, `vertical` |
 

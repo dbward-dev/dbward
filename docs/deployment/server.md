@@ -26,7 +26,7 @@ trusted_proxies = ["10.0.0.0/8"]  # Trust X-Forwarded-For from these CIDRs
 
 ```toml
 [auth]
-# break_glass: any user with --emergency flag  # Roles allowed to use --emergency
+# break-glass: users with request.break_glass_* permissions (operator role)
 ```
 
 For OIDC setup, see [Authentication](../guides/authentication.md).
@@ -104,7 +104,7 @@ Set `Expiration.Days` to `retention_days + 1` (default retention is 30 days for 
 ```toml
 [[webhooks]]
 url = "https://hooks.slack.com/services/T.../B.../xxx"
-events = ["request_created", "request_approved", "request_rejected", "request_completed"]
+events = ["request.created", "request.approved", "request.rejected", "execution.completed"]
 format = "slack"
 # secret = "whsec_..."           # HMAC-SHA256 signature (optional)
 ```

@@ -285,7 +285,7 @@ See [full API reference](docs/reference/api.md) for all endpoints, parameters, p
 - **Token replay prevention** — executed/failed requests don't issue new tokens
 - **Multi-statement rejection** — prevents SQL injection via statement chaining
 - **Writable CTE detection** — `WITH x AS (DELETE ...) SELECT ...` classified as DML
-- **RBAC** — admin (all), developer (migrate + execute), readonly (SELECT only)
+- **RBAC** — admin (system management), requester (SQL operations), operator (monitoring + break-glass), approver (review)
 - **Network isolation** — server has no DB credentials; agent connects outbound only
 - **API token auth** — SHA-256 hashed, prefix+hash composite lookup
 - **OIDC auth** — JWT verification with JWKS caching, RS256/ES256, PKCE for CLI (Team)
@@ -369,7 +369,7 @@ format = "generic"
 secret = "whsec_xxxx"  # HMAC-SHA256 in X-Dbward-Signature header
 ```
 
-Events: `request_created`, `request_approved`, `request_rejected`, `request_completed`, `break_glass`.
+Events: `request.created`, `request.approved`, `request.rejected`, `execution.completed`, `request.break_glass`.
 
 Free: unlimited webhook destinations.
 
@@ -381,9 +381,9 @@ dbward execute "SELECT pg_terminate_backend(12345)" \
 ```
 
 - Skips approval — agent executes immediately when dispatched
-- Fires `break_glass` webhook (🚨 in Slack)
+- Fires `request.break_glass` webhook (🚨 in Slack)
 - Reason recorded in audit log
-- **Admin role only** (developer/readonly cannot use)
+- **Operator role only** (requires `request.break_glass_dml` permission)
 - **Not available via MCP** (AI agents cannot trigger break-glass)
 
 ## Configuration

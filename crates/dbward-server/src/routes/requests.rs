@@ -347,7 +347,7 @@ pub async fn cancel(
     client_ip: Option<Extension<ClientIp>>,
     connect_info: Option<Extension<axum::extract::ConnectInfo<std::net::SocketAddr>>>,
     Path(id): Path<String>,
-    Json(body): Json<serde_json::Value>,
+    body: Option<Json<serde_json::Value>>,
 ) -> ApiResult {
     let audit_ctx = super::extract_audit_context(
         client_ip.as_ref().map(|e| &e.0),
@@ -357,7 +357,10 @@ pub async fn cancel(
 
     let input = dbward_app::use_cases::cancel_request::CancelRequestInput {
         request_id: id,
-        reason: body["reason"].as_str().map(String::from),
+        reason: body
+            .as_ref()
+            .and_then(|b| b["reason"].as_str())
+            .map(String::from),
     };
 
     match uc.execute(input, &user, &audit_ctx) {

@@ -53,7 +53,7 @@ dbward execute --emergency --allow-ddl --reason "Rebuild corrupted table" \
 
 Break-glass creates enhanced audit records:
 
-- Event type: `break_glass`
+- Event type: `request.break_glass`
 - Includes: user, reason, SQL, result, timestamp
 - Webhook notification fires with 🚨 indicator
 - Prometheus metric: `dbward_break_glass_total` incremented
