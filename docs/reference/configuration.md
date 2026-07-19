@@ -57,7 +57,7 @@ environments = ["staging", "production"]
 
 ```toml
 [auth]
-default_role = "readonly"
+default_role = "approver"
 ```
 
 | Field | Type | Required | Default | Description |
@@ -106,19 +106,19 @@ Define custom roles and groups in TOML.
 ```toml
 [[auth.roles]]
 name = "dba"
-permissions = ["request.execute", "request.approve", "audit.read"]
+permissions = ["request.dml", "audit.read"]
 
 [[auth.groups]]
 name = "backend-team"
-roles = ["developer"]
+roles = ["requester"]
 ```
 
 **[[auth.roles]]**
 
 | Field | Type | Required | Default | Description |
 |---|---|---|---|---|
-| `name` | String | ✓ | — | Role identifier. Cannot redefine built-ins: `admin`, `developer`, `readonly`, `agent-default`. |
-| `permissions` | String[] | ✓ | — | Granted permissions (e.g. `"request.execute"`, `"request.approve"`, `"*"`). [Full list →](authorization.md#permissions) |
+| `name` | String | ✓ | — | Role identifier. Cannot redefine built-ins: `admin`, `requester`, `approver`, `agent-default`. |
+| `permissions` | String[] | ✓ | — | Granted permissions (e.g. `"request.dml"`, `"*"`). [Full list →](authorization.md#permissions) |
 | `databases` | String[] | | `[]` | Restrict to specific databases. Empty = all. |
 | `environments` | String[] | | `[]` | Restrict to specific environments. Empty = all. |
 
@@ -369,7 +369,7 @@ Self-service user onboarding via the `/dbward join` Slack command. Requests requ
 ```toml
 [slack.onboarding]
 enabled = true
-assignable_roles = ["developer", "dba", "readonly"]
+assignable_roles = ["requester", "dba", "approver"]
 assignable_groups = ["backend-team", "dba-team"]
 restricted_roles = ["admin"]
 request_ttl_hours = 72

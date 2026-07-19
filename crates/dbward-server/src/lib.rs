@@ -43,14 +43,36 @@ use dbward_domain::values::{DatabaseName, Environment};
 fn build_role_definition(
     rc: &dbward_config::server::RoleConfig,
 ) -> Result<dbward_domain::auth::RoleDefinition, String> {
-    let perms: Vec<dbward_domain::auth::Permission> = rc
+    let perms: Vec<dbward_domain::auth::PermissionEntry> = rc
         .permissions
         .iter()
         .map(|s| {
-            s.parse()
-                .map_err(|_| format!("role '{}': invalid permission '{}'", rc.name, s))
+            // Format: "perm_name" (default Own) or "perm_name:ownership"
+            let (perm_str, ownership) = if let Some(idx) = s.rfind(':') {
+                let (p, o) = s.split_at(idx);
+                let o_str = &o[1..];
+                match o_str.parse::<dbward_domain::auth::OwnershipScope>() {
+                    Ok(scope) => (p, scope),
+                    Err(_) => (s.as_str(), dbward_domain::auth::OwnershipScope::Own),
+                }
+            } else {
+                (s.as_str(), dbward_domain::auth::OwnershipScope::Own)
+            };
+            let perm: dbward_domain::auth::Permission = perm_str
+                .parse()
+                .map_err(|_| format!("role '{}': invalid permission '{}'", rc.name, s))?;
+            // `*` always means Any regardless of explicit suffix
+            let final_ownership = if perm == dbward_domain::auth::Permission::All {
+                dbward_domain::auth::OwnershipScope::Any
+            } else {
+                ownership
+            };
+            Ok(dbward_domain::auth::PermissionEntry {
+                perm,
+                ownership: final_ownership,
+            })
         })
-        .collect::<Result<Vec<_>, _>>()?;
+        .collect::<Result<Vec<_>, String>>()?;
     let databases = if rc.databases.is_empty() {
         vec![
             DatabaseName::new("*")
@@ -912,7 +934,7 @@ fn safety_guard(
             cfg.notification_policies.is_empty(),
         ),
         ("databases", cfg.databases.is_empty()),
-        // Note: roles excluded — built-in roles (admin/developer/readonly) are schema-seeded
+        // Note: roles excluded — built-in roles (admin/requester/approver/operator/agent-default) are schema-seeded
         // with source='config' and cannot be redefined in TOML.
         ("groups", cfg.auth.groups.is_empty()),
     ];

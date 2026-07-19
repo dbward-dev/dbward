@@ -66,9 +66,9 @@ create_agent_token() {
 mkdir -p /tokens
 
 echo "[dev-init] creating users and tokens"
-create_user_token "alice" "developer" "/tokens/alice.token"
+create_user_token "alice" "requester" "/tokens/alice.token"
 create_user_token "bob" "admin" "/tokens/bob.token"
-create_user_token "carol" "developer" "/tokens/carol.token"
-create_user_token "dave" "developer" "/tokens/dave.token"
+create_user_token "carol" "requester" "/tokens/carol.token"
+create_user_token "dave" "requester" "/tokens/dave.token"
 create_agent_token "agent" "/tokens/agent.token"
 echo "[dev-init] done"

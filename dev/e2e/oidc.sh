@@ -50,7 +50,7 @@ STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:13000/api/reque
 # Verify user was auto-created (OIDC users get Keycloak sub as ID)
 sleep 1
 USERS=$(curl -s http://localhost:13000/api/users -H "Authorization: Bearer $ADMIN_TOKEN")
-USER_COUNT=$(echo "$USERS" | jq '[.users[] | select(.id != "admin" and .id != "developer" and .id != "agent")] | length')
+USER_COUNT=$(echo "$USERS" | jq '[.users[] | select(.id != "admin" and .id != "requester" and .id != "agent")] | length')
 [ "$USER_COUNT" -ge 1 ] && pass "13.1c OIDC user auto-created in users table" || fail "13.1c" "no OIDC users found"
 
 # ============================================================
@@ -59,11 +59,11 @@ USER_COUNT=$(echo "$USERS" | jq '[.users[] | select(.id != "admin" and .id != "d
 echo ""
 echo "--- 7.6 OIDC groups → role_mappings ---"
 
-# Alice is in dbward-developers group → should resolve to developer role
+# Alice is in dbward-developers group → should resolve to requester role
 # Verify by calling an endpoint that requires authentication (requests list)
 STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:13000/api/requests \
   -H "Authorization: Bearer $ALICE_JWT")
-[ "$STATUS" = "200" ] && pass "7.6 OIDC alice (developer group) authenticated with role" || fail "7.6" "got $STATUS"
+[ "$STATUS" = "200" ] && pass "7.6 OIDC alice (developer group) authenticated with requester role" || fail "7.6" "got $STATUS"
 
 # Bob is in dbward-admins group → should resolve to admin
 BOB_JWT=$(get_oidc_token bob bob)
@@ -149,14 +149,14 @@ echo "--- 7.14 Unknown OIDC user → auto-create ---"
 # Carol exists in Keycloak but hasn't logged in yet
 CAROL_JWT=$(get_oidc_token carol carol)
 if [ -n "$CAROL_JWT" ]; then
-  # Carol may have readonly or dba role depending on Keycloak groups
+  # Carol may have approver or dba role depending on Keycloak groups
   # Just verify authentication succeeds (auto-create works)
   STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:13000/health \
     -H "Authorization: Bearer $CAROL_JWT")
   # Health doesn't require auth, so check a protected endpoint
   STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:13000/api/requests \
     -H "Authorization: Bearer $CAROL_JWT")
-  # Carol may get 200 (has request.view) or 403 (readonly without request.view)
+  # Carol may get 200 (has request.view) or 403 (approver without request.view)
   [ "$STATUS" = "200" ] || [ "$STATUS" = "403" ] \
     && pass "7.14 unknown OIDC user auto-created and authenticated ($STATUS)" \
     || fail "7.14" "got $STATUS (expected 200 or 403)"

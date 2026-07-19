@@ -876,10 +876,10 @@ mod tests {
         let resp = serde_json::json!({
             "subject_id": "old-server",
             "subject_type": "user",
-            "roles": ["admin", "developer"]
+            "roles": ["admin", "requester"]
         });
         let output = capture_whoami_output(&resp);
-        assert!(output.contains("Roles: admin, developer"));
+        assert!(output.contains("Roles: admin, requester"));
     }
 
     /// Helper: extract what print_whoami_server would produce by calling the internal logic directly

@@ -24,16 +24,16 @@ echo "$RESP" | python3 -c "import sys,json;json.load(sys.stdin)" 2>/dev/null \
 # --- 2. Create + revoke ---
 echo ""
 echo "--- Create and revoke ---"
-EXTRA_TOKEN=$(create_token "e2e-tok-extra-$TS" developer)
+EXTRA_TOKEN=$(create_token "e2e-tok-extra-$TS" requester)
 [ -n "$EXTRA_TOKEN" ] && pass "Created extra token" || fail "Create token" ""
 
-# Find the token ID
+# Find the active token ID (filter by status to avoid revoked initial token)
 RESP=$(api GET /api/tokens "$ADMIN_TOKEN")
 TOKEN_ID=$(echo "$RESP" | python3 -c "
 import sys,json
 tokens = json.load(sys.stdin).get('tokens',[])
 for t in tokens:
-    if t.get('subject_id','') == 'e2e-tok-extra-$TS':
+    if t.get('subject_id','') == 'e2e-tok-extra-$TS' and t.get('status','') == 'active':
         print(t['id']); break
 " 2>/dev/null || true)
 

@@ -22,8 +22,8 @@ docker compose ps webhook-receiver 2>&1 | grep -q "Up" \
 echo ""
 echo "--- 16.1 request.created event delivery ---"
 
-# Create a developer user + token to create a request
-RESP=$(api POST /api/users "$ADMIN_TOKEN" -d "{\"id\":\"wh-dev-$TS\",\"roles\":[\"developer\"]}")
+# Create a requester user + token to create a request
+RESP=$(api POST /api/users "$ADMIN_TOKEN" -d "{\"id\":\"wh-dev-$TS\",\"roles\":[\"requester\"]}")
 DEV_TOKEN=$(echo "$RESP" | jq -r '.token // empty')
 
 # Create a request to trigger webhook

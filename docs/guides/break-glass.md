@@ -35,7 +35,7 @@ dbward execute --emergency --allow-ddl --reason "Rebuild corrupted table" \
 
 | Requirement | Detail |
 |-------------|--------|
-| Permission | User must have `request.break_glass` (admin role by default) |
+| Permission | User must have `request.break_glass_dml` (operator role) |
 | Permission (DDL) | Additionally requires `request.break_glass_ddl` when using `--allow-ddl` |
 | Reason | `--reason` is mandatory — explains why normal workflow was bypassed |
 | Channel | CLI and API only — **not available via MCP** |
@@ -53,7 +53,7 @@ dbward execute --emergency --allow-ddl --reason "Rebuild corrupted table" \
 
 Break-glass creates enhanced audit records:
 
-- Event type: `break_glass`
+- Event type: `request.break_glass`
 - Includes: user, reason, SQL, result, timestamp
 - Webhook notification fires with 🚨 indicator
 - Prometheus metric: `dbward_break_glass_total` incremented
@@ -85,7 +85,7 @@ Break-glass permission is granted via roles. By default, only `admin` has it:
 ```toml
 [[auth.roles]]
 name = "oncall"
-permissions = ["request.break_glass", "request.execute", "request.view"]
+permissions = ["request.break_glass_dml", "request.dml", "request.view"]
 ```
 
 To also allow DDL bypass in emergencies:
@@ -93,7 +93,7 @@ To also allow DDL bypass in emergencies:
 ```toml
 [[auth.roles]]
 name = "oncall-senior"
-permissions = ["request.break_glass", "request.break_glass_ddl", "request.execute", "request.view"]
+permissions = ["request.break_glass_dml", "request.break_glass_ddl", "request.dml", "request.view"]
 ```
 
 ## Limitations

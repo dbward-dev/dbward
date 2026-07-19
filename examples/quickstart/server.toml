@@ -1,7 +1,7 @@
 state_dir = "/data"
 
 [auth]
-default_role = "developer"
+default_role = "requester"
 
 [[databases]]
 name = "app"

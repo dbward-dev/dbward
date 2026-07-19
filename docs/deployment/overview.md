@@ -22,7 +22,7 @@ description: Production deployment architecture and method selection
 
 ### Separated
 
-Server on a central host, agent on a host with database access, CLI on developer machines.
+Server on a central host, agent on a host with database access, CLI on user machines.
 
 ```
 Developer laptop  ──▶  Server (cloud VM)  ◀──  Agent (DB subnet)  ──▶  PostgreSQL
@@ -70,7 +70,7 @@ Agents register with capabilities; the server matches requests to the appropriat
 
 1. **No DB credentials on clients** — credentials exist only in the agent's config
 2. **Signed execution tokens** — Ed25519 signatures prevent request tampering
-3. **RBAC** — admin, developer, readonly roles enforced by the server
+3. **RBAC** — admin, requester, approver roles enforced by the server
 4. **Audit log** — every operation recorded with hash-chain integrity
 5. **Fail-closed workflows** — if policy evaluation fails, the request is denied (not auto-approved)
 

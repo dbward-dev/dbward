@@ -17,7 +17,7 @@ ADMIN_TOKEN=$(create_token e2e-bypass-admin admin)
 # --- Revoked token ---
 echo "--- Revoked token ---"
 
-VICTIM_TOKEN=$(create_token e2e-victim developer)
+VICTIM_TOKEN=$(create_token e2e-victim requester)
 # Verify it works first
 STATUS=$(api_status GET /api/requests "$VICTIM_TOKEN")
 [ "$STATUS" = "200" ] && pass "Token works before revoke" || fail "Pre-revoke" "got $STATUS"

@@ -15,7 +15,7 @@ echo ""
 
 wait_for_server
 
-TOKEN=$(create_token mcp-http-user developer)
+TOKEN=$(create_token mcp-http-user requester)
 [ -z "$TOKEN" ] && { echo "Failed to create token"; exit 1; }
 
 # Helper: POST /mcp with JSON-RPC body

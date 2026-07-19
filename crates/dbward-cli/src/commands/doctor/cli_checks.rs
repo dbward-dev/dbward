@@ -188,7 +188,7 @@ pub(super) async fn run_cli_mode(ctx: &mut DoctorContext, config_path: Option<&s
                     id: "auth_valid",
                     status: Status::Fail,
                     message: format!("authentication failed: {e}"),
-                    hint: Some("Check your token or run 'dbward login'. On first server start, tokens are in /data/admin-token and /data/developer-token.".into()),
+                    hint: Some("Check your token or run 'dbward login'. On first server start, tokens are in /data/admin-token and /data/requester-token.".into()),
                     details: vec![],
                 });
             }

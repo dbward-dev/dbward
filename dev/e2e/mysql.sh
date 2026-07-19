@@ -25,7 +25,7 @@ echo "MySQL ready"
 
 # Create agent token pointing to MySQL
 ADMIN_TOKEN=$(create_token admin1 admin)
-DEV_TOKEN=$(create_token dev1 developer)
+DEV_TOKEN=$(create_token dev1 requester)
 
 [ -z "$ADMIN_TOKEN" ] && { echo "Failed to create admin token"; exit 1; }
 [ -z "$DEV_TOKEN" ] && { echo "Failed to create dev token"; exit 1; }

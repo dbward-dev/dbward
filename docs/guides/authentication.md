@@ -24,20 +24,20 @@ When `[auth.oidc]` is present, both methods are accepted. When absent, only API 
 
 ```bash
 # Via CLI
-dbward token create --subject alice --scope-roles developer
-dbward token create --subject bob --scope-roles developer,dba --expires 90d
+dbward token create --subject alice --scope-roles requester
+dbward token create --subject bob --scope-roles requester,dba --expires 90d
 dbward token create --subject prod-agent --subject-type agent --no-scope-ceiling
 ```
 
 ```bash
-# Via REST API (requires token.create_own or token.manage permission)
+# Via REST API (requires token.create or token.create_agent permission)
 curl -X POST http://localhost:3000/api/tokens \
   -H "Authorization: Bearer $ADMIN_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
     "subject_id": "bob",
     "subject_type": "user",
-    "scope_ceiling": {"roles": ["developer", "dba"]},
+    "scope_ceiling": {"roles": ["requester", "dba"]},
     "name": "Bob CI token",
     "expires_at": "2026-09-01T00:00:00Z"
   }'
@@ -61,7 +61,7 @@ Create → Active → [Expired | Revoked]
 
 - **Expiration:** Tokens with `expires_at` are rejected after the deadline.
 - **Revocation:** Immediate via `DELETE /api/tokens/{id}`.
-- **Self-revoke:** Users with `token.revoke_own` permission can revoke their own tokens.
+- **Self-revoke:** Users with `token.revoke` permission can revoke their own tokens.
 - **No rotate API:** Revoke the old token and create a new one.
 
 ### Revoking tokens
@@ -114,7 +114,7 @@ dbward token inspect <ID>
 ```
 
 ```bash
-# Via REST API (owner or token.manage permission)
+# Via REST API (owner or token.list permission)
 curl http://localhost:3000/api/tokens/$TOKEN_ID/inspect \
   -H "Authorization: Bearer $MY_TOKEN"
 ```
@@ -131,7 +131,7 @@ issuer = "https://accounts.google.com"
 client_id = "123456789.apps.googleusercontent.com"
 # # client_secret_env is not supported  # Optional: env var name
 # jwks_uri = "http://keycloak:8080/realms/dbward/protocol/openid-connect/certs"  # Override for Docker
-default_role = "readonly"         # Role when no mapping matches (default: readonly)
+default_role = "approver"         # Role when no mapping matches (default: approver)
 ```
 
 ### Client configuration
@@ -179,7 +179,7 @@ role = "admin"
 [[auth.oidc.role_mappings]]
 claim = "groups"
 value = "backend-team"
-role = "developer"
+role = "requester"
 ```
 
 **How it works:**
@@ -207,7 +207,7 @@ Users are managed via the `dbward user` CLI commands:
 
 ```bash
 # Add a user with a role
-dbward user add alice --role developer
+dbward user add alice --role requester
 
 # Add a user to a group (inherits group roles)
 dbward user add bob --role dba --group backend-team
@@ -295,7 +295,7 @@ min = 1
 |---|---|---|
 | Source | IdP `groups` claim | `role_mappings` conversion |
 | Purpose | Workflow approver matching | API access control |
-| Example | `group:dba-team` | `admin`, `developer` |
+| Example | `group:dba-team` | `admin`, `requester` |
 | Stored in dbward? | No (JWT only) | No (JWT only) |
 
 Both are extracted from the JWT on every request. Neither is stored in dbward's database.

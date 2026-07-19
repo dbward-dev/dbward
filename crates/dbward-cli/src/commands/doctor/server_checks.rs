@@ -469,7 +469,13 @@ fn pad_col(value: &str, width: usize) -> String {
 }
 
 fn check_role_resolution(ctx: &mut DoctorContext, cfg: &dbward_config::ServerConfig) {
-    let builtin = ["admin", "developer", "readonly", "agent-default"];
+    let builtin = [
+        "admin",
+        "requester",
+        "approver",
+        "operator",
+        "agent-default",
+    ];
     let config_roles: std::collections::HashSet<&str> =
         cfg.auth.roles.iter().map(|r| r.name.as_str()).collect();
     let mut undefined = Vec::new();
@@ -515,7 +521,13 @@ fn check_role_resolution(ctx: &mut DoctorContext, cfg: &dbward_config::ServerCon
 }
 
 fn check_built_in_role_collision(ctx: &mut DoctorContext, cfg: &dbward_config::ServerConfig) {
-    let builtin = ["admin", "developer", "readonly", "agent-default"];
+    let builtin = [
+        "admin",
+        "requester",
+        "approver",
+        "operator",
+        "agent-default",
+    ];
     let mut collisions = Vec::new();
     for r in &cfg.auth.roles {
         if builtin.contains(&r.name.as_str()) {
@@ -923,7 +935,7 @@ mode = "always"
         let cfg = server_cfg(
             r#"
 [auth]
-default_role = "developer"
+default_role = "requester"
 
 [[auth.groups]]
 name = "admins"
@@ -947,7 +959,7 @@ roles = ["admin"]
 
 [[auth.roles]]
 name = "dba"
-permissions = ["request.approve"]
+permissions = ["request.view"]
 
 [[auth.groups]]
 name = "dba-team"

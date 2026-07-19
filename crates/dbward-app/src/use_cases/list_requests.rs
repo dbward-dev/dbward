@@ -1,8 +1,9 @@
 use std::sync::Arc;
 
-use dbward_domain::auth::{AuthUser, Permission};
+use dbward_domain::auth::{AuthUser, Permission, ResourceContext};
 use dbward_domain::entities::{Request, RequestStatus};
 use dbward_domain::policies::workflow::Workflow;
+use dbward_domain::values::{DatabaseName, Environment};
 
 use crate::error::AppError;
 use crate::ports::*;
@@ -100,14 +101,10 @@ impl ListRequests {
                 .authorizer
                 .authorize_global(user, Permission::RequestView)
                 .is_ok();
-            let has_approve = self
-                .authorizer
-                .authorize_global(user, Permission::RequestApprove)
-                .is_ok();
-            if !has_view && !has_approve {
+            if !has_view {
                 return Err(AppError::Forbidden(crate::error::AuthzError::Forbidden {
                     permission: Permission::RequestView,
-                    reason: "requires RequestView or RequestApprove".into(),
+                    reason: "requires RequestView".into(),
                 }));
             }
         } else {
@@ -152,9 +149,23 @@ impl ListRequests {
             input.user.as_deref(),
         )?;
 
-        let is_admin = user.has_permission(Permission::All);
+        // §3 exception: filter scope decision via authorize_scoped().is_ok()
+        let can_view_all = self
+            .authorizer
+            .authorize_scoped(
+                user,
+                Permission::RequestView,
+                &DatabaseName::wildcard(),
+                &Environment::wildcard(),
+                &ResourceContext::RequestView {
+                    requester_id: String::new(),
+                    is_pending_approver: false,
+                    has_approved: false,
+                },
+            )
+            .is_ok();
 
-        if is_admin {
+        if can_view_all {
             let pending_ids: Vec<&str> = requests
                 .iter()
                 .filter(|r| r.status == RequestStatus::Pending)
@@ -225,10 +236,45 @@ mod tests {
     use super::*;
     use crate::test_support::*;
     use chrono::Utc;
-    use dbward_domain::auth::{ResolvedRole, SubjectType};
+    use dbward_domain::auth::{OwnershipScope, ResolvedRole, SubjectType};
     use dbward_domain::entities::RequestStatus;
     use dbward_domain::values::{DatabaseName, Environment, Operation};
     use std::sync::Mutex;
+
+    /// Authorizer that allows authorize_global but denies authorize_scoped.
+    /// Simulates a user without ownership:Any (non-admin).
+    struct AllowGlobalOnly;
+    impl Authorizer for AllowGlobalOnly {
+        fn authorize_scoped(
+            &self,
+            _: &AuthUser,
+            p: Permission,
+            _: &DatabaseName,
+            _: &Environment,
+            _: &ResourceContext,
+        ) -> Result<(), crate::error::AuthzError> {
+            Err(crate::error::AuthzError::Forbidden {
+                permission: p,
+                reason: "no broad access".into(),
+            })
+        }
+        fn authorize_global(
+            &self,
+            _: &AuthUser,
+            _: Permission,
+        ) -> Result<(), crate::error::AuthzError> {
+            Ok(())
+        }
+        fn authorize_approval(
+            &self,
+            _: &AuthUser,
+            _: &DatabaseName,
+            _: &Environment,
+            _: &ResourceContext,
+        ) -> Result<(), crate::error::AuthzError> {
+            Ok(())
+        }
+    }
 
     struct FakeListReader {
         requests: Mutex<Vec<Request>>,
@@ -333,9 +379,11 @@ mod tests {
                 .map(|name| ResolvedRole {
                     name: name.to_string(),
                     permissions: if *name == "admin" {
-                        [Permission::All].into_iter().collect()
+                        [(Permission::All, OwnershipScope::Any)]
+                            .into_iter()
+                            .collect()
                     } else {
-                        [Permission::RequestView, Permission::RequestApprove]
+                        [(Permission::RequestView, OwnershipScope::Own)]
                             .into_iter()
                             .collect()
                     },
@@ -412,9 +460,9 @@ mod tests {
         ];
         let uc = ListRequests {
             request_reader: Arc::new(FakeListReader::new(requests)),
-            authorizer: Arc::new(AllowAll),
+            authorizer: Arc::new(AllowGlobalOnly),
         };
-        let user = make_user("alice", &["developer"]);
+        let user = make_user("alice", &["requester"]);
         let out = uc
             .execute(
                 ListRequestsInput {

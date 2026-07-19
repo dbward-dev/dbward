@@ -244,11 +244,18 @@ impl ServerClient {
         }
     }
 
-    pub async fn resume(&self, request_id: &str) -> Result<Value, ServerError> {
+    pub async fn resume(
+        &self,
+        request_id: &str,
+        reason: Option<&str>,
+    ) -> Result<Value, ServerError> {
         let path = format!("/api/requests/{}/resume", request_id);
+        let body = reason
+            .map(|r| serde_json::json!({"reason": r}))
+            .unwrap_or(serde_json::json!({}));
         let (status, text) = self
             .api
-            .post_empty_with_status(&path)
+            .post_with_status(&path, &body)
             .await
             .map_err(|e| ServerError::from_response(0, e.to_string()))?;
         if status >= 400 {

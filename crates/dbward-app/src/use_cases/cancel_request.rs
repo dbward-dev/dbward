@@ -56,11 +56,18 @@ impl CancelRequest {
                 Permission::RequestCancel,
                 &request.database,
                 &request.environment,
-                &ResourceContext::Request {
+                &ResourceContext::RequestMutate {
                     requester_id: request.requester.clone(),
                 },
             )
             .map_err(AppError::Forbidden)?;
+
+        // Non-owner cancel requires a reason
+        if user.subject_id != request.requester && input.reason.is_none() {
+            return Err(AppError::Validation(
+                "reason required for non-owner cancel".into(),
+            ));
+        }
 
         let now = self.clock.now();
         let result = status_machine::transition(

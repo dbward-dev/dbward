@@ -90,9 +90,9 @@ pub fn matched_selectors_by_attrs(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::auth::{AuthUser, Permission, ResolvedRole, SubjectType};
+    use crate::auth::{AuthUser, OwnershipScope, Permission, ResolvedRole, SubjectType};
     use crate::values::Selector;
-    use std::collections::HashSet;
+    use std::collections::HashMap;
 
     fn make_user(id: &str, roles: &[&str], groups: &[&str]) -> AuthUser {
         AuthUser {
@@ -102,7 +102,7 @@ mod tests {
                 .iter()
                 .map(|name| ResolvedRole {
                     name: name.to_string(),
-                    permissions: HashSet::new(),
+                    permissions: HashMap::new(),
                     databases: vec![],
                     environments: vec![],
                 })
@@ -118,7 +118,7 @@ mod tests {
             subject_type: SubjectType::User,
             roles: vec![ResolvedRole {
                 name: "admin".to_string(),
-                permissions: [Permission::All].into_iter().collect(),
+                permissions: HashMap::from([(Permission::All, OwnershipScope::Any)]),
                 databases: vec![],
                 environments: vec![],
             }],

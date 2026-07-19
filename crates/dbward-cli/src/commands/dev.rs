@@ -27,7 +27,7 @@ pub async fn run_dev(database_url: &str, port: u16) -> Result<(), CliError> {
         r#"state_dir = "{state_dir}"
 
 [auth]
-default_role = "developer"
+default_role = "requester"
 
 [result_storage]
 backend = "local"
@@ -70,7 +70,7 @@ mode = "always"
     // Wait for token files to appear (written by auto-bootstrap on first run)
     let admin_token_path = dev_dir.join("admin-token");
     let agent_token_path = dev_dir.join("agent-token");
-    let dev_token_path = dev_dir.join("developer-token");
+    let dev_token_path = dev_dir.join("requester-token");
 
     for i in 0..30 {
         if admin_token_path.exists() && agent_token_path.exists() {
@@ -154,7 +154,7 @@ url = "{database_url}"
         })?;
 
     eprintln!("  Admin token:     {admin_token}");
-    eprintln!("  Developer token: {dev_token}");
+    eprintln!("  Requester token: {dev_token}");
     eprintln!();
     eprintln!("  Config: {}", client_config_path.display());
     eprintln!(

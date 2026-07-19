@@ -21,6 +21,7 @@ pub struct ResumeRequest {
 
 pub struct ResumeRequestInput {
     pub request_id: String,
+    pub reason: Option<String>,
 }
 
 #[derive(Debug)]
@@ -49,11 +50,18 @@ impl ResumeRequest {
                 Permission::RequestResume,
                 &request.database,
                 &request.environment,
-                &ResourceContext::Request {
+                &ResourceContext::RequestMutate {
                     requester_id: request.requester.clone(),
                 },
             )
             .map_err(AppError::Forbidden)?;
+
+        // Non-owner resume requires a reason
+        if user.subject_id != request.requester && input.reason.is_none() {
+            return Err(AppError::Validation(
+                "reason required for non-owner resume".into(),
+            ));
+        }
 
         // 3. Status check via status_machine
         let now = self.clock.now();
@@ -77,6 +85,10 @@ impl ResumeRequest {
         .map_err(|e| AppError::Conflict(e.to_string()))?;
 
         // 4. Approval TTL check (based on resolved_at = when approval was granted)
+        // NOTE: Steps 4–5b are outside the UoW transaction. SQLite single-writer
+        // serializes dispatch; re-check in TX if migrating to multi-writer DB.
+        // Unlike approve_request (which must atomically approve+dispatch), resume
+        // only dispatches an already-approved request, so the concern is different.
         if let Some(resolved_at) = request.resolved_at
             && let Some(wf_json) = &request.workflow_snapshot_json
         {
@@ -394,6 +406,7 @@ mod tests {
             .execute(
                 ResumeRequestInput {
                     request_id: "req-001".into(),
+                    reason: None,
                 },
                 &user,
                 &dbward_domain::entities::AuditContext::System,
@@ -422,7 +435,8 @@ mod tests {
         assert!(matches!(
             uc.execute(
                 ResumeRequestInput {
-                    request_id: "req-001".into()
+                    request_id: "req-001".into(),
+                    reason: None,
                 },
                 &user,
                 &dbward_domain::entities::AuditContext::System
@@ -452,6 +466,7 @@ mod tests {
             .execute(
                 ResumeRequestInput {
                     request_id: "req-001".into(),
+                    reason: None,
                 },
                 &user,
                 &dbward_domain::entities::AuditContext::System,
@@ -575,6 +590,7 @@ mod tests {
     fn exec_input() -> ResumeRequestInput {
         ResumeRequestInput {
             request_id: "req-001".into(),
+            reason: None,
         }
     }
 
@@ -757,5 +773,69 @@ mod tests {
             )
             .unwrap_err();
         assert!(matches!(err, AppError::Conflict(_)));
+    }
+
+    #[test]
+    fn non_owner_resume_without_reason_fails() {
+        let reader = Arc::new(FakeDispatchReader {
+            request: Mutex::new(Some(make_request(RequestStatus::Approved))),
+        });
+        let writer = Arc::new(FakeDispatchWriter {
+            dispatched: Mutex::new(false),
+        });
+        let uc = make_uc(reader, writer);
+
+        // bob is NOT the requester (alice)
+        let bob = AuthUser {
+            subject_id: "bob".into(),
+            subject_type: SubjectType::User,
+            roles: vec![],
+            groups: vec![],
+            token_id: None,
+        };
+
+        let err = uc
+            .execute(
+                ResumeRequestInput {
+                    request_id: "req-001".into(),
+                    reason: None,
+                },
+                &bob,
+                &dbward_domain::entities::AuditContext::System,
+            )
+            .unwrap_err();
+        assert!(matches!(err, AppError::Validation(_)));
+    }
+
+    #[test]
+    fn non_owner_resume_with_reason_succeeds() {
+        let reader = Arc::new(FakeDispatchReader {
+            request: Mutex::new(Some(make_request(RequestStatus::Approved))),
+        });
+        let writer = Arc::new(FakeDispatchWriter {
+            dispatched: Mutex::new(false),
+        });
+        let uc = make_uc(reader, writer.clone());
+
+        // bob is NOT the requester (alice)
+        let bob = AuthUser {
+            subject_id: "bob".into(),
+            subject_type: SubjectType::User,
+            roles: vec![],
+            groups: vec![],
+            token_id: None,
+        };
+
+        let out = uc
+            .execute(
+                ResumeRequestInput {
+                    request_id: "req-001".into(),
+                    reason: Some("operator intervention".into()),
+                },
+                &bob,
+                &dbward_domain::entities::AuditContext::System,
+            )
+            .unwrap();
+        assert_eq!(out.status, RequestStatus::Dispatched);
     }
 }

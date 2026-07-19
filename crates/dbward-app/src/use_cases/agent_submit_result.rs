@@ -507,6 +507,15 @@ mod tests {
         ) -> Result<(), AuthzError> {
             Ok(())
         }
+        fn authorize_approval(
+            &self,
+            _: &AuthUser,
+            _: &DatabaseName,
+            _: &Environment,
+            _: &ResourceContext,
+        ) -> Result<(), AuthzError> {
+            Ok(())
+        }
     }
 
     struct FakeClock;
@@ -863,7 +872,9 @@ mod tests {
             subject_type: SubjectType::Agent,
             roles: vec![ResolvedRole {
                 name: "agent-default".into(),
-                permissions: [P::AgentOperate].into_iter().collect(),
+                permissions: [(P::AgentOperate, dbward_domain::auth::OwnershipScope::Own)]
+                    .into_iter()
+                    .collect(),
                 databases: vec![],
                 environments: vec![],
             }],

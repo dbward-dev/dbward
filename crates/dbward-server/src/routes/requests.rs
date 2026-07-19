@@ -251,10 +251,18 @@ pub async fn get(
                 serde_json::json!({
                     "status": c.status,
                     "explain_enabled": explain_enabled,
-                    "tables": c.tables_json.as_deref().and_then(|j| serde_json::from_str::<serde_json::Value>(j).ok()),
-                    "sql_review": c.sql_review_json.as_deref().and_then(|j| serde_json::from_str::<serde_json::Value>(j).ok()),
-                    "risk": c.risk_json.as_deref().and_then(|j| serde_json::from_str::<serde_json::Value>(j).ok()),
-                    "explain": c.explain_json.as_deref().and_then(|j| serde_json::from_str::<serde_json::Value>(j).ok()),
+                    "tables": c.tables_json.as_deref().and_then(|j| serde_json::from_str::<serde_json::Value>(j)
+                        .map_err(|e| { tracing::warn!(%e, "failed to parse tables_json"); e })
+                        .ok()),
+                    "sql_review": c.sql_review_json.as_deref().and_then(|j| serde_json::from_str::<serde_json::Value>(j)
+                        .map_err(|e| { tracing::warn!(%e, "failed to parse sql_review_json"); e })
+                        .ok()),
+                    "risk": c.risk_json.as_deref().and_then(|j| serde_json::from_str::<serde_json::Value>(j)
+                        .map_err(|e| { tracing::warn!(%e, "failed to parse risk_json"); e })
+                        .ok()),
+                    "explain": c.explain_json.as_deref().and_then(|j| serde_json::from_str::<serde_json::Value>(j)
+                        .map_err(|e| { tracing::warn!(%e, "failed to parse explain_json"); e })
+                        .ok()),
                 })
             }),
             "decision_trace": output.request.decision_trace_json.as_deref()
@@ -339,7 +347,7 @@ pub async fn cancel(
     client_ip: Option<Extension<ClientIp>>,
     connect_info: Option<Extension<axum::extract::ConnectInfo<std::net::SocketAddr>>>,
     Path(id): Path<String>,
-    Json(body): Json<serde_json::Value>,
+    body: Option<Json<serde_json::Value>>,
 ) -> ApiResult {
     let audit_ctx = super::extract_audit_context(
         client_ip.as_ref().map(|e| &e.0),
@@ -349,7 +357,10 @@ pub async fn cancel(
 
     let input = dbward_app::use_cases::cancel_request::CancelRequestInput {
         request_id: id,
-        reason: body["reason"].as_str().map(String::from),
+        reason: body
+            .as_ref()
+            .and_then(|b| b["reason"].as_str())
+            .map(String::from),
     };
 
     match uc.execute(input, &user, &audit_ctx) {
@@ -370,6 +381,7 @@ pub async fn resume(
     client_ip: Option<Extension<ClientIp>>,
     connect_info: Option<Extension<axum::extract::ConnectInfo<std::net::SocketAddr>>>,
     Path(id): Path<String>,
+    body: Option<Json<serde_json::Value>>,
 ) -> ApiResult {
     let audit_ctx = super::extract_audit_context(
         client_ip.as_ref().map(|e| &e.0),
@@ -377,7 +389,13 @@ pub async fn resume(
     );
     let uc = state.requests().resume();
 
-    let input = dbward_app::use_cases::resume_request::ResumeRequestInput { request_id: id };
+    let input = dbward_app::use_cases::resume_request::ResumeRequestInput {
+        request_id: id,
+        reason: body
+            .as_ref()
+            .and_then(|b| b["reason"].as_str())
+            .map(String::from),
+    };
 
     match uc.execute(input, &user, &audit_ctx) {
         Ok(out) => Ok((

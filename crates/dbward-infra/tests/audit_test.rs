@@ -122,7 +122,7 @@ fn audit_list_with_filter() {
         .unwrap();
     logger
         .record(&AuditEvent::simple(
-            "request_created",
+            "request.created",
             "request",
             "bob",
             Some("req-2"),

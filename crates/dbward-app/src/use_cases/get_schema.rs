@@ -140,7 +140,7 @@ impl GetSchema {
                     .authorizer
                     .authorize_scoped(
                         user,
-                        Permission::RequestView,
+                        Permission::SchemaRead,
                         &db_name,
                         &env_val,
                         &ResourceContext::Global,
@@ -153,7 +153,7 @@ impl GetSchema {
         }
         if any_ready {
             Err(AppError::Forbidden(crate::error::AuthzError::Forbidden {
-                permission: Permission::RequestView,
+                permission: Permission::SchemaRead,
                 reason: "no authorized environment".into(),
             }))
         } else {
@@ -275,6 +275,15 @@ mod tests {
         fn authorize_global(&self, _: &AuthUser, _: Permission) -> Result<(), AuthzError> {
             Ok(())
         }
+        fn authorize_approval(
+            &self,
+            _: &AuthUser,
+            _: &DatabaseName,
+            _: &Environment,
+            _: &ResourceContext,
+        ) -> Result<(), AuthzError> {
+            Ok(())
+        }
     }
 
     struct DenyAuth;
@@ -293,6 +302,18 @@ mod tests {
             })
         }
         fn authorize_global(&self, _: &AuthUser, _: Permission) -> Result<(), AuthzError> {
+            Err(AuthzError::Forbidden {
+                permission: Permission::RequestView,
+                reason: "denied".into(),
+            })
+        }
+        fn authorize_approval(
+            &self,
+            _: &AuthUser,
+            _: &DatabaseName,
+            _: &Environment,
+            _: &ResourceContext,
+        ) -> Result<(), AuthzError> {
             Err(AuthzError::Forbidden {
                 permission: Permission::RequestView,
                 reason: "denied".into(),

@@ -14,7 +14,7 @@ echo ""
 
 # Create tokens
 ADMIN_TOKEN=$(create_token alice admin)
-DEV_TOKEN=$(create_token bob developer)
+DEV_TOKEN=$(create_token bob requester)
 
 [ -z "$ADMIN_TOKEN" ] && { echo "Failed to create admin token"; exit 1; }
 [ -z "$DEV_TOKEN" ] && { echo "Failed to create dev token"; exit 1; }

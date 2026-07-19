@@ -16,7 +16,7 @@ Notification policies are managed via `server.toml` (config-managed since v0.1.5
 database = "app"
 environment = "production"
 webhooks = ["ops-alerts"]
-events = ["request_created", "break_glass", "request_completed"]
+events = ["request.created", "request.break_glass", "execution.completed"]
 ```
 
 Changes take effect on server restart or `dbward server reload`.
@@ -34,14 +34,14 @@ Changes take effect on server restart or `dbward server reload`.
 
 | Event | Fires when |
 |-------|-----------|
-| `request_created` | New request submitted |
-| `request_approved` | Request manually approved (all steps complete) |
-| `request_auto_approved` | Request auto-approved by risk assessment |
-| `step_approved` | One step of a multi-step workflow approved |
-| `request_rejected` | Request rejected |
-| `request_completed` | Execution completed successfully |
-| `request_failed` | Execution failed |
-| `break_glass` | Emergency bypass used |
+| `request.created` | New request submitted |
+| `request.approved` | Request manually approved (all steps complete) |
+| `request.auto_approved` | Request auto-approved by risk assessment |
+| `step.approved` | One step of a multi-step workflow approved |
+| `request.rejected` | Request rejected |
+| `execution.completed` | Execution completed successfully |
+| `execution.failed` | Execution failed |
+| `request.break_glass` | Emergency bypass used |
 
 ## Scoping
 
@@ -60,7 +60,7 @@ events = ["*"]
 database = "*"
 environment = "*"
 webhooks = ["security-channel"]
-events = ["break_glass"]
+events = ["request.break_glass"]
 ```
 
 ## Relationship with webhooks
@@ -78,7 +78,7 @@ You can also define webhooks directly in `server.toml` with an `events` filter. 
 [[webhooks]]
 url = "https://hooks.slack.com/..."
 format = "slack"
-events = ["request_created", "break_glass"]
+events = ["request.created", "request.break_glass"]
 ```
 
 For finer-grained control (different events per database), use the API-managed notification policies instead.

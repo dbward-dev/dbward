@@ -903,6 +903,18 @@ pub fn build_resume_confirm_modal(request_id: &str, sql: &str, db: &str, env: &s
             "type": "section",
             "text": {"type": "mrkdwn", "text": "⚠️ This will execute the query on the target database."}
         }),
+        json!({
+            "type": "input",
+            "block_id": "reason_block",
+            "optional": true,
+            "label": {"type": "plain_text", "text": "Reason (required if you are not the requester)"},
+            "element": {
+                "type": "plain_text_input",
+                "action_id": "reason_input",
+                "placeholder": {"type": "plain_text", "text": "Why are you dispatching this request?"},
+                "multiline": false
+            }
+        }),
     ];
 
     json!({

@@ -43,7 +43,7 @@ COUNT=$(echo "$LAST_RESPONSE_BODY" | python3 -c "import sys,json; print(len(json
 echo ""
 echo "--- Trigger delivery ---"
 
-DEV_TOKEN=$(create_token "e2e-wh-dev-$TS" developer)
+DEV_TOKEN=$(create_token "e2e-wh-dev-$TS" requester)
 api POST /api/requests "$DEV_TOKEN" \
   -d '{"operation":"execute_select","environment":"development","database":"app","detail":"SELECT 1"}' > /dev/null
 sleep 2

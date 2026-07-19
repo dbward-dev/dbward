@@ -21,19 +21,19 @@ echo ""
 echo "=== 1. User Add ==="
 
 # 1.1 user add → user 作成 + token 生成
-RESP=$(api POST /api/users "$ADMIN_TOKEN" -d "{\"id\":\"alice-$TS\",\"roles\":[\"developer\"]}")
+RESP=$(api POST /api/users "$ADMIN_TOKEN" -d "{\"id\":\"alice-$TS\",\"roles\":[\"requester\"]}")
 TOKEN=$(echo "$RESP" | jq -r '.token // empty')
 [ -n "$TOKEN" ] && pass "1.1 user add creates user + returns token" || fail "1.1" "no token in response: $RESP"
 
 # 1.7 user add 既存 ID → 409
-STATUS=$(api_status POST /api/users "$ADMIN_TOKEN" -d "{\"id\":\"alice-$TS\",\"roles\":[\"developer\"]}")
+STATUS=$(api_status POST /api/users "$ADMIN_TOKEN" -d "{\"id\":\"alice-$TS\",\"roles\":[\"requester\"]}")
 [ "$STATUS" = "409" ] && pass "1.7 duplicate ID returns 409" || fail "1.7" "got $STATUS"
 
 # 1.8 user add soft-deleted ID → 409
 # First create + remove
-RESP=$(api POST /api/users "$ADMIN_TOKEN" -d "{\"id\":\"del-user-$TS\",\"roles\":[\"developer\"]}")
+RESP=$(api POST /api/users "$ADMIN_TOKEN" -d "{\"id\":\"del-user-$TS\",\"roles\":[\"requester\"]}")
 STATUS=$(api_status DELETE "/api/users/del-user-$TS" "$ADMIN_TOKEN")
-STATUS=$(api_status POST /api/users "$ADMIN_TOKEN" -d "{\"id\":\"del-user-$TS\",\"roles\":[\"developer\"]}")
+STATUS=$(api_status POST /api/users "$ADMIN_TOKEN" -d "{\"id\":\"del-user-$TS\",\"roles\":[\"requester\"]}")
 [ "$STATUS" = "409" ] && pass "1.8 soft-deleted ID returns 409" || fail "1.8" "got $STATUS"
 
 # 1.10 未定義ロール → 400 (validation)
@@ -41,7 +41,7 @@ STATUS=$(api_status POST /api/users "$ADMIN_TOKEN" -d "{\"id\":\"bad-role-$TS\",
 [ "$STATUS" = "400" ] && pass "1.10 undefined role returns 400" || fail "1.10" "got $STATUS"
 
 # 1.11 未定義グループ → 400 (validation)
-STATUS=$(api_status POST /api/users "$ADMIN_TOKEN" -d "{\"id\":\"bad-grp-$TS\",\"roles\":[\"developer\"],\"groups\":[\"nonexistent_group\"]}")
+STATUS=$(api_status POST /api/users "$ADMIN_TOKEN" -d "{\"id\":\"bad-grp-$TS\",\"roles\":[\"requester\"],\"groups\":[\"nonexistent_group\"]}")
 [ "$STATUS" = "400" ] && pass "1.11 undefined group returns 400" || fail "1.11" "got $STATUS"
 
 # ============================================================
@@ -51,15 +51,15 @@ echo ""
 echo "=== 2. User Update ==="
 
 # 2.9 update non-existent user → 404
-STATUS=$(api_status PATCH "/api/users/ghost-$TS" "$ADMIN_TOKEN" -d '{"roles":["developer"]}')
+STATUS=$(api_status PATCH "/api/users/ghost-$TS" "$ADMIN_TOKEN" -d '{"roles":["requester"]}')
 [ "$STATUS" = "404" ] && pass "2.9 update non-existent user returns 404" || fail "2.9" "got $STATUS"
 
 # 2.10 update deleted user → 410
-STATUS=$(api_status PATCH "/api/users/del-user-$TS" "$ADMIN_TOKEN" -d '{"roles":["developer"]}')
+STATUS=$(api_status PATCH "/api/users/del-user-$TS" "$ADMIN_TOKEN" -d '{"roles":["requester"]}')
 [ "$STATUS" = "410" ] && pass "2.10 update deleted user returns 410" || fail "2.10" "got $STATUS"
 
 # 2.11 last admin role removal → rejected
-STATUS=$(api_status PATCH "/api/users/admin" "$ADMIN_TOKEN" -d '{"roles":["developer"]}')
+STATUS=$(api_status PATCH "/api/users/admin" "$ADMIN_TOKEN" -d '{"roles":["requester"]}')
 [ "$STATUS" = "400" ] && pass "2.11 last admin role removal rejected (400)" || fail "2.11" "got $STATUS"
 
 # 2.15 未定義ロール → 400
@@ -73,12 +73,12 @@ echo ""
 echo "=== 3. User Remove ==="
 
 # 3.1 user rm → 200 + lifecycle_state='deleted'
-RESP=$(api POST /api/users "$ADMIN_TOKEN" -d "{\"id\":\"rm-user-$TS\",\"roles\":[\"developer\"]}")
+RESP=$(api POST /api/users "$ADMIN_TOKEN" -d "{\"id\":\"rm-user-$TS\",\"roles\":[\"requester\"]}")
 STATUS=$(api_status DELETE "/api/users/rm-user-$TS" "$ADMIN_TOKEN")
 [ "$STATUS" = "200" ] && pass "3.1 user rm returns 200" || fail "3.1" "got $STATUS"
 
 # 3.6 同一 ID 再利用不可
-STATUS=$(api_status POST /api/users "$ADMIN_TOKEN" -d "{\"id\":\"rm-user-$TS\",\"roles\":[\"developer\"]}")
+STATUS=$(api_status POST /api/users "$ADMIN_TOKEN" -d "{\"id\":\"rm-user-$TS\",\"roles\":[\"requester\"]}")
 [ "$STATUS" = "409" ] && pass "3.6 re-use deleted ID returns 409" || fail "3.6" "got $STATUS"
 
 # 3.8 存在しない user → 404
@@ -100,7 +100,7 @@ echo ""
 echo "=== 4. User Suspend ==="
 
 # 4.1 suspend → 200
-RESP=$(api POST /api/users "$ADMIN_TOKEN" -d "{\"id\":\"sus-user-$TS\",\"roles\":[\"developer\"]}")
+RESP=$(api POST /api/users "$ADMIN_TOKEN" -d "{\"id\":\"sus-user-$TS\",\"roles\":[\"requester\"]}")
 SUS_TOKEN=$(echo "$RESP" | jq -r '.token // empty')
 STATUS=$(api_status POST "/api/users/sus-user-$TS/suspend" "$ADMIN_TOKEN")
 [ "$STATUS" = "200" ] && pass "4.1 suspend returns 200" || fail "4.1" "got $STATUS"
@@ -157,11 +157,11 @@ echo ""
 echo "=== 22. Input Validation ==="
 
 # 22.1 empty user_id → 400
-STATUS=$(api_status POST /api/users "$ADMIN_TOKEN" -d '{"id":"","roles":["developer"]}')
+STATUS=$(api_status POST /api/users "$ADMIN_TOKEN" -d '{"id":"","roles":["requester"]}')
 [ "$STATUS" = "400" ] && pass "22.1 empty user_id returns 400" || fail "22.1" "got $STATUS"
 
 # 22.3 special characters (SQL injection attempt)
-STATUS=$(api_status POST /api/users "$ADMIN_TOKEN" -d "{\"id\":\"'; DROP TABLE users; --\",\"roles\":[\"developer\"]}")
+STATUS=$(api_status POST /api/users "$ADMIN_TOKEN" -d "{\"id\":\"'; DROP TABLE users; --\",\"roles\":[\"requester\"]}")
 # Should either create safely or reject — NOT 500
 [ "$STATUS" != "500" ] && pass "22.3 SQL injection attempt doesn't crash server (got $STATUS)" || fail "22.3" "got 500 — possible injection"
 
@@ -185,22 +185,22 @@ else
   skip "23.1 could not create second admin"
 fi
 
-# 23.6 developer cannot suspend others → 403
-RESP=$(api POST /api/users "$ADMIN_TOKEN" -d "{\"id\":\"dev-user-$TS\",\"roles\":[\"developer\"]}")
+# 23.6 requester cannot suspend others → 403
+RESP=$(api POST /api/users "$ADMIN_TOKEN" -d "{\"id\":\"dev-user-$TS\",\"roles\":[\"requester\"]}")
 DEV_TOKEN=$(echo "$RESP" | jq -r '.token // empty')
 if [ -n "$DEV_TOKEN" ]; then
   # First confirm the token works for basic operation
   DEV_STATUS=$(api_status GET /api/requests "$DEV_TOKEN")
   if [ "$DEV_STATUS" = "200" ]; then
     STATUS=$(api_status POST "/api/users/alice-$TS/suspend" "$DEV_TOKEN")
-    [ "$STATUS" = "403" ] && pass "23.6 developer cannot suspend others (403)" || fail "23.6" "got $STATUS"
+    [ "$STATUS" = "403" ] && pass "23.6 requester cannot suspend others (403)" || fail "23.6" "got $STATUS"
   else
     # Token scope issue — test the concept via admin endpoint check
     STATUS=$(api_status GET /api/users "$DEV_TOKEN")
-    [ "$STATUS" = "403" ] && pass "23.6 developer cannot access admin endpoints (403)" || fail "23.6" "developer got unexpected status: $STATUS"
+    [ "$STATUS" = "403" ] && pass "23.6 requester cannot access admin endpoints (403)" || fail "23.6" "requester got unexpected status: $STATUS"
   fi
 else
-  skip "23.6 could not create developer token"
+  skip "23.6 could not create requester token"
 fi
 
 # ============================================================
@@ -236,8 +236,8 @@ echo "=== 28. Security ==="
 RESP=$(api POST /api/users "$ADMIN_TOKEN" -d "{\"id\":\"downgrade-$TS\",\"roles\":[\"admin\"]}")
 DG_TOKEN=$(echo "$RESP" | jq -r '.token // empty')
 if [ -n "$DG_TOKEN" ]; then
-  # Downgrade to developer using bootstrap admin
-  api PATCH "/api/users/downgrade-$TS" "$ADMIN_TOKEN" -d '{"roles":["developer"]}' > /dev/null
+  # Downgrade to requester using bootstrap admin
+  api PATCH "/api/users/downgrade-$TS" "$ADMIN_TOKEN" -d '{"roles":["requester"]}' > /dev/null
 
   # After downgrade, the user's token should lose admin access
   # Check via audit endpoint (requires admin)

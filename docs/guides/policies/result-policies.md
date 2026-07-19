@@ -17,7 +17,7 @@ database = "app"
 environment = "production"
 retention_days = 7
 delivery_mode = "both"
-access = ["role:admin", "role:developer"]
+access = ["role:admin", "role:requester"]
 ```
 
 Changes take effect on server restart or `dbward server reload`.

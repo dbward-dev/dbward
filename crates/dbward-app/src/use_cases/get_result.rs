@@ -9,6 +9,7 @@ use crate::ports::*;
 pub struct GetResult {
     pub authorizer: Arc<dyn Authorizer>,
     pub request_reader: Arc<dyn RequestReader>,
+    pub approval_repo: Arc<dyn ApprovalRepo>,
     pub agent_repo: Arc<dyn AgentRepo>,
     pub result_store: Arc<dyn ResultStore>,
     pub policy_repo: Arc<dyn PolicyRepo>,
@@ -66,7 +67,7 @@ impl GetResult {
             ));
         }
 
-        // Merge access selectors: request.share_with + ResultPolicy.access
+        // Merge access selectors: request.share_with + ResultPolicy.access + approver user selectors
         let mut access_selectors = request.share_with.clone();
         if let Some(policy) = self
             .policy_repo
@@ -77,6 +78,14 @@ impl GetResult {
                 if !access_selectors.contains(&s) {
                     access_selectors.push(s);
                 }
+            }
+        }
+        // Include approvers so they can view the result they approved
+        let approvals = self.approval_repo.get_approvals(&request.id)?;
+        for approval in &approvals {
+            let sel = format!("user:{}", approval.actor_id);
+            if !access_selectors.contains(&sel) {
+                access_selectors.push(sel);
             }
         }
 
@@ -171,6 +180,7 @@ impl GetResult {
 mod tests {
     use super::*;
     use crate::error::AuthzError;
+    use crate::test_support::FakeApprovalRepo;
     use async_trait::async_trait;
     use chrono::{DateTime, Duration, Utc};
     use dbward_domain::auth::{AuthUser, Permission, ResourceContext, SubjectType};
@@ -210,6 +220,15 @@ mod tests {
             })
         }
         fn authorize_global(&self, _: &AuthUser, _: Permission) -> Result<(), AuthzError> {
+            Ok(())
+        }
+        fn authorize_approval(
+            &self,
+            _: &AuthUser,
+            _: &DatabaseName,
+            _: &Environment,
+            _: &ResourceContext,
+        ) -> Result<(), AuthzError> {
             Ok(())
         }
     }
@@ -630,6 +649,7 @@ mod tests {
             request_reader: Arc::new(FakeRequestRepo {
                 request: Mutex::new(Some(make_request())),
             }),
+            approval_repo: Arc::new(FakeApprovalRepo::new()),
             agent_repo: Arc::new(FakeAgentRepo {
                 execution: Mutex::new(Some(exec.clone())),
             }),
@@ -675,6 +695,7 @@ mod tests {
             request_reader: Arc::new(FakeRequestRepo {
                 request: Mutex::new(Some(make_request())),
             }),
+            approval_repo: Arc::new(FakeApprovalRepo::new()),
             agent_repo: Arc::new(FakeAgentRepo {
                 execution: Mutex::new(Some(exec)),
             }),
@@ -720,6 +741,7 @@ mod tests {
             request_reader: Arc::new(FakeRequestRepo {
                 request: Mutex::new(Some(make_request())),
             }),
+            approval_repo: Arc::new(FakeApprovalRepo::new()),
             agent_repo: Arc::new(FakeAgentRepo {
                 execution: Mutex::new(Some(exec)),
             }),
@@ -761,6 +783,7 @@ mod tests {
             request_reader: Arc::new(FakeRequestRepo {
                 request: Mutex::new(Some(req)),
             }),
+            approval_repo: Arc::new(FakeApprovalRepo::new()),
             agent_repo: Arc::new(FakeAgentRepo {
                 execution: Mutex::new(Some(exec)),
             }),
@@ -799,6 +822,7 @@ mod tests {
             request_reader: Arc::new(FakeRequestRepo {
                 request: Mutex::new(Some(req)),
             }),
+            approval_repo: Arc::new(FakeApprovalRepo::new()),
             agent_repo: Arc::new(FakeAgentRepo {
                 execution: Mutex::new(Some(make_execution())),
             }),
@@ -831,6 +855,7 @@ mod tests {
             request_reader: Arc::new(FakeRequestRepo {
                 request: Mutex::new(Some(make_request())),
             }),
+            approval_repo: Arc::new(FakeApprovalRepo::new()),
             agent_repo: Arc::new(FakeAgentRepo {
                 execution: Mutex::new(Some(make_execution())),
             }),
@@ -864,6 +889,7 @@ mod tests {
             request_reader: Arc::new(FakeRequestRepo {
                 request: Mutex::new(Some(make_request())),
             }),
+            approval_repo: Arc::new(FakeApprovalRepo::new()),
             agent_repo: Arc::new(FakeAgentRepo {
                 execution: Mutex::new(Some(make_execution())),
             }),

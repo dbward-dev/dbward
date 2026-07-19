@@ -230,6 +230,15 @@ mod tests {
                 reason: "agent_id mismatch".into(),
             })
         }
+        fn authorize_approval(
+            &self,
+            _: &AuthUser,
+            _: &DatabaseName,
+            _: &Environment,
+            _: &ResourceContext,
+        ) -> Result<(), AuthzError> {
+            Ok(())
+        }
     }
 
     fn make_user() -> AuthUser {

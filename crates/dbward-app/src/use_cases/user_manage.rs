@@ -1,7 +1,8 @@
 use std::sync::Arc;
 
-use dbward_domain::auth::{AuthUser, Permission};
+use dbward_domain::auth::{AuthUser, Permission, ResourceContext};
 use dbward_domain::entities::AuditContext;
+use dbward_domain::values::{DatabaseName, Environment};
 
 use crate::error::AppError;
 use crate::ports::*;
@@ -117,9 +118,15 @@ impl UserManage {
             .iter()
             .map(|r| r.name.as_str())
             .chain(
-                ["admin", "developer", "readonly", "agent-default"]
-                    .iter()
-                    .copied(),
+                [
+                    "admin",
+                    "requester",
+                    "approver",
+                    "operator",
+                    "agent-default",
+                ]
+                .iter()
+                .copied(),
             )
             .collect();
         for role in &input.roles {
@@ -305,7 +312,15 @@ impl UserManage {
 
     pub fn show(&self, user_id: &str, user: &AuthUser) -> Result<UserShowOutput, AppError> {
         self.authorizer
-            .authorize_global(user, Permission::UserRead)
+            .authorize_scoped(
+                user,
+                Permission::UserRead,
+                &DatabaseName::wildcard(),
+                &Environment::wildcard(),
+                &ResourceContext::User {
+                    target_id: user_id.to_string(),
+                },
+            )
             .map_err(AppError::Forbidden)?;
 
         let existing = self
@@ -374,9 +389,15 @@ impl UserManage {
             .iter()
             .map(|r| r.name.as_str())
             .chain(
-                ["admin", "developer", "readonly", "agent-default"]
-                    .iter()
-                    .copied(),
+                [
+                    "admin",
+                    "requester",
+                    "approver",
+                    "operator",
+                    "agent-default",
+                ]
+                .iter()
+                .copied(),
             )
             .collect();
         for role in &current_roles {
@@ -766,6 +787,15 @@ mod tests {
         ) -> Result<(), AuthzError> {
             Ok(())
         }
+        fn authorize_approval(
+            &self,
+            _: &AuthUser,
+            _: &DatabaseName,
+            _: &Environment,
+            _: &ResourceContext,
+        ) -> Result<(), AuthzError> {
+            Ok(())
+        }
     }
     struct DenyAll;
     impl Authorizer for DenyAll {
@@ -779,6 +809,18 @@ mod tests {
             &self,
             _: &AuthUser,
             _: Permission,
+            _: &DatabaseName,
+            _: &Environment,
+            _: &ResourceContext,
+        ) -> Result<(), AuthzError> {
+            Err(AuthzError::Forbidden {
+                permission: P::UserWrite,
+                reason: "denied".into(),
+            })
+        }
+        fn authorize_approval(
+            &self,
+            _: &AuthUser,
             _: &DatabaseName,
             _: &Environment,
             _: &ResourceContext,
@@ -1016,7 +1058,7 @@ mod tests {
             Ok(1)
         }
         fn get_roles(&self, _: &str) -> Result<Vec<String>, AppError> {
-            Ok(vec!["developer".into()])
+            Ok(vec!["requester".into()])
         }
         fn is_deleted(&self, _: &str) -> Result<bool, AppError> {
             Ok(false)
@@ -1175,7 +1217,9 @@ mod tests {
             subject_type: SubjectType::User,
             roles: vec![ResolvedRole {
                 name: "admin".into(),
-                permissions: [P::All].into_iter().collect(),
+                permissions: [(P::All, dbward_domain::auth::OwnershipScope::Any)]
+                    .into_iter()
+                    .collect(),
                 databases: vec![],
                 environments: vec![],
             }],

@@ -328,7 +328,7 @@ pub(super) async fn handle_wait_request(
             if matches!(
                 status,
                 RequestStatus::Approved | RequestStatus::AutoApproved | RequestStatus::BreakGlass
-            ) && let Err(e) = client.resume(request_id).await
+            ) && let Err(e) = client.resume(request_id, None).await
                 // 409 Conflict = already resumed by another actor — continue waiting
                 && e.status != 409
             {

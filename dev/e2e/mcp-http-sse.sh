@@ -15,7 +15,7 @@ echo ""
 
 wait_for_server
 
-TOKEN=$(create_token mcp-sse-user developer)
+TOKEN=$(create_token mcp-sse-user requester)
 [ -z "$TOKEN" ] && { echo "Failed to create token"; exit 1; }
 
 AUTH="Authorization: Bearer $TOKEN"

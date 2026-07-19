@@ -227,11 +227,30 @@ pub(super) fn sync_roles(
     let mut toml_ids = Vec::new();
     let mut upserted = 0u64;
     for r in &inputs {
-        let perms: Vec<dbward_domain::auth::Permission> = r
+        let perms: Vec<dbward_domain::auth::role_definition::PermissionEntry> = r
             .permissions
             .iter()
             .map(|s| {
-                s.parse::<dbward_domain::auth::Permission>()
+                // Format: "perm_name" (default Own) or "perm_name:ownership"
+                let (perm_str, ownership) = if let Some(idx) = s.rfind(':') {
+                    let (p, o) = s.split_at(idx);
+                    let o_str = &o[1..]; // skip the ':'
+                    match o_str.parse::<dbward_domain::auth::OwnershipScope>() {
+                        Ok(scope) => (p, scope),
+                        // Not a valid ownership suffix → treat entire string as permission name
+                        Err(_) => (s.as_str(), dbward_domain::auth::OwnershipScope::default()),
+                    }
+                } else {
+                    (s.as_str(), dbward_domain::auth::OwnershipScope::default())
+                };
+                perm_str
+                    .parse::<dbward_domain::auth::Permission>()
+                    .map(
+                        |perm| dbward_domain::auth::role_definition::PermissionEntry {
+                            perm,
+                            ownership,
+                        },
+                    )
                     .map_err(|e| AppError::Validation(format!("role '{}': {e}", r.name)))
             })
             .collect::<Result<_, _>>()?;

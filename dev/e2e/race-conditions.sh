@@ -13,7 +13,7 @@ echo ""
 
 ADMIN1_TOKEN=$(create_token e2e-race-admin1 admin)
 ADMIN2_TOKEN=$(create_token e2e-race-admin2 admin)
-DEV_TOKEN=$(create_token e2e-race-dev developer)
+DEV_TOKEN=$(create_token e2e-race-dev requester)
 [ -z "$ADMIN1_TOKEN" ] && { echo "Failed to create tokens"; exit 1; }
 
 # --- SEC-4: Concurrent approve on same request ---

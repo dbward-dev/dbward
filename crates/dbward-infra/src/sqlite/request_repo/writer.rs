@@ -168,7 +168,7 @@ impl RequestWriter for SqliteRequestRepo {
         for id in &ids {
             let cancel_event = dbward_domain::entities::AuditEvent {
                 id: String::new(),
-                event_type: "request_cancelled".to_string(),
+                event_type: "request.cancelled".to_string(),
                 event_category: dbward_domain::entities::EventCategory::Approval,
                 event_version: 1,
                 outcome: dbward_domain::entities::EventOutcome::Success,

@@ -83,6 +83,7 @@ impl McpBackend for ServerMcpBackend {
         let resume_output = match self.state.requests().resume().execute(
             ResumeRequestInput {
                 request_id: request_id.into(),
+                reason: None,
             },
             user,
             &ctx,
@@ -151,7 +152,7 @@ impl McpBackend for ServerMcpBackend {
         self.state
             .authorizer
             .authorize_global(user, Permission::RequestView)
-            .map_err(|e| format!("Permission denied: {e}"))?;
+            .map_err(|_| McpError::Forbidden("forbidden".into()))?;
 
         let (requests, _) = self
             .state
@@ -328,6 +329,7 @@ impl McpBackend for ServerMcpBackend {
         if output.status != RequestStatus::Pending {
             let resume_input = ResumeRequestInput {
                 request_id: output.id.clone(),
+                reason: None,
             };
             match self
                 .state
@@ -446,7 +448,7 @@ fn format_app_error(e: AppError) -> McpError {
             schema: dbward_mcp::ports::reason_elicitation_schema(),
         },
         AppError::NotFound(msg) => McpError::NotFound(msg),
-        AppError::Forbidden(err) => McpError::Forbidden(format!("Permission denied: {err}")),
+        AppError::Forbidden(_) => McpError::Forbidden("forbidden".into()),
         AppError::Conflict(msg) => McpError::Conflict(msg),
         AppError::Validation(msg) => McpError::Internal(msg),
         AppError::Internal(msg) => McpError::Internal(msg),

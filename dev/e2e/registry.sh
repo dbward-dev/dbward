@@ -11,7 +11,7 @@ echo ""
 wait_for_server
 
 TS=$(date +%s)
-DEV_TOKEN=$(create_token "e2e-dev-$TS" developer)
+DEV_TOKEN=$(create_token "e2e-dev-$TS" requester)
 
 # --- 1. List databases ---
 echo "--- List databases ---"

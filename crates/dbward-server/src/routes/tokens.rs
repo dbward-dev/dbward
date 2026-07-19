@@ -151,12 +151,12 @@ pub async fn inspect(
         return Err(map_error(AppError::NotFound("token not found".into())));
     }
 
-    // Authorization: owner or TokenManage
+    // Authorization: owner or token.list
     let is_owner = token.subject_id == user.subject_id && token.subject_type == user.subject_type;
     if !is_owner {
         state
             .authorizer()
-            .authorize_global(&user, Permission::TokenManage)
+            .authorize_global(&user, Permission::TokenList)
             .map_err(|e| map_error(AppError::Forbidden(e)))?;
     }
 
@@ -189,7 +189,7 @@ pub async fn inspect(
             .iter()
             .filter(|r| effective_roles.contains(&r.name.as_str()))
             .flat_map(|r| r.permissions.iter())
-            .map(|p| p.as_str().to_string())
+            .map(|(p, _)| p.as_str().to_string())
             .collect::<std::collections::HashSet<_>>()
             .into_iter()
             .collect();

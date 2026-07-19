@@ -224,7 +224,7 @@ Managed via `dbward token create/list/revoke (via API)`. Used when OIDC is not p
 issuer = "https://accounts.google.com"
 client_id = "xxx.apps.googleusercontent.com"
 jwks_uri = "..."  # optional override for Docker environments
-default_role = "readonly"
+default_role = "approver"
 
 [[auth.oidc.role_mappings]]
 subject = "alice@example.com"
@@ -233,7 +233,7 @@ role = "admin"
 [[auth.oidc.role_mappings]]
 claim = "groups"
 value = "dbward-developers"
-role = "developer"
+role = "requester"
 ```
 
 Role mapping fallback: subject match → claim match → default_role.
@@ -329,12 +329,12 @@ pub trait DatabaseDriver: Send + Sync {
 ```toml
 [[webhooks]]
 url = "https://hooks.slack.com/services/..."
-events = ["request_created", "request_approved", "request_rejected", "request_completed", "break_glass"]
+events = ["request.created", "request.approved", "request.rejected", "execution.completed", "request.break_glass"]
 format = "slack"
 
 [[webhooks]]
 url = "https://internal.example.com/dbward"
-events = ["break_glass"]
+events = ["request.break_glass"]
 format = "generic"
 secret = "whsec_xxxx"  # HMAC-SHA256 in X-Dbward-Signature header
 ```
@@ -352,9 +352,9 @@ dbward execute "SELECT pg_terminate_backend(12345)" \
 
 - Server issues token immediately (status = `break_glass`)
 - Agent picks up and executes when dispatched
-- Webhook fires `break_glass` event (🚨 in Slack)
+- Webhook fires `request.break_glass` event (🚨 in Slack)
 - Reason recorded in audit log
-- Admin + Developer only (Readonly cannot)
+- Operator only (requires `request.break_glass_*` permission)
 
 ## MCP Async Approval
 

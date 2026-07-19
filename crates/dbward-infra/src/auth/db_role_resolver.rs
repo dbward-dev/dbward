@@ -71,7 +71,11 @@ impl DbRoleResolver {
         for def in role_definitions {
             let resolved = ResolvedRole {
                 name: def.name.clone(),
-                permissions: def.permissions.into_iter().collect(),
+                permissions: def
+                    .permissions
+                    .into_iter()
+                    .map(|e| (e.perm, e.ownership))
+                    .collect(),
                 databases: def.databases,
                 environments: def.environments,
             };
@@ -160,7 +164,11 @@ impl DbRoleResolver {
         for def in role_definitions {
             let resolved = ResolvedRole {
                 name: def.name.clone(),
-                permissions: def.permissions.into_iter().collect(),
+                permissions: def
+                    .permissions
+                    .into_iter()
+                    .map(|e| (e.perm, e.ownership))
+                    .collect(),
                 databases: def.databases,
                 environments: def.environments,
             };
@@ -186,14 +194,29 @@ impl DbRoleResolver {
             .map_err(|e| AuthError::Internal(format!("pool: {e}")))?;
 
         // 1. Get direct roles from users.roles_json
-        let direct_roles: Vec<String> = conn
-            .query_row(
-                "SELECT roles_json FROM users WHERE id = ?1 AND lifecycle_state = 'active'",
-                rusqlite::params![subject_id],
-                |row| row.get::<_, String>(0),
-            )
-            .map(|json| serde_json::from_str::<Vec<String>>(&json).unwrap_or_default())
-            .unwrap_or_default();
+        let direct_roles: Vec<String> = match conn.query_row(
+            "SELECT roles_json FROM users WHERE id = ?1 AND lifecycle_state = 'active'",
+            rusqlite::params![subject_id],
+            |row| row.get::<_, String>(0),
+        ) {
+            Ok(json) => serde_json::from_str::<Vec<String>>(&json).map_err(|e| {
+                tracing::warn!(
+                    subject_id,
+                    error = %e,
+                    "roles_json is corrupted, failing closed"
+                );
+                AuthError::Internal(format!(
+                    "roles_json corrupted for subject '{subject_id}': {e}"
+                ))
+            })?,
+            // User row not found — no direct roles
+            Err(rusqlite::Error::QueryReturnedNoRows) => vec![],
+            Err(e) => {
+                return Err(AuthError::Internal(format!(
+                    "resolve: users query failed: {e}"
+                )));
+            }
+        };
 
         // 2. Get local group memberships
         let mut stmt = conn
@@ -202,7 +225,17 @@ impl DbRoleResolver {
         let local_groups: Vec<String> = stmt
             .query_map(rusqlite::params![subject_id], |row| row.get(0))
             .map_err(|e| AuthError::Internal(format!("resolve: group_members read: {e}")))?
-            .filter_map(|r| r.ok())
+            .filter_map(|r| match r {
+                Ok(v) => Some(v),
+                Err(e) => {
+                    tracing::warn!(
+                        subject_id,
+                        error = %e,
+                        "skipping corrupted group_members row"
+                    );
+                    None
+                }
+            })
             .collect();
 
         // 3. effective_groups = local_groups ∪ oidc_groups
@@ -257,7 +290,11 @@ impl DbRoleResolver {
             for def in defs {
                 resolved.push(ResolvedRole {
                     name: def.name.clone(),
-                    permissions: def.permissions.into_iter().collect(),
+                    permissions: def
+                        .permissions
+                        .into_iter()
+                        .map(|e| (e.perm, e.ownership))
+                        .collect(),
                     databases: def.databases,
                     environments: def.environments,
                 });
@@ -456,53 +493,91 @@ impl RoleResolver for DbRoleResolver {
 }
 
 fn builtin_roles() -> Vec<(String, ResolvedRole)> {
-    let wildcard_db = DatabaseName::new("*").unwrap();
-    let wildcard_env = Environment::new("*").unwrap();
+    use dbward_domain::auth::OwnershipScope;
+    let wildcard_db = DatabaseName::wildcard();
+    let wildcard_env = Environment::wildcard();
     vec![
+        (
+            "requester".to_string(),
+            ResolvedRole {
+                name: "requester".to_string(),
+                permissions: HashMap::from([
+                    (Permission::RequestDml, OwnershipScope::Own),
+                    (Permission::RequestQuery, OwnershipScope::Own),
+                    (Permission::RequestView, OwnershipScope::Own),
+                    (Permission::RequestCancel, OwnershipScope::Own),
+                    (Permission::RequestResume, OwnershipScope::Own),
+                    (Permission::RequestPreflight, OwnershipScope::Own),
+                    (Permission::RequestPreflightExplain, OwnershipScope::Own),
+                    (Permission::ResultView, OwnershipScope::Own),
+                    (Permission::SchemaRead, OwnershipScope::Own),
+                    (Permission::WorkflowRead, OwnershipScope::Own),
+                    (Permission::TokenCreate, OwnershipScope::Own),
+                    (Permission::TokenRevoke, OwnershipScope::Own),
+                ]),
+                databases: vec![wildcard_db.clone()],
+                environments: vec![wildcard_env.clone()],
+            },
+        ),
+        (
+            "approver".to_string(),
+            ResolvedRole {
+                name: "approver".to_string(),
+                permissions: HashMap::from([
+                    (Permission::RequestView, OwnershipScope::Own),
+                    (Permission::ResultView, OwnershipScope::Own),
+                    (Permission::SchemaRead, OwnershipScope::Own),
+                    (Permission::WorkflowRead, OwnershipScope::Own),
+                    (Permission::TokenCreate, OwnershipScope::Own),
+                    (Permission::TokenRevoke, OwnershipScope::Own),
+                ]),
+                databases: vec![wildcard_db.clone()],
+                environments: vec![wildcard_env.clone()],
+            },
+        ),
+        (
+            "operator".to_string(),
+            ResolvedRole {
+                name: "operator".to_string(),
+                permissions: HashMap::from([
+                    (Permission::RequestView, OwnershipScope::Any),
+                    (Permission::RequestCancel, OwnershipScope::Any),
+                    (Permission::RequestResume, OwnershipScope::Any),
+                    (Permission::RequestBreakGlassQuery, OwnershipScope::Own),
+                    (Permission::RequestBreakGlassDml, OwnershipScope::Own),
+                    (Permission::RequestBreakGlassDdl, OwnershipScope::Own),
+                    (Permission::ResultView, OwnershipScope::Any),
+                    (Permission::SchemaRead, OwnershipScope::Own),
+                    (Permission::AuditRead, OwnershipScope::Own),
+                    (Permission::MetricsView, OwnershipScope::Own),
+                    (Permission::WorkflowRead, OwnershipScope::Own),
+                    (Permission::TokenCreate, OwnershipScope::Own),
+                    (Permission::TokenRevoke, OwnershipScope::Own),
+                ]),
+                databases: vec![wildcard_db.clone()],
+                environments: vec![wildcard_env.clone()],
+            },
+        ),
         (
             "admin".to_string(),
             ResolvedRole {
                 name: "admin".to_string(),
-                permissions: [Permission::All].into_iter().collect(),
-                databases: vec![wildcard_db.clone()],
-                environments: vec![wildcard_env.clone()],
-            },
-        ),
-        (
-            "developer".to_string(),
-            ResolvedRole {
-                name: "developer".to_string(),
-                permissions: [
-                    Permission::RequestExecute,
-                    Permission::RequestQuery,
-                    Permission::RequestView,
-                    Permission::RequestCancel,
-                    Permission::RequestResume,
-                    Permission::ResultView,
-                    Permission::WorkflowRead,
-                    Permission::TokenCreateOwn,
-                    Permission::TokenRevokeOwn,
-                ]
-                .into_iter()
-                .collect(),
-                databases: vec![wildcard_db.clone()],
-                environments: vec![wildcard_env.clone()],
-            },
-        ),
-        (
-            "readonly".to_string(),
-            ResolvedRole {
-                name: "readonly".to_string(),
-                permissions: [
-                    Permission::RequestQuery,
-                    Permission::RequestView,
-                    Permission::ResultView,
-                    Permission::WorkflowRead,
-                    Permission::TokenCreateOwn,
-                    Permission::TokenRevokeOwn,
-                ]
-                .into_iter()
-                .collect(),
+                permissions: HashMap::from([
+                    (Permission::WorkflowRead, OwnershipScope::Own),
+                    (Permission::WorkflowWrite, OwnershipScope::Own),
+                    (Permission::PolicyWrite, OwnershipScope::Own),
+                    (Permission::RoleWrite, OwnershipScope::Own),
+                    (Permission::UserRead, OwnershipScope::Own),
+                    (Permission::UserWrite, OwnershipScope::Own),
+                    (Permission::WebhookWrite, OwnershipScope::Own),
+                    (Permission::TokenCreate, OwnershipScope::Own),
+                    (Permission::TokenRevoke, OwnershipScope::Any),
+                    (Permission::TokenList, OwnershipScope::Own),
+                    (Permission::TokenCreateAgent, OwnershipScope::Own),
+                    (Permission::TokenReissue, OwnershipScope::Own),
+                    (Permission::AuditRead, OwnershipScope::Own),
+                    (Permission::MetricsView, OwnershipScope::Own),
+                ]),
                 databases: vec![wildcard_db.clone()],
                 environments: vec![wildcard_env.clone()],
             },
@@ -511,7 +586,7 @@ fn builtin_roles() -> Vec<(String, ResolvedRole)> {
             "agent-default".to_string(),
             ResolvedRole {
                 name: "agent-default".to_string(),
-                permissions: [Permission::AgentOperate].into_iter().collect(),
+                permissions: HashMap::from([(Permission::AgentOperate, OwnershipScope::Own)]),
                 databases: vec![wildcard_db],
                 environments: vec![wildcard_env],
             },
@@ -573,26 +648,26 @@ mod tests {
         add_member(&conn, "backend-team", "bob");
 
         let group_roles =
-            HashMap::from([("backend-team".to_string(), vec!["developer".to_string()])]);
+            HashMap::from([("backend-team".to_string(), vec!["requester".to_string()])]);
         let resolver = DbRoleResolver::from_connection(conn, group_roles, None);
         let roles = resolver.resolve("bob", SubjectType::User, &[]).unwrap();
         assert_eq!(roles.len(), 1);
-        assert_eq!(roles[0].name, "developer");
+        assert_eq!(roles[0].name, "requester");
     }
 
     #[test]
     fn resolve_union_direct_and_group() {
         let conn = setup_db();
-        insert_user(&conn, "carol", &["readonly"]);
+        insert_user(&conn, "carol", &["approver"]);
         insert_group(&conn, "dba-team");
         add_member(&conn, "dba-team", "carol");
 
-        let group_roles = HashMap::from([("dba-team".to_string(), vec!["developer".to_string()])]);
+        let group_roles = HashMap::from([("dba-team".to_string(), vec!["requester".to_string()])]);
         let resolver = DbRoleResolver::from_connection(conn, group_roles, None);
         let roles = resolver.resolve("carol", SubjectType::User, &[]).unwrap();
         let names: HashSet<_> = roles.iter().map(|r| r.name.as_str()).collect();
-        assert!(names.contains("readonly"));
-        assert!(names.contains("developer"));
+        assert!(names.contains("approver"));
+        assert!(names.contains("requester"));
     }
 
     #[test]
@@ -601,10 +676,10 @@ mod tests {
         insert_user(&conn, "newbie", &[]);
 
         let resolver =
-            DbRoleResolver::from_connection(conn, HashMap::new(), Some("readonly".to_string()));
+            DbRoleResolver::from_connection(conn, HashMap::new(), Some("requester".to_string()));
         let roles = resolver.resolve("newbie", SubjectType::User, &[]).unwrap();
         assert_eq!(roles.len(), 1);
-        assert_eq!(roles[0].name, "readonly");
+        assert_eq!(roles[0].name, "requester");
     }
 
     #[test]
@@ -626,25 +701,25 @@ mod tests {
         insert_user(&conn, "dave", &[]);
 
         let group_roles =
-            HashMap::from([("engineering".to_string(), vec!["developer".to_string()])]);
+            HashMap::from([("engineering".to_string(), vec!["requester".to_string()])]);
         let resolver = DbRoleResolver::from_connection(conn, group_roles, None);
         let roles = resolver
             .resolve("dave", SubjectType::User, &["engineering".to_string()])
             .unwrap();
         assert_eq!(roles.len(), 1);
-        assert_eq!(roles[0].name, "developer");
+        assert_eq!(roles[0].name, "requester");
     }
 
     #[test]
     fn cache_invalidation() {
         let conn = setup_db();
-        insert_user(&conn, "eve", &["developer"]);
+        insert_user(&conn, "eve", &["requester"]);
 
         let resolver = DbRoleResolver::from_connection(conn, HashMap::new(), None);
 
         // First resolve populates cache
         let roles = resolver.resolve("eve", SubjectType::User, &[]).unwrap();
-        assert_eq!(roles[0].name, "developer");
+        assert_eq!(roles[0].name, "requester");
 
         // Invalidate
         resolver.invalidate("eve");
@@ -655,7 +730,7 @@ mod tests {
     fn subjects_for_role_direct() {
         let conn = setup_db();
         insert_user(&conn, "alice", &["admin"]);
-        insert_user(&conn, "bob", &["developer"]);
+        insert_user(&conn, "bob", &["requester"]);
 
         let resolver = DbRoleResolver::from_connection(conn, HashMap::new(), None);
         let subjects = resolver.subjects_for_role("admin");

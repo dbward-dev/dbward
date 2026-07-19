@@ -63,6 +63,9 @@ pub enum AuthzError {
         database: String,
         environment: String,
     },
+
+    #[error("approval denied: {reason}")]
+    ApprovalDenied { reason: String },
 }
 
 #[derive(Debug, thiserror::Error)]
