@@ -428,7 +428,8 @@ pub(crate) fn print_approve_result(body: &serde_json::Value, id: &str) {
         dbward_api_types::requests::RequestStatus::Approved
             | dbward_api_types::requests::RequestStatus::Dispatched
     ) {
-        println!("All steps complete. Run: dbward request resume {short_id}");
+        println!("All steps complete. The requester can now resume execution:");
+        println!("  dbward request resume {short_id}");
     } else {
         println!("Waiting for further approvals.");
     }

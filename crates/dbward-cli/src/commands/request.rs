@@ -208,7 +208,7 @@ async fn run_approve(
                     || body_lower.contains("already dispatched"))
             {
                 return Err(CliError::Server(format!(
-                    "Request is already approved. Run: dbward request resume {id}"
+                    "Request is already approved. The requester can resume with: dbward request resume {id}"
                 )));
             }
             if e.status == 403 {

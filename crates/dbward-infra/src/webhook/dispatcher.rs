@@ -288,6 +288,9 @@ fn build_slack_body(event: &WebhookEvent) -> String {
         "request.break_glass" | "request.auto_approved" | "request.dispatch_timeout" => {
             Some(format!("`dbward request resume {req_id}`"))
         }
+        "request.approved" => Some(format!(
+            "Requester can now run: `dbward request resume {req_id}`"
+        )),
         _ => None,
     };
     if let Some(cmd) = action {
