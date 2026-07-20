@@ -20,10 +20,12 @@ pub(crate) mod workflow;
 use std::path::PathBuf;
 
 use clap::{Parser, Subcommand};
+use serde::Serialize;
 
 use crate::config::{self, ClientConfig};
 use crate::error::CliError;
 use crate::oidc_login;
+use crate::output::{CliResponse, RenderPlan, StdoutRender};
 use crate::self_update;
 use crate::server_client::ServerClient;
 
@@ -264,6 +266,18 @@ pub enum PolicyAction {
 }
 
 // ---------------------------------------------------------------------------
+// Whoami output type
+// ---------------------------------------------------------------------------
+
+#[derive(Serialize)]
+pub struct WhoamiOutput {
+    pub subject_id: String,
+    pub subject_type: String,
+    pub roles: Vec<String>,
+    pub groups: Vec<String>,
+}
+
+// ---------------------------------------------------------------------------
 // Auth helper
 // ---------------------------------------------------------------------------
 
@@ -320,6 +334,120 @@ async fn try_authenticate(config: &ClientConfig) -> Result<Option<(String, Strin
 }
 
 // ---------------------------------------------------------------------------
+// Whoami implementation
+// ---------------------------------------------------------------------------
+
+async fn run_whoami(cli: &Cli) -> Result<CliResponse<WhoamiOutput>, CliError> {
+    let cfg_result = dbward_config::load_merged(cli.config.as_deref(), cli.merge_global);
+    let cfg = match cfg_result {
+        Ok(m) => Some(m.config),
+        Err(dbward_config::ConfigError::NotFound(_)) => None,
+        Err(e) => return Err(CliError::Config(e.to_string())),
+    };
+
+    if let Some(cfg) = &cfg {
+        // TLS transport security check before sending credentials
+        let has_oidc = cfg.server.oidc.is_some();
+        let allow_insecure = cfg.server.allow_insecure.unwrap_or(false) || cli.allow_insecure;
+        if let Err(e) = dbward_config::transport::check_transport_security(
+            &cfg.server.url,
+            allow_insecure,
+            has_oidc,
+        ) {
+            match &e {
+                dbward_config::transport::TransportError::InsecureHttp { .. } => {
+                    eprintln!("warning: {e}");
+                }
+                _ => return Err(CliError::Config(e.to_string())),
+            }
+        }
+
+        match try_authenticate(cfg).await {
+            Ok(Some((url, token))) => {
+                let sc = ServerClient::new(&url, &token);
+                match sc.get_json("/api/me").await {
+                    Ok(resp) => {
+                        return Ok(build_whoami_response(&resp));
+                    }
+                    Err(CliError::Transport(_)) => {
+                        // Connection failure → fall through to local
+                    }
+                    Err(e) => return Err(e),
+                }
+            }
+            Ok(None) => {
+                // Auth not configured → fall through to local
+            }
+            Err(e) => {
+                // Auth failure (expired token etc) → warn then fall through to local
+                eprintln!("warning: {e}");
+            }
+        }
+    }
+
+    // Fallback: local OIDC credentials
+    if oidc_login::whoami().is_ok() {
+        eprintln!(
+            "(showing local credentials only — server not available or auth not configured)"
+        );
+        // Return a minimal output for local-only case
+        let output = WhoamiOutput {
+            subject_id: "local".into(),
+            subject_type: "oidc".into(),
+            roles: vec![],
+            groups: vec![],
+        };
+        let render = RenderPlan {
+            stdout: StdoutRender::None,
+            stderr: vec![],
+        };
+        return Ok(CliResponse::ok(output, render));
+    }
+
+    Err(CliError::Auth("Not logged in. Run: dbward login".into()))
+}
+
+fn build_whoami_response(resp: &serde_json::Value) -> CliResponse<WhoamiOutput> {
+    let subject = resp["subject_id"].as_str().unwrap_or("unknown").to_string();
+    let stype = resp["subject_type"].as_str().unwrap_or("unknown").to_string();
+
+    let roles: Vec<String> = resp["roles"]
+        .as_array()
+        .map(|a| {
+            a.iter()
+                .filter_map(|v| v["name"].as_str().or_else(|| v.as_str()))
+                .map(String::from)
+                .collect()
+        })
+        .unwrap_or_default();
+
+    let groups: Vec<String> = resp["groups"]
+        .as_array()
+        .map(|a| a.iter().filter_map(|v| v.as_str()).map(String::from).collect())
+        .unwrap_or_default();
+
+    let mut pairs = vec![
+        ("Subject".into(), format!("{subject} ({stype})")),
+    ];
+    if !roles.is_empty() {
+        pairs.push(("Roles".into(), roles.join(", ")));
+    }
+    if !groups.is_empty() {
+        pairs.push(("Groups".into(), groups.join(", ")));
+    }
+
+    let output = WhoamiOutput {
+        subject_id: subject,
+        subject_type: stype,
+        roles,
+        groups,
+    };
+
+    let render = RenderPlan::key_value(pairs);
+    CliResponse::ok(output, render)
+}
+
+// ---------------------------------------------------------------------------
 // Main dispatch
 // ---------------------------------------------------------------------------
 
@@ -333,6 +461,8 @@ pub async fn run(mut cli: Cli) -> Result<Option<crate::output::CliOutcome>, CliE
     // New path: commands that return CliResponse<T> → CliOutcome
     // (Add new commands here as they are migrated)
     // -----------------------------------------------------------------------
+
+    // --- Token commands ---
     if let Command::Token { ref action } = cli.command {
         let cfg = config::load_resolved(cli.config.as_deref(), cli.merge_global)?.config;
         let (server_url, api_token) = authenticate(&cfg).await?;
@@ -361,6 +491,87 @@ pub async fn run(mut cli: Cli) -> Result<Option<crate::output::CliOutcome>, CliE
                 token::run_token_inspect(&sc, id).await?.into()
             }
         };
+        return Ok(Some(outcome));
+    }
+
+    // --- Whoami ---
+    if let Command::Whoami = cli.command {
+        let outcome: crate::output::CliOutcome = run_whoami(&cli).await?.into();
+        return Ok(Some(outcome));
+    }
+
+    // --- User commands ---
+    if let Command::User { ref action } = cli.command {
+        let cfg = config::load_resolved(cli.config.as_deref(), cli.merge_global)?.config;
+        let (server_url, api_token) = authenticate(&cfg).await?;
+        let sc = ServerClient::new(&server_url, &api_token);
+
+        let outcome: crate::output::CliOutcome = match action {
+            user::UserAction::Add { id, role, group } => {
+                user::run_user_add(&sc, id, role, group).await?.into()
+            }
+            user::UserAction::List => {
+                user::run_user_list(&sc).await?.into()
+            }
+            user::UserAction::Show { id } => {
+                user::run_user_show(&sc, id).await?.into()
+            }
+            user::UserAction::Update {
+                id, role, add_role, rm_role, add_group, rm_group, slack_user_id,
+            } => {
+                user::run_user_update(
+                    &sc, id, role, add_role, rm_role, add_group, rm_group,
+                    slack_user_id.as_deref(),
+                ).await?.into()
+            }
+            user::UserAction::Suspend { id } => {
+                user::run_user_suspend(&sc, id).await?.into()
+            }
+            user::UserAction::Activate { id } => {
+                user::run_user_activate(&sc, id).await?.into()
+            }
+            user::UserAction::Rm { id } => {
+                user::run_user_rm(&sc, id).await?.into()
+            }
+            user::UserAction::ReissueInitialToken { id } => {
+                user::run_user_reissue_token(&sc, id).await?.into()
+            }
+        };
+        return Ok(Some(outcome));
+    }
+
+    // --- Group commands ---
+    if let Command::Group { ref action } = cli.command {
+        let cfg = config::load_resolved(cli.config.as_deref(), cli.merge_global)?.config;
+        let (server_url, api_token) = authenticate(&cfg).await?;
+        let sc = ServerClient::new(&server_url, &api_token);
+
+        let outcome: crate::output::CliOutcome = match action {
+            group::GroupAction::List => {
+                group::run_group_list(&sc).await?.into()
+            }
+            group::GroupAction::Show { name } => {
+                group::run_group_show(&sc, name).await?.into()
+            }
+        };
+        return Ok(Some(outcome));
+    }
+
+    // --- Databases ---
+    if let Command::Databases = cli.command {
+        let cfg = config::load_resolved(cli.config.as_deref(), cli.merge_global)?.config;
+        let (server_url, api_token) = authenticate(&cfg).await?;
+        let sc = ServerClient::new(&server_url, &api_token);
+        let outcome: crate::output::CliOutcome = misc::run_databases(&sc).await?.into();
+        return Ok(Some(outcome));
+    }
+
+    // --- Agents ---
+    if let Command::Agents = cli.command {
+        let cfg = config::load_resolved(cli.config.as_deref(), cli.merge_global)?.config;
+        let (server_url, api_token) = authenticate(&cfg).await?;
+        let sc = ServerClient::new(&server_url, &api_token);
+        let outcome: crate::output::CliOutcome = misc::run_agents(&sc).await?.into();
         return Ok(Some(outcome));
     }
 
@@ -395,65 +606,6 @@ async fn run_legacy(cli: Cli) -> Result<(), CliError> {
         Command::Logout => {
             oidc_login::logout().await.map_err(CliError::Auth)?;
             return Ok(());
-        }
-        Command::Whoami => {
-            let cfg_result = dbward_config::load_merged(cli.config.as_deref(), cli.merge_global);
-            let cfg = match cfg_result {
-                Ok(m) => Some(m.config),
-                Err(dbward_config::ConfigError::NotFound(_)) => None,
-                Err(e) => return Err(CliError::Config(e.to_string())),
-            };
-
-            if let Some(cfg) = &cfg {
-                // TLS transport security check before sending credentials
-                let has_oidc = cfg.server.oidc.is_some();
-                let allow_insecure =
-                    cfg.server.allow_insecure.unwrap_or(false) || cli.allow_insecure;
-                if let Err(e) = dbward_config::transport::check_transport_security(
-                    &cfg.server.url,
-                    allow_insecure,
-                    has_oidc,
-                ) {
-                    match &e {
-                        dbward_config::transport::TransportError::InsecureHttp { .. } => {
-                            eprintln!("warning: {e}");
-                        }
-                        _ => return Err(CliError::Config(e.to_string())),
-                    }
-                }
-
-                match try_authenticate(cfg).await {
-                    Ok(Some((url, token))) => {
-                        let sc = ServerClient::new(&url, &token);
-                        match sc.get_json("/api/me").await {
-                            Ok(resp) => {
-                                print_whoami_server(&resp);
-                                return Ok(());
-                            }
-                            Err(CliError::Transport(_)) => {
-                                // Connection failure → fall through to local
-                            }
-                            Err(e) => return Err(e),
-                        }
-                    }
-                    Ok(None) => {
-                        // Auth not configured → fall through to local
-                    }
-                    Err(e) => {
-                        // Auth failure (expired token etc) → warn then fall through to local
-                        eprintln!("warning: {e}");
-                    }
-                }
-            }
-
-            // Fallback: local OIDC credentials
-            if oidc_login::whoami().is_ok() {
-                eprintln!(
-                    "(showing local credentials only — server not available or auth not configured)"
-                );
-                return Ok(());
-            }
-            return Err(CliError::Auth("Not logged in. Run: dbward login".into()));
         }
         Command::Server { action } => return server::run_server_command(action).await,
         Command::Agent {
@@ -626,7 +778,6 @@ async fn run_legacy(cli: Cli) -> Result<(), CliError> {
             )
             .await
         }
-        Command::Databases => misc::run_databases(&sc, json_output).await,
         Command::Preflight {
             ref sql,
             no_explain,
@@ -681,10 +832,12 @@ async fn run_legacy(cli: Cli) -> Result<(), CliError> {
             )
             .await
         }
-        Command::Agents => misc::run_agents(&sc, json_output).await,
-        Command::User { action } => user::run_user(&sc, action).await,
-        Command::Group { action } => group::run_group(&sc, action).await,
         Command::Token { .. } => unreachable!("handled by new path"),
+        Command::User { .. } => unreachable!("handled by new path"),
+        Command::Group { .. } => unreachable!("handled by new path"),
+        Command::Databases => unreachable!("handled by new path"),
+        Command::Agents => unreachable!("handled by new path"),
+        Command::Whoami => unreachable!("handled by new path"),
         Command::Policy { action } => match action {
             PolicyAction::Resolve {
                 database,
@@ -705,39 +858,12 @@ async fn run_legacy(cli: Cli) -> Result<(), CliError> {
         Command::Init { .. }
         | Command::Login { .. }
         | Command::Logout
-        | Command::Whoami
         | Command::Server { .. }
         | Command::Agent { .. }
         | Command::Dev { .. }
         | Command::SelfUpdate
         | Command::Doctor { .. }
         | Command::Slack { .. } => unreachable!(),
-    }
-}
-
-fn print_whoami_server(resp: &serde_json::Value) {
-    let subject = resp["subject_id"].as_str().unwrap_or("unknown");
-    let stype = resp["subject_type"].as_str().unwrap_or("unknown");
-    println!("Subject: {subject} ({stype})");
-
-    let roles: Vec<&str> = resp["roles"]
-        .as_array()
-        .map(|a| {
-            a.iter()
-                .filter_map(|v| v["name"].as_str().or_else(|| v.as_str()))
-                .collect()
-        })
-        .unwrap_or_default();
-    if !roles.is_empty() {
-        println!("Roles: {}", roles.join(", "));
-    }
-
-    let groups: Vec<&str> = resp["groups"]
-        .as_array()
-        .map(|a| a.iter().filter_map(|v| v.as_str()).collect())
-        .unwrap_or_default();
-    if !groups.is_empty() {
-        println!("Groups: {}", groups.join(", "));
     }
 }
 
@@ -888,69 +1014,46 @@ mod tests {
     }
 
     #[test]
-    fn print_whoami_server_with_groups_and_roles() {
+    fn build_whoami_response_with_groups_and_roles() {
         let resp = serde_json::json!({
             "subject_id": "alice@example.com",
             "subject_type": "user",
             "roles": [{"name": "dba", "permissions": ["execute"]}, {"name": "dev"}],
             "groups": ["backend-team", "sre"]
         });
-        // Capture stdout to verify output
-        let output = capture_whoami_output(&resp);
-        assert!(output.contains("Subject: alice@example.com (user)"));
-        assert!(output.contains("Roles: dba, dev"));
-        assert!(output.contains("Groups: backend-team, sre"));
+        let cli_resp = build_whoami_response(&resp);
+        let data = cli_resp.data.unwrap();
+        assert_eq!(data.subject_id, "alice@example.com");
+        assert_eq!(data.subject_type, "user");
+        assert_eq!(data.roles, vec!["dba", "dev"]);
+        assert_eq!(data.groups, vec!["backend-team", "sre"]);
     }
 
     #[test]
-    fn print_whoami_server_empty_groups_and_roles() {
+    fn build_whoami_response_empty_groups_and_roles() {
         let resp = serde_json::json!({
             "subject_id": "bot",
             "subject_type": "api_token",
             "roles": [],
             "groups": []
         });
-        let output = capture_whoami_output(&resp);
-        assert!(output.contains("Subject: bot (api_token)"));
-        assert!(!output.contains("Roles:"));
-        assert!(!output.contains("Groups:"));
+        let cli_resp = build_whoami_response(&resp);
+        let data = cli_resp.data.unwrap();
+        assert_eq!(data.subject_id, "bot");
+        assert_eq!(data.subject_type, "api_token");
+        assert!(data.roles.is_empty());
+        assert!(data.groups.is_empty());
     }
 
     #[test]
-    fn print_whoami_server_legacy_string_roles() {
+    fn build_whoami_response_legacy_string_roles() {
         let resp = serde_json::json!({
             "subject_id": "old-server",
             "subject_type": "user",
             "roles": ["admin", "requester"]
         });
-        let output = capture_whoami_output(&resp);
-        assert!(output.contains("Roles: admin, requester"));
-    }
-
-    /// Helper: extract what print_whoami_server would produce by calling the internal logic directly
-    fn capture_whoami_output(resp: &serde_json::Value) -> String {
-        let subject = resp["subject_id"].as_str().unwrap_or("unknown");
-        let stype = resp["subject_type"].as_str().unwrap_or("unknown");
-        let roles: Vec<&str> = resp["roles"]
-            .as_array()
-            .map(|a| {
-                a.iter()
-                    .filter_map(|v| v["name"].as_str().or_else(|| v.as_str()))
-                    .collect()
-            })
-            .unwrap_or_default();
-        let groups: Vec<&str> = resp["groups"]
-            .as_array()
-            .map(|a| a.iter().filter_map(|v| v.as_str()).collect())
-            .unwrap_or_default();
-
-        let mut output = format!("Subject: {subject} ({stype})\n");
-        if !roles.is_empty() {
-            output.push_str(&format!("Roles: {}\n", roles.join(", ")));
-        }
-        if !groups.is_empty() {
-            output.push_str(&format!("Groups: {}\n", groups.join(", ")));
-        }
-        output
+        let cli_resp = build_whoami_response(&resp);
+        let data = cli_resp.data.unwrap();
+        assert_eq!(data.roles, vec!["admin", "requester"]);
     }
 }

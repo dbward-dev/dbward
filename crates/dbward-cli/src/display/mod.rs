@@ -1,10 +1,6 @@
-#[allow(unused_imports)]
-mod agent;
 mod format;
 mod request;
 mod result;
-
-pub(crate) use agent::print_agents_status;
 #[allow(unused_imports)]
 pub(crate) use format::{
     display_width, format_created_time, format_duration_ago, format_duration_short,
