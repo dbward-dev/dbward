@@ -38,7 +38,11 @@ fn main() {
         .block_on(dbward::commands::run(cli));
 
     match result {
-        Ok(Some(outcome)) => {
+        Ok(Some(mut outcome)) => {
+            // Attach version mismatch warning if detected during HTTP calls
+            if let Some(w) = dbward::server_client::take_version_warning() {
+                outcome.warnings.push(w.to_string());
+            }
             render(mode, &outcome);
             std::process::exit(outcome.exit_code);
         }

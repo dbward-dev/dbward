@@ -308,8 +308,17 @@ pub async fn logout() -> Result<(), String> {
     Ok(())
 }
 
-pub fn whoami() -> Result<(), String> {
-    // Find credentials: try legacy first, then scoped dir
+/// Local OIDC identity information extracted from saved credentials.
+#[derive(Debug)]
+pub struct LocalIdentity {
+    pub email: Option<String>,
+    pub subject: Option<String>,
+    pub issuer: String,
+    pub expires_at: String,
+}
+
+/// Retrieve local OIDC identity data without printing anything.
+pub fn get_local_identity() -> Result<LocalIdentity, String> {
     let legacy = legacy_credentials_path();
     let path = if legacy.exists() {
         legacy
@@ -333,22 +342,43 @@ pub fn whoami() -> Result<(), String> {
         serde_json::from_str(&std::fs::read_to_string(&path).map_err(|e| e.to_string())?)
             .map_err(|e| format!("invalid credentials: {e}"))?;
 
-    // Decode JWT to show identity (without verification)
-    if let Some(ref id_token) = creds.id_token
-        && let Some(payload) = id_token.split('.').nth(1)
-    {
-        use base64::Engine;
-        if let Ok(bytes) = base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(payload)
-            && let Ok(claims) = serde_json::from_slice::<serde_json::Value>(&bytes)
-        {
-            let email = claims["email"].as_str().unwrap_or("unknown");
-            let sub = claims["sub"].as_str().unwrap_or("unknown");
-            println!("Identity: {email} ({sub})");
-        }
+    let (email, subject) = creds
+        .id_token
+        .as_ref()
+        .and_then(|id_token| id_token.split('.').nth(1))
+        .and_then(|payload| {
+            use base64::Engine;
+            base64::engine::general_purpose::URL_SAFE_NO_PAD
+                .decode(payload)
+                .ok()
+        })
+        .and_then(|bytes| serde_json::from_slice::<serde_json::Value>(&bytes).ok())
+        .map(|claims| {
+            (
+                claims["email"].as_str().map(String::from),
+                claims["sub"].as_str().map(String::from),
+            )
+        })
+        .unwrap_or((None, None));
+
+    Ok(LocalIdentity {
+        email,
+        subject,
+        issuer: creds.issuer,
+        expires_at: creds.expires_at,
+    })
+}
+
+pub fn whoami() -> Result<(), String> {
+    let identity = get_local_identity()?;
+
+    if let Some(ref email) = identity.email {
+        let sub = identity.subject.as_deref().unwrap_or("unknown");
+        println!("Identity: {email} ({sub})");
     }
 
-    println!("Issuer: {}", creds.issuer);
-    println!("Expires: {}", creds.expires_at);
+    println!("Issuer: {}", identity.issuer);
+    println!("Expires: {}", identity.expires_at);
     Ok(())
 }
 

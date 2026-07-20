@@ -126,7 +126,7 @@ pub async fn run_execute(
 
     let resp = match outcome {
         Outcome::Completed { request_id, result } => {
-            save_result(&request_id, &result, output, config_results_dir);
+            save_result(&request_id, &result, output, config_results_dir)?;
             let pretty = serde_json::to_string_pretty(&result).unwrap_or_default();
             let render = RenderPlan {
                 stdout: StdoutRender::Raw { value: pretty },

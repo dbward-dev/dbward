@@ -96,14 +96,19 @@ pub fn save_result(
     resp: &serde_json::Value,
     output: Option<&Path>,
     config_dir: Option<&Path>,
-) -> Option<PathBuf> {
+) -> Result<Option<PathBuf>, CliError> {
     let (path, explicit) = match output {
         Some(p) => (p.to_path_buf(), true),
         None => {
-            let dir = config_dir?;
+            let dir = match config_dir {
+                Some(d) => d,
+                None => return Ok(None),
+            };
             if let Err(e) = std::fs::create_dir_all(dir) {
-                eprintln!("Warning: cannot create results dir {}: {e}", dir.display());
-                return None;
+                return Err(CliError::Internal(format!(
+                    "cannot create results dir {}: {e}",
+                    dir.display()
+                )));
             }
             #[cfg(unix)]
             {
@@ -114,22 +119,24 @@ pub fn save_result(
         }
     };
     if explicit && path.is_dir() {
-        eprintln!("Error: --output path is a directory: {}", path.display());
-        std::process::exit(1);
+        return Err(CliError::Internal(format!(
+            "--output path is a directory: {}",
+            path.display()
+        )));
     }
     let content = serde_json::to_string_pretty(resp).unwrap_or_default();
     match write_secure(&path, content.as_bytes()) {
-        Ok(()) => {
-            eprintln!("Result saved to {}", path.display());
-            Some(path)
-        }
+        Ok(()) => Ok(Some(path)),
         Err(e) => {
             if explicit {
-                eprintln!("Error: failed to save result to {}: {e}", path.display());
-                std::process::exit(1);
+                Err(CliError::Internal(format!(
+                    "failed to save result to {}: {e}",
+                    path.display()
+                )))
+            } else {
+                // Non-explicit save failure is non-fatal
+                Ok(None)
             }
-            eprintln!("Warning: failed to save result to {}: {e}", path.display());
-            None
         }
     }
 }
@@ -218,14 +225,14 @@ mod tests {
 
     #[test]
     fn no_output_no_config_returns_none() {
-        let result = save_result("req_123", &sample_result(), None, None);
+        let result = save_result("req_123", &sample_result(), None, None).unwrap();
         assert!(result.is_none());
     }
 
     #[test]
     fn config_dir_saves_to_dir() {
         let dir = tempfile::tempdir().unwrap();
-        let result = save_result("req_456", &sample_result(), None, Some(dir.path()));
+        let result = save_result("req_456", &sample_result(), None, Some(dir.path())).unwrap();
         assert!(result.is_some());
         let path = result.unwrap();
         assert_eq!(path, dir.path().join("req_456.json"));
@@ -246,7 +253,8 @@ mod tests {
             &sample_result(),
             Some(&output_path),
             Some(config_dir.path()),
-        );
+        )
+        .unwrap();
         assert!(result.is_some());
         assert_eq!(result.unwrap(), output_path);
         assert!(output_path.exists());
@@ -259,8 +267,17 @@ mod tests {
         let output_dir = tempfile::tempdir().unwrap();
         let output_path = output_dir.path().join("explicit.json");
 
-        let result = save_result("req_abc", &sample_result(), Some(&output_path), None);
+        let result = save_result("req_abc", &sample_result(), Some(&output_path), None).unwrap();
         assert!(result.is_some());
         assert!(output_path.exists());
+    }
+
+    #[test]
+    fn output_is_directory_returns_error() {
+        let dir = tempfile::tempdir().unwrap();
+        let result = save_result("req_dir", &sample_result(), Some(dir.path()), None);
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(err.to_string().contains("directory"));
     }
 }

@@ -8,6 +8,14 @@ use crate::output::CliError;
 
 const MAX_ERROR_BODY_PREVIEW: usize = 200;
 
+/// Stored version mismatch warning (set by response hook, read by callers).
+static VERSION_WARNING: OnceLock<String> = OnceLock::new();
+
+/// Retrieve a version mismatch warning if one was detected during HTTP calls.
+pub fn take_version_warning() -> Option<&'static str> {
+    VERSION_WARNING.get().map(|s| s.as_str())
+}
+
 /// Structured HTTP error from the server.
 #[derive(Debug)]
 pub struct ServerError {
@@ -75,8 +83,7 @@ impl ServerError {
 
 fn version_check_hook() -> ResponseHook {
     Box::new(|resp: &reqwest::Response| {
-        static WARNED: OnceLock<()> = OnceLock::new();
-        if WARNED.get().is_some() {
+        if VERSION_WARNING.get().is_some() {
             return;
         }
         if let Some(sv) = resp
@@ -86,11 +93,9 @@ fn version_check_hook() -> ResponseHook {
         {
             let cv = env!("CARGO_PKG_VERSION");
             if sv != cv {
-                WARNED.get_or_init(|| {
-                    eprintln!(
-                        "warning: server is v{sv}, CLI is v{cv}. Run 'dbward self-update' to update."
-                    );
-                });
+                let _ = VERSION_WARNING.set(format!(
+                    "server is v{sv}, CLI is v{cv}. Run 'dbward self-update' to update."
+                ));
             }
         }
     })

@@ -25,7 +25,7 @@ use serde::Serialize;
 use crate::config::{self, ClientConfig};
 use crate::oidc_login;
 use crate::output::CliError;
-use crate::output::{CliResponse, RenderPlan, StdoutRender};
+use crate::output::{CliResponse, RenderPlan, StderrLine, StdoutRender};
 use crate::self_update;
 use crate::server_client::ServerClient;
 
@@ -386,23 +386,39 @@ async fn run_whoami(cli: &Cli) -> Result<CliResponse<WhoamiOutput>, CliError> {
     }
 
     // Fallback: local OIDC credentials
-    if oidc_login::whoami().is_ok() {
-        eprintln!("(showing local credentials only — server not available or auth not configured)");
-        // Return a minimal output for local-only case
-        let output = WhoamiOutput {
-            subject_id: "local".into(),
-            subject_type: "oidc".into(),
-            roles: vec![],
-            groups: vec![],
-        };
-        let render = RenderPlan {
-            stdout: StdoutRender::None,
-            stderr: vec![],
-        };
-        return Ok(CliResponse::ok(output, render));
-    }
+    match oidc_login::get_local_identity() {
+        Ok(identity) => {
+            let subject_id = identity
+                .email
+                .clone()
+                .or(identity.subject.clone())
+                .unwrap_or_else(|| "local".into());
 
-    Err(CliError::Auth("Not logged in. Run: dbward login".into()))
+            let mut pairs = vec![];
+            if let Some(ref email) = identity.email {
+                let sub = identity.subject.as_deref().unwrap_or("unknown");
+                pairs.push(("Identity".into(), format!("{email} ({sub})")));
+            }
+            pairs.push(("Issuer".into(), identity.issuer.clone()));
+            pairs.push(("Expires".into(), identity.expires_at.clone()));
+
+            let output = WhoamiOutput {
+                subject_id,
+                subject_type: "oidc".into(),
+                roles: vec![],
+                groups: vec![],
+            };
+            let render = RenderPlan {
+                stdout: StdoutRender::KeyValue { pairs },
+                stderr: vec![StderrLine::Warn(
+                    "showing local credentials only — server not available or auth not configured"
+                        .into(),
+                )],
+            };
+            Ok(CliResponse::ok(output, render))
+        }
+        Err(_) => Err(CliError::Auth("Not logged in. Run: dbward login".into())),
+    }
 }
 
 fn build_whoami_response(resp: &serde_json::Value) -> CliResponse<WhoamiOutput> {

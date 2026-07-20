@@ -878,39 +878,34 @@ async fn run_resume(
     if let Err(e) = sc.resume(id, reason).await {
         if e.status == 409 {
             // Fetch current status for a helpful message
-            if let Ok(req) = sc.get_request(id).await {
+            let hint = if let Ok(req) = sc.get_request(id).await {
                 use dbward_api_types::requests::RequestStatus;
                 let status = RequestStatus::from_json(&req["status"]);
                 match status {
                     RequestStatus::Executed => {
-                        eprintln!("Already executed. Run: dbward request result {id}");
+                        format!("Already executed. Run: dbward request result {id}")
                     }
                     RequestStatus::Failed => {
-                        eprintln!("Request failed. Run: dbward request show {id}");
+                        format!("Request failed. Run: dbward request show {id}")
                     }
-                    RequestStatus::Cancelled => {
-                        eprintln!("Request was cancelled.");
-                    }
+                    RequestStatus::Cancelled => "Request was cancelled.".to_string(),
                     RequestStatus::Dispatched | RequestStatus::Running => {
-                        eprintln!("Already resumed. Waiting for agent...");
+                        "Already resumed. Waiting for agent...".to_string()
                     }
                     RequestStatus::ExecutionLost => {
-                        eprintln!("Execution lost. Retry: dbward request resume {id}");
+                        format!("Execution lost. Retry: dbward request resume {id}")
                     }
-                    RequestStatus::Pending => {
-                        eprintln!("Still pending approval.");
-                    }
+                    RequestStatus::Pending => "Still pending approval.".to_string(),
                     _ => {
-                        eprintln!("Request {id} cannot be resumed (status: {status}).");
+                        format!("Request {id} cannot be resumed (status: {status}).")
                     }
                 }
             } else {
-                eprintln!("Request {id} cannot be resumed yet (may still be pending approval).");
-            }
-            eprintln!("Check status: dbward request show {id}");
+                format!("Request {id} cannot be resumed yet (may still be pending approval).")
+            };
             return Err(CliError::Api {
                 code: "not_ready".into(),
-                message: "request not ready for resume".into(),
+                message: format!("{hint}\n  Check status: dbward request show {id}"),
             });
         }
         return Err(e.into_cli_error("resume"));
@@ -932,7 +927,7 @@ async fn run_resume(
     };
 
     // Save result (maintains backward compatibility)
-    save_result(id, &resp, output, config_results_dir);
+    save_result(id, &resp, output, config_results_dir)?;
 
     // For human mode: use the existing formatted display via Raw
     let human_display = format_execution_result_as_string(&resp, result_format);
@@ -957,7 +952,7 @@ async fn run_result(
     let resp = sc.get_result_content(id, execution_id).await?;
 
     // Save result (maintains backward compatibility)
-    save_result(id, &resp, output, config_results_dir);
+    save_result(id, &resp, output, config_results_dir)?;
 
     // For human mode: use the existing formatted display via Raw
     let human_display = format_execution_result_as_string(&resp, result_format);
