@@ -12,9 +12,9 @@ dbward uses role-based access control (RBAC) with database and environment scopi
 | Role | Permissions | Scope |
 |------|-------------|-------|
 | `admin` | `workflow.read`, `workflow.write`, `policy.write`, `role.write`, `user.read`, `user.write`, `webhook.write`, `token.create`, `token.revoke:any`, `token.list`, `token.create_agent`, `token.reissue`, `audit.read`, `metrics.view` | All |
-| `requester` | `request.dml`, `request.query`, `request.view:own`, `request.cancel:own`, `request.resume:own`, `request.preflight`, `request.preflight_explain`, `result.view:own`, `schema.read`, `workflow.read`, `token.create`, `token.revoke:own` | All |
+| `requester` | `request.dml`, `request.ddl`, `request.query`, `request.view:own`, `request.cancel:own`, `request.resume:own`, `request.preflight`, `request.preflight_explain`, `result.view:own`, `schema.read`, `workflow.read`, `token.create`, `token.revoke:own` | All |
 | `approver` | `request.view:own`, `result.view:own`, `schema.read`, `workflow.read`, `token.create`, `token.revoke:own` | All |
-| `operator` | `request.view:any`, `request.cancel:any`, `request.resume:any`, `request.break_glass_query`, `request.break_glass_dml`, `request.break_glass_ddl`, `result.view:any`, `schema.read`, `audit.read`, `metrics.view`, `workflow.read`, `token.create`, `token.revoke:own` | All |
+| `operator` | `request.query`, `request.dml`, `request.ddl`, `request.view:any`, `request.cancel:any`, `request.resume:any`, `request.break_glass_query`, `request.break_glass_dml`, `request.break_glass_ddl`, `result.view:any`, `schema.read`, `audit.read`, `metrics.view`, `workflow.read`, `token.create`, `token.revoke:own` | All |
 | `agent-default` | `agent.operate` | All |
 
 Built-in roles cannot be redefined in config.
@@ -101,7 +101,8 @@ default_role = "requester"
 
 | Permission | Description |
 |-----------|-------------|
-| `request.dml` | Create requests (DML, DDL, migrations) |
+| `request.dml` | Create requests (DML, migrations) |
+| `request.ddl` | Create requests containing DDL (CREATE/ALTER TABLE, CREATE VIEW/INDEX, DROP TABLE/VIEW/INDEX/SEQUENCE, TRUNCATE, CREATE SEQUENCE) |
 | `request.query` | Create SELECT-only requests |
 | `request.resume` | Resume approved requests |
 | `request.cancel` | Cancel own requests |

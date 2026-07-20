@@ -28,7 +28,6 @@ Every statement is classified into one of three categories:
 ### ExecuteDml (write operations)
 
 - `INSERT`, `UPDATE`, `DELETE`, `MERGE`
-- `TRUNCATE`
 - `COPY`
 - `CALL` (stored procedures)
 - `CREATE TABLE`, `CREATE VIEW`, `CREATE INDEX`
@@ -38,10 +37,21 @@ Every statement is classified into one of three categories:
 - `EXPLAIN ANALYZE` on DML statements (actually executes the inner statement)
 - `SELECT INTO`
 
+#### DestructiveDdl (subcategory of ExecuteDml)
+
+These statements are classified as ExecuteDml but flagged as DestructiveDdl. They pass through the classifier and are controlled by [sql_review rules](#sql-review-14-rules):
+
+- `DROP TABLE` ¹
+- `DROP VIEW` ¹
+- `DROP INDEX` ¹
+- `DROP SEQUENCE` ¹
+- `TRUNCATE` ¹
+- `CREATE SEQUENCE` ¹
+
+¹ Requires `Permission::RequestDdl` (`request.ddl`). Controlled by sql_review rules (default: `block` for `drop_table`/`truncate`, `warn` for others). `--allow-ddl` bypasses sql_review blocks. See [Break-Glass](../guides/break-glass.md).
+
 ### Rejected (blocked by default)
 
-- `DROP TABLE/VIEW/INDEX/SEQUENCE` ¹
-- `CREATE SEQUENCE` ¹
 - `DROP SCHEMA/DATABASE/FUNCTION/ROLE`
 - `CREATE FUNCTION/PROCEDURE/TRIGGER/ROLE/DATABASE`
 - `GRANT`, `REVOKE`
@@ -49,8 +59,6 @@ Every statement is classified into one of three categories:
 - `LOCK TABLE`
 - `LOAD DATA`
 - `SET` (unsafe variables)
-
-¹ Can be bypassed with `--emergency --allow-ddl` for schema repair. Requires `request.break_glass_ddl` permission. See [Break-Glass](../guides/break-glass.md).
 
 ### Special rules
 
@@ -66,13 +74,13 @@ Every statement is classified into one of three categories:
 
 ---
 
-## SQL Review (10 rules)
+## SQL Review (14 rules)
 
 Each rule has a configurable severity: `warn`, `block`, or `off`.
 
-- `block` (default for `no_where_delete`, `no_where_update`, `drop_table`, `truncate`) — rejects the request regardless of workflow (DDL rules ² can be bypassed with `--emergency --allow-ddl`)
-- `warn` (default for other rules) — adds a finding to the risk assessment
-- `off` — rule is disabled
+- `block` (default for `no_where_delete`, `no_where_update`, `drop_table`, `truncate`) — rejects the request regardless of workflow (DDL rules ² can be bypassed with `--allow-ddl`)
+- `warn` (default for `drop_column`, `not_null_without_default`, `create_index_not_concurrently`, `alter_column_type`, `mixed_ddl_dml`, `large_in_list`, `drop_index`, `drop_view`, `drop_sequence`) — adds a finding to the risk assessment
+- `off` (default for `create_sequence`) — rule is disabled
 
 ```toml
 [[sql_review]]
@@ -88,6 +96,10 @@ alter_column_type = "warn"
 truncate = "warn"
 mixed_ddl_dml = "warn"
 large_in_list = "warn"
+drop_index = "warn"
+drop_view = "warn"
+drop_sequence = "warn"
+create_sequence = "off"
 ```
 
 ### Rule descriptions
@@ -104,8 +116,12 @@ large_in_list = "warn"
 | `truncate` | `TRUNCATE TABLE` | All data removed |
 | `mixed_ddl_dml` | DDL and DML in same request | Complex rollback |
 | `large_in_list` | `IN (...)` with > 100 values | Performance concern |
+| `drop_index` | `DROP INDEX` detected | Index removal, query performance impact |
+| `drop_view` | `DROP VIEW` detected | View removal, dependent queries break |
+| `drop_sequence` | `DROP SEQUENCE` detected | Sequence removal, ID generation impact |
+| `create_sequence` | `CREATE SEQUENCE` detected | New sequence creation |
 
-² DDL rules (`drop_table`, `drop_column`, `truncate`, `create_index_not_concurrently`, `alter_column_type`, `not_null_without_default`) can be bypassed with `--emergency --allow-ddl`. DML safety rules (`no_where_delete`, `no_where_update`, `large_in_list`) and `mixed_ddl_dml` are never bypassable.
+² DDL rules (`drop_table`, `drop_column`, `truncate`, `create_index_not_concurrently`, `alter_column_type`, `not_null_without_default`, `drop_index`, `drop_view`, `drop_sequence`, `create_sequence`) can be bypassed with `--allow-ddl`. DML safety rules (`no_where_delete`, `no_where_update`, `large_in_list`) and `mixed_ddl_dml` are never bypassable.
 
 ---
 

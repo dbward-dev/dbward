@@ -45,7 +45,7 @@ Most error responses follow this structure:
 
 Create a new SQL execution or migration request.
 
-Permission: `request.dml` | `request.query` | `request.break_glass_dml` (scoped by database/environment). `allow_ddl=true` additionally requires `request.break_glass_ddl`.
+Permission: `request.dml` | `request.query` | `request.ddl` | `request.break_glass_dml` (scoped by database/environment). DDL operations (DROP TABLE/VIEW/INDEX/SEQUENCE, TRUNCATE, CREATE SEQUENCE) require `request.ddl`. `allow_ddl=true` additionally requires `request.break_glass_ddl`.
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
@@ -166,7 +166,7 @@ Permission: `request.preflight` (scoped). EXPLAIN requires `request.preflight_ex
 | `include_explain` | bool | | Run EXPLAIN via agent (default: true) |
 | `explain_timeout_ms` | u64 | | Max EXPLAIN wait in ms (default: 5000) |
 
-Response includes `status` (`requestable`/`blocked`/`warning`), `risk`, `classification`, `review`, `risk_assessment`, `policy`, `impact`, `fix_hints`, `retryable`, and `next_actions`.
+Response includes `status` (`requestable`/`blocked`/`warning`), `risk`, `classification`, `review`, `risk_assessment`, `policy`, `impact`, `fix_hints`, `retryable`, `next_actions`, and `requires_ddl_permission` (boolean — `true` when the SQL contains DestructiveDdl statements requiring `request.ddl` permission).
 
 Status codes: 200 (success), 400 (validation), 401 (auth), 403 (forbidden), 429 (rate limit).
 

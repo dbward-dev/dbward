@@ -236,6 +236,10 @@ truncate = "warn"
 | `truncate` | String | | `"block"` | TRUNCATE. |
 | `mixed_ddl_dml` | String | | `"warn"` | DDL and DML in same request. |
 | `large_in_list` | String | | `"warn"` | IN clause with excessive values. |
+| `drop_index` | String | | `"warn"` | DROP INDEX. |
+| `drop_view` | String | | `"warn"` | DROP VIEW. |
+| `drop_sequence` | String | | `"warn"` | DROP SEQUENCE. |
+| `create_sequence` | String | | `"off"` | CREATE SEQUENCE. |
 
 **Specificity:** exact (db+env) > env-only (`*`+env) > db-only (db+`*`) > catchall (`*`+`*`) > builtin default.
 

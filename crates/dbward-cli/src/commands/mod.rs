@@ -110,7 +110,7 @@ pub enum Command {
         /// Emergency bypass (skip approval, requires --reason)
         #[arg(long)]
         emergency: bool,
-        /// Allow schema DDL (DROP TABLE/VIEW/INDEX/SEQUENCE, CREATE SEQUENCE) in emergency mode
+        /// Bypass sql_review blocks (DROP TABLE, TRUNCATE, etc.) in emergency mode
         #[arg(long = "allow-ddl", requires = "emergency")]
         allow_ddl: bool,
         /// Reason for this request

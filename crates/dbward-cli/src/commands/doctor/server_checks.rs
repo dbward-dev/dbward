@@ -64,6 +64,9 @@ pub(super) async fn run_server_mode(ctx: &mut DoctorContext, path: &std::path::P
     // S9: notification_webhook_refs
     check_notification_webhook_refs(ctx, &cfg);
 
+    // S10: sql_review safety
+    check_sql_review_safety(ctx, &cfg);
+
     // S11: slack connectivity
     check_slack(ctx, &cfg).await;
 }
@@ -831,6 +834,51 @@ async fn check_slack(ctx: &mut DoctorContext, cfg: &dbward_config::ServerConfig)
                 }
             },
         }
+    }
+}
+
+fn check_sql_review_safety(ctx: &mut DoctorContext, cfg: &dbward_config::ServerConfig) {
+    let mut warnings = Vec::new();
+
+    for (i, sr) in cfg.sql_review.iter().enumerate() {
+        if sr.environment == "*" || sr.environment.contains("prod") {
+            if sr.drop_table == "off" {
+                warnings.push(format!(
+                    "sql_review[{i}]: drop_table=off in production scope (env='{}')",
+                    sr.environment
+                ));
+            }
+            if sr.truncate == "off" {
+                warnings.push(format!(
+                    "sql_review[{i}]: truncate=off in production scope (env='{}')",
+                    sr.environment
+                ));
+            }
+        }
+    }
+
+    if warnings.is_empty() {
+        ctx.record(CheckResult {
+            id: "sql_review_safety",
+            status: Status::Pass,
+            message: "destructive DDL rules are active for production".into(),
+            hint: None,
+            details: vec![],
+        });
+    } else {
+        ctx.record(CheckResult {
+            id: "sql_review_safety",
+            status: Status::Warn,
+            message: format!(
+                "{} dangerous sql_review setting(s) detected",
+                warnings.len()
+            ),
+            hint: Some(
+                "Disabling drop_table or truncate rules in production reduces safety guarantees"
+                    .into(),
+            ),
+            details: warnings,
+        });
     }
 }
 

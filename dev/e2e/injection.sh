@@ -17,20 +17,20 @@ ADMIN_TOKEN=$(create_token e2e-inject-admin admin,requester)
 # --- SQL Injection via detail field ---
 echo "--- SQL Injection ---"
 
-# Stacked queries: must be rejected (multi-statement = blocked)
+# Stacked queries: must be rejected (multi-statement with DDL = blocked by permission or review)
 STATUS=$(api_status POST /api/requests "$ADMIN_TOKEN" \
   -d '{"detail":"SELECT 1; DROP TABLE users","database":"app","environment":"development"}')
-[ "$STATUS" = "400" ] && pass "Stacked query rejected (400)" || fail "Stacked query" "got $STATUS (expected 400)"
+[ "$STATUS" = "400" ] || [ "$STATUS" = "403" ] && pass "Stacked query rejected ($STATUS)" || fail "Stacked query" "got $STATUS (expected 400 or 403)"
 
 # UNION injection
 STATUS=$(api_status POST /api/requests "$ADMIN_TOKEN" \
   -d '{"detail":"SELECT id FROM users UNION SELECT password FROM admin","database":"app","environment":"development"}')
-[ "$STATUS" = "201" ] || [ "$STATUS" = "400" ] && pass "UNION injection handled ($STATUS)" || fail "UNION injection" "got $STATUS"
+[ "$STATUS" = "201" ] || [ "$STATUS" = "400" ] || [ "$STATUS" = "403" ] && pass "UNION injection handled ($STATUS)" || fail "UNION injection" "got $STATUS"
 
 # Comment-based bypass
 STATUS=$(api_status POST /api/requests "$ADMIN_TOKEN" \
   -d '{"detail":"SELECT * FROM users WHERE id=1-- DROP TABLE x","database":"app","environment":"development"}')
-[ "$STATUS" = "201" ] || [ "$STATUS" = "400" ] && pass "Comment bypass handled ($STATUS)" || fail "Comment bypass" "got $STATUS"
+[ "$STATUS" = "201" ] || [ "$STATUS" = "400" ] || [ "$STATUS" = "403" ] && pass "Comment bypass handled ($STATUS)" || fail "Comment bypass" "got $STATUS"
 
 # Null byte injection (JSON unicode escape \u0000)
 STATUS=$(api_status POST /api/requests "$ADMIN_TOKEN" \
@@ -58,7 +58,7 @@ STATUS=$(api_status POST /api/requests "$ADMIN_TOKEN" -d "$DEEP_JSON")
 # Large array in share_with
 LARGE_ARRAY=$(python3 -c "import json; print(json.dumps({'detail':'SELECT 1','database':'app','environment':'development','share_with':['user'+str(i) for i in range(10000)]}))")
 STATUS=$(api_status POST /api/requests "$ADMIN_TOKEN" -d "$LARGE_ARRAY")
-[ "$STATUS" = "400" ] || [ "$STATUS" = "413" ] || [ "$STATUS" = "201" ] && pass "Large array handled ($STATUS)" || fail "Large array" "got $STATUS"
+[ "$STATUS" = "400" ] || [ "$STATUS" = "413" ] || [ "$STATUS" = "201" ] || [ "$STATUS" = "403" ] && pass "Large array handled ($STATUS)" || fail "Large array" "got $STATUS"
 
 # --- Oversized Body ---
 echo ""
@@ -70,6 +70,19 @@ STATUS=$(curl -s -o /dev/null -w "%{http_code}" -X POST "${SERVER_URL}/api/reque
   -H "Authorization: Bearer $ADMIN_TOKEN" -H "Content-Type: application/json" -d @/tmp/bigbody.json)
 rm -f /tmp/bigbody.json
 [ "$STATUS" = "413" ] || [ "$STATUS" = "400" ] && pass "5MB body rejected ($STATUS)" || fail "Oversized body" "got $STATUS"
+
+# --- DDL Permission gate ---
+echo ""
+echo "--- DDL Permission ---"
+
+DML_ONLY_TOKEN=$(create_token e2e-inject-dml dml-only)
+if [ -n "$DML_ONLY_TOKEN" ]; then
+  STATUS=$(api_status POST /api/requests "$DML_ONLY_TOKEN" \
+    -d '{"detail":"CREATE TABLE perm_test (id int)","database":"app","environment":"development"}')
+  [ "$STATUS" = "403" ] && pass "DDL without request.ddl rejected (403)" || fail "DDL permission gate" "got $STATUS (expected 403)"
+else
+  skip "dml-only role not configured"
+fi
 
 # --- Server still alive after all attacks ---
 echo ""
