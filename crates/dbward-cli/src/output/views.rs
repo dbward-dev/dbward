@@ -1,5 +1,7 @@
 use serde::Serialize;
 
+use super::types::{Column, StdoutRender};
+
 /// Query result in a transport-neutral representation. Shared by CLI and MCP.
 #[derive(Serialize, Clone, Debug)]
 pub struct QueryResultView {
@@ -7,6 +9,95 @@ pub struct QueryResultView {
     pub rows: Option<Vec<Vec<serde_json::Value>>>,
     pub rows_affected: Option<u64>,
     pub truncated: bool,
+}
+
+impl QueryResultView {
+    /// Render this view as a `StdoutRender` based on the requested result format.
+    pub fn to_stdout_render(&self, format: crate::display::ResultFormat) -> StdoutRender {
+        use crate::display::ResultFormat;
+
+        match format {
+            ResultFormat::Table => self.render_table(),
+            ResultFormat::Csv => StdoutRender::Raw {
+                value: self.render_csv(),
+            },
+            ResultFormat::Vertical => StdoutRender::Raw {
+                value: self.render_vertical(),
+            },
+            ResultFormat::Json => StdoutRender::Raw {
+                value: serde_json::to_string_pretty(self).unwrap_or_default(),
+            },
+        }
+    }
+
+    fn render_table(&self) -> StdoutRender {
+        let Some(cols) = &self.columns else {
+            if let Some(affected) = self.rows_affected {
+                return StdoutRender::Raw {
+                    value: format!("Rows affected: {affected}"),
+                };
+            }
+            return StdoutRender::Raw {
+                value: "Executed successfully.".into(),
+            };
+        };
+
+        let rows = self.rows.as_deref().unwrap_or(&[]);
+        if rows.is_empty() {
+            return StdoutRender::Raw {
+                value: "(0 rows)".into(),
+            };
+        }
+
+        let columns: Vec<Column> = cols
+            .iter()
+            .map(|c| Column::new(c.as_str()).with_max_width(60))
+            .collect();
+        let str_rows: Vec<Vec<String>> = rows
+            .iter()
+            .map(|row| row.iter().map(|v| format_cell(v)).collect())
+            .collect();
+
+        StdoutRender::Table {
+            columns,
+            rows: str_rows,
+        }
+    }
+
+    fn render_csv(&self) -> String {
+        let cols = self.columns.as_deref().unwrap_or(&[]);
+        let rows = self.rows.as_deref().unwrap_or(&[]);
+
+        let mut out = String::new();
+        // Header
+        out.push_str(&cols.join(","));
+        out.push('\n');
+        // Rows
+        for row in rows {
+            let cells: Vec<String> = row.iter().map(|v| csv_cell(v)).collect();
+            out.push_str(&cells.join(","));
+            out.push('\n');
+        }
+        out
+    }
+
+    fn render_vertical(&self) -> String {
+        let cols = self.columns.as_deref().unwrap_or(&[]);
+        let rows = self.rows.as_deref().unwrap_or(&[]);
+
+        let mut out = String::new();
+        for (i, row) in rows.iter().enumerate() {
+            out.push_str(&format!("*** Row {} ***\n", i + 1));
+            for (j, val) in row.iter().enumerate() {
+                let col_name = cols.get(j).map(|s| s.as_str()).unwrap_or("?");
+                out.push_str(&format!("{col_name}: {}\n", format_cell(val)));
+            }
+            if i < rows.len() - 1 {
+                out.push('\n');
+            }
+        }
+        out
+    }
 }
 
 impl QueryResultView {
@@ -82,6 +173,29 @@ impl QueryResultView {
         } else {
             (None, None)
         }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Cell formatting helpers
+// ---------------------------------------------------------------------------
+
+fn format_cell(val: &serde_json::Value) -> String {
+    if val.is_null() {
+        "NULL".to_string()
+    } else if let Some(s) = val.as_str() {
+        s.to_string()
+    } else {
+        val.to_string()
+    }
+}
+
+fn csv_cell(val: &serde_json::Value) -> String {
+    let s = format_cell(val);
+    if s.contains(',') || s.contains('"') || s.contains('\n') {
+        format!("\"{}\"", s.replace('"', "\"\""))
+    } else {
+        s
     }
 }
 

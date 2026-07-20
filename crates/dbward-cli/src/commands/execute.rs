@@ -30,7 +30,7 @@ pub async fn run_execute(
     idempotency_key: Option<&str>,
     share_with: &[String],
     no_result_store: bool,
-    _result_format: crate::display::ResultFormat,
+    result_format: crate::display::ResultFormat,
     timeout: Option<u64>,
     yes: bool,
     progress: &ProgressSink,
@@ -128,9 +128,10 @@ pub async fn run_execute(
             if let Some(w) = save.warning {
                 warnings.push(w);
             }
-            let pretty = serde_json::to_string_pretty(&result).unwrap_or_default();
+            let view = crate::output::views::QueryResultView::from_server_response(&result);
+            let stdout = view.to_stdout_render(result_format);
             let render = RenderPlan {
-                stdout: StdoutRender::Raw { value: pretty },
+                stdout,
                 stderr: vec![],
             };
             CliResponse::ok(result, render)
