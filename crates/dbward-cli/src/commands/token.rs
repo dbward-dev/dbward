@@ -4,7 +4,7 @@ use serde::Serialize;
 use serde_json::{Value, json};
 
 use crate::error::CliError;
-use crate::output::{CliResponse, Column, RenderPlan};
+use crate::output::{CliResponse, Column, RenderPlan, StderrLine};
 use crate::server_client::ServerClient;
 
 fn parse_subject_type(s: &str) -> Result<String, String> {
@@ -65,202 +65,21 @@ pub enum TokenAction {
     },
 }
 
-pub async fn run_token_command(
-    action: &TokenAction,
-    client: &ServerClient,
-    json_output: bool,
-) -> Result<(), CliError> {
-    match action {
-        TokenAction::Create {
-            subject,
-            subject_type,
-            scope_roles,
-            no_scope_ceiling,
-            name,
-            expires,
-            role,
-        } => {
-            // Resolve subject: if not provided, use caller's own identity
-            let resolved_subject = match subject {
-                Some(s) => s.clone(),
-                None => {
-                    if subject_type != "user" {
-                        return Err(CliError::Config(
-                            "--subject is required for agent tokens".into(),
-                        ));
-                    }
-                    let me: serde_json::Value = client.get("/api/me").await?;
-                    me.get("subject_id")
-                        .and_then(|v| v.as_str())
-                        .ok_or_else(|| {
-                            CliError::Config("could not determine caller identity".into())
-                        })?
-                        .to_string()
-                }
-            };
-            // Build scope_ceiling from flags
-            let scope_ceiling = if *no_scope_ceiling {
-                if subject_type != "agent" {
-                    return Err(CliError::Config(
-                        "--no-scope-ceiling is only allowed for agent tokens".into(),
-                    ));
-                }
-                None
-            } else if !scope_roles.is_empty() {
-                Some(json!({"roles": scope_roles}))
-            } else if let Some(legacy_role) = role {
-                // Deprecated --role flag → convert to scope_ceiling
-                eprintln!("⚠ --role is deprecated. Use --scope-roles instead.");
-                Some(json!({"roles": [legacy_role]}))
-            } else {
-                // User tokens: auto-ceiling from resolved roles (server-side)
-                // Agent tokens: unrestricted (no ceiling)
-                None
-            };
-
-            let expires_at = match expires.as_deref() {
-                Some(s) => Some(parse_expires(s)?),
-                None => None,
-            };
-
-            let body = json!({
-                "subject_id": resolved_subject,
-                "subject_type": subject_type,
-                "name": name,
-                "scope_ceiling": scope_ceiling,
-                "expires_at": expires_at,
-            });
-            let resp = client.create_token(&body).await?;
-
-            if json_output {
-                println!(
-                    "{}",
-                    serde_json::to_string_pretty(&resp).unwrap_or_default()
-                );
-            } else {
-                println!("Token created successfully.\n");
-                println!("  ID:      {}", resp["id"].as_str().unwrap_or("-"));
-                println!("  Token:   {}", resp["token"].as_str().unwrap_or("-"));
-                println!("  Prefix:  {}", resp["prefix"].as_str().unwrap_or("-"));
-                println!("  Subject: {} ({})", resolved_subject, subject_type);
-                if let Some(sc) = resp.get("scope_ceiling").filter(|v| !v.is_null()) {
-                    if let Some(roles) = sc.get("roles").and_then(|r| r.as_array()) {
-                        let role_strs: Vec<&str> =
-                            roles.iter().filter_map(|v| v.as_str()).collect();
-                        println!("  Ceiling: {}", role_strs.join(", "));
-                    }
-                } else {
-                    println!("  Ceiling: unrestricted");
-                }
-                if let Some(roles) = resp["effective_roles"].as_array() {
-                    let role_strs: Vec<&str> = roles.iter().filter_map(|v| v.as_str()).collect();
-                    println!("  Roles:   {}", role_strs.join(", "));
-                }
-                if let Some(exp) = resp["expires_at"].as_str() {
-                    println!("  Expires: {}", exp);
-                } else {
-                    println!("  Expires: never");
-                }
-                println!("\n⚠ Save this token now. It cannot be retrieved later.");
-            }
-        }
-        TokenAction::List { .. } => {
-            // Handled by new path in run() — should never reach here
-            unreachable!("token list is handled by the new output path");
-        }
-        TokenAction::Revoke { id } => {
-            let resp = client.revoke_token(id).await?;
-            if json_output {
-                println!(
-                    "{}",
-                    serde_json::to_string_pretty(&resp).unwrap_or_default()
-                );
-            } else {
-                println!("Token {} revoked.", id);
-            }
-        }
-        TokenAction::Inspect { id } => {
-            let resp = client.inspect_token(id).await?;
-            if json_output {
-                println!(
-                    "{}",
-                    serde_json::to_string_pretty(&resp).unwrap_or_default()
-                );
-            } else {
-                println!("Token: {}", resp["id"].as_str().unwrap_or("-"));
-                println!(
-                    "  Subject:     {} ({})",
-                    resp["subject_id"].as_str().unwrap_or("-"),
-                    resp["subject_type"].as_str().unwrap_or("-"),
-                );
-                println!("  Status:      {}", resp["status"].as_str().unwrap_or("-"));
-                if let Some(sc) = resp.get("scope_ceiling").filter(|v| !v.is_null()) {
-                    if let Some(roles) = sc.get("roles").and_then(|r| r.as_array()) {
-                        let role_strs: Vec<&str> =
-                            roles.iter().filter_map(|v| v.as_str()).collect();
-                        println!("  Ceiling:     {}", role_strs.join(", "));
-                    }
-                } else {
-                    println!("  Ceiling:     unrestricted");
-                }
-                if let Some(roles) = resp["resolved_roles"].as_array() {
-                    let role_strs: Vec<&str> = roles.iter().filter_map(|v| v.as_str()).collect();
-                    println!("  Resolved:    {}", role_strs.join(", "));
-                }
-                if let Some(roles) = resp["effective_roles"].as_array() {
-                    let role_strs: Vec<&str> = roles.iter().filter_map(|v| v.as_str()).collect();
-                    println!("  Effective:   {}", role_strs.join(", "));
-                }
-                if let Some(perms) = resp["effective_permissions"].as_array() {
-                    let perm_strs: Vec<&str> = perms.iter().filter_map(|v| v.as_str()).collect();
-                    println!("  Permissions: {}", perm_strs.join(", "));
-                }
-            }
-        }
-    }
-    Ok(())
-}
-
-fn parse_expires(input: &str) -> Result<String, CliError> {
-    let trimmed = input.trim();
-    if let Some(num_str) = trimmed.strip_suffix('d') {
-        let days: i64 = num_str
-            .parse()
-            .map_err(|_| CliError::Config("invalid --expires format".into()))?;
-        let dt = Utc::now() + chrono::Duration::days(days);
-        return Ok(dt.to_rfc3339());
-    }
-    if let Some(num_str) = trimmed.strip_suffix('h') {
-        let hours: i64 = num_str
-            .parse()
-            .map_err(|_| CliError::Config("invalid --expires format".into()))?;
-        let dt = Utc::now() + chrono::Duration::hours(hours);
-        return Ok(dt.to_rfc3339());
-    }
-    if let Some(num_str) = trimmed.strip_suffix('m') {
-        let mins: i64 = num_str
-            .parse()
-            .map_err(|_| CliError::Config("invalid --expires format".into()))?;
-        let dt = Utc::now() + chrono::Duration::minutes(mins);
-        return Ok(dt.to_rfc3339());
-    }
-    if let Ok(date) = NaiveDate::parse_from_str(trimmed, "%Y-%m-%d") {
-        let dt = date.and_hms_opt(23, 59, 59).unwrap().and_utc();
-        return Ok(dt.to_rfc3339());
-    }
-    if chrono::DateTime::parse_from_rfc3339(trimmed).is_ok() {
-        return Ok(trimmed.to_string());
-    }
-    Err(CliError::Config(
-        "invalid --expires format. Use: 90d, 24h, 2026-12-31, or ISO 8601".into(),
-    ))
-}
-
 // ---------------------------------------------------------------------------
-// New output layer: token list
+// Output types
 // ---------------------------------------------------------------------------
 
-/// Output data for `token list`.
+#[derive(Serialize)]
+pub struct TokenCreateOutput {
+    pub id: String,
+    pub token: String,
+    pub prefix: String,
+    pub subject: String,
+    pub subject_type: String,
+    pub scope_ceiling: Vec<String>,
+    pub expires_at: Option<String>,
+}
+
 #[derive(Serialize)]
 pub struct TokenListOutput {
     pub tokens: Vec<TokenSummary>,
@@ -278,7 +97,130 @@ pub struct TokenSummary {
     pub expires_at: Option<String>,
 }
 
-/// New-style token list implementation returning `CliResponse<TokenListOutput>`.
+#[derive(Serialize)]
+pub struct TokenRevokeOutput {
+    pub id: String,
+    pub status: String,
+}
+
+#[derive(Serialize)]
+pub struct TokenInspectOutput {
+    pub id: String,
+    pub subject: String,
+    pub subject_type: String,
+    pub status: String,
+    pub ceiling: Vec<String>,
+    pub resolved_roles: Vec<String>,
+    pub effective_roles: Vec<String>,
+    pub effective_permissions: Vec<String>,
+}
+
+// ---------------------------------------------------------------------------
+// Command implementations
+// ---------------------------------------------------------------------------
+
+pub async fn run_token_create(
+    client: &ServerClient,
+    subject: Option<&str>,
+    subject_type: &str,
+    scope_roles: &[String],
+    no_scope_ceiling: bool,
+    name: Option<&str>,
+    expires: Option<&str>,
+    role: Option<&str>,
+) -> Result<CliResponse<TokenCreateOutput>, CliError> {
+    let resolved_subject = match subject {
+        Some(s) => s.to_string(),
+        None => {
+            if subject_type != "user" {
+                return Err(CliError::Config(
+                    "--subject is required for agent tokens".into(),
+                ));
+            }
+            let me: Value = client.get("/api/me").await?;
+            me.get("subject_id")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| CliError::Config("could not determine caller identity".into()))?
+                .to_string()
+        }
+    };
+
+    let mut warnings = Vec::new();
+
+    let scope_ceiling = if no_scope_ceiling {
+        if subject_type != "agent" {
+            return Err(CliError::Config(
+                "--no-scope-ceiling is only allowed for agent tokens".into(),
+            ));
+        }
+        None
+    } else if !scope_roles.is_empty() {
+        Some(json!({"roles": scope_roles}))
+    } else if let Some(legacy_role) = role {
+        warnings.push("--role is deprecated. Use --scope-roles instead.".to_string());
+        Some(json!({"roles": [legacy_role]}))
+    } else {
+        None
+    };
+
+    let expires_at = match expires {
+        Some(s) => Some(parse_expires(s)?),
+        None => None,
+    };
+
+    let body = json!({
+        "subject_id": resolved_subject,
+        "subject_type": subject_type,
+        "name": name,
+        "scope_ceiling": scope_ceiling,
+        "expires_at": expires_at,
+    });
+    let resp = client.create_token(&body).await?;
+
+    let token_value = resp["token"].as_str().unwrap_or("-").to_string();
+    let id = resp["id"].as_str().unwrap_or("-").to_string();
+    let prefix = resp["prefix"].as_str().unwrap_or("-").to_string();
+    let ceiling: Vec<String> = resp["scope_ceiling"]["roles"]
+        .as_array()
+        .map(|a| a.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+        .unwrap_or_default();
+
+    let output = TokenCreateOutput {
+        id: id.clone(),
+        token: token_value.clone(),
+        prefix: prefix.clone(),
+        subject: resolved_subject.clone(),
+        subject_type: subject_type.to_string(),
+        scope_ceiling: ceiling.clone(),
+        expires_at: expires_at.clone(),
+    };
+
+    let render = RenderPlan::raw_with_info(
+        token_value,
+        vec![
+            StderrLine::Status("Token created successfully.".into()),
+            StderrLine::Info("ID".into(), id),
+            StderrLine::Info("Prefix".into(), prefix),
+            StderrLine::Info("Subject".into(), format!("{resolved_subject} ({subject_type})")),
+            StderrLine::Info(
+                "Ceiling".into(),
+                if ceiling.is_empty() { "unrestricted".into() } else { ceiling.join(", ") },
+            ),
+            StderrLine::Info(
+                "Expires".into(),
+                expires_at.unwrap_or_else(|| "never".into()),
+            ),
+            StderrLine::Warn("Save this token now. It cannot be retrieved later.".into()),
+        ],
+    );
+
+    let mut response = CliResponse::ok(output, render);
+    for w in warnings {
+        response = response.with_warning(w);
+    }
+    Ok(response)
+}
+
 pub async fn run_token_list(
     client: &ServerClient,
     subject: Option<&str>,
@@ -335,11 +277,7 @@ pub async fn run_token_list(
                     t.prefix.clone(),
                     t.subject.clone(),
                     t.subject_type.clone(),
-                    if t.ceiling.is_empty() {
-                        "none".to_string()
-                    } else {
-                        t.ceiling.join(",")
-                    },
+                    if t.ceiling.is_empty() { "none".to_string() } else { t.ceiling.join(",") },
                     t.name.clone(),
                     t.status.clone(),
                     t.expires_at.clone().unwrap_or_else(|| "never".to_string()),
@@ -350,4 +288,111 @@ pub async fn run_token_list(
     };
 
     Ok(CliResponse::ok(TokenListOutput { tokens: summaries }, render))
+}
+
+pub async fn run_token_revoke(
+    client: &ServerClient,
+    id: &str,
+) -> Result<CliResponse<TokenRevokeOutput>, CliError> {
+    let _resp = client.revoke_token(id).await?;
+
+    let output = TokenRevokeOutput {
+        id: id.to_string(),
+        status: "revoked".into(),
+    };
+    let render = RenderPlan::status(format!("Token {id} revoked."));
+
+    Ok(CliResponse::ok(output, render))
+}
+
+pub async fn run_token_inspect(
+    client: &ServerClient,
+    id: &str,
+) -> Result<CliResponse<TokenInspectOutput>, CliError> {
+    let resp = client.inspect_token(id).await?;
+
+    let ceiling: Vec<String> = resp["scope_ceiling"]["roles"]
+        .as_array()
+        .map(|a| a.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+        .unwrap_or_default();
+    let resolved_roles: Vec<String> = resp["resolved_roles"]
+        .as_array()
+        .map(|a| a.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+        .unwrap_or_default();
+    let effective_roles: Vec<String> = resp["effective_roles"]
+        .as_array()
+        .map(|a| a.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+        .unwrap_or_default();
+    let effective_permissions: Vec<String> = resp["effective_permissions"]
+        .as_array()
+        .map(|a| a.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+        .unwrap_or_default();
+
+    let output = TokenInspectOutput {
+        id: resp["id"].as_str().unwrap_or("-").to_string(),
+        subject: resp["subject_id"].as_str().unwrap_or("-").to_string(),
+        subject_type: resp["subject_type"].as_str().unwrap_or("-").to_string(),
+        status: resp["status"].as_str().unwrap_or("-").to_string(),
+        ceiling: ceiling.clone(),
+        resolved_roles: resolved_roles.clone(),
+        effective_roles: effective_roles.clone(),
+        effective_permissions: effective_permissions.clone(),
+    };
+
+    let mut pairs = vec![
+        ("Subject".into(), format!("{} ({})", output.subject, output.subject_type)),
+        ("Status".into(), output.status.clone()),
+        ("Ceiling".into(), if ceiling.is_empty() { "unrestricted".into() } else { ceiling.join(", ") }),
+    ];
+    if !resolved_roles.is_empty() {
+        pairs.push(("Resolved".into(), resolved_roles.join(", ")));
+    }
+    if !effective_roles.is_empty() {
+        pairs.push(("Effective".into(), effective_roles.join(", ")));
+    }
+    if !effective_permissions.is_empty() {
+        pairs.push(("Permissions".into(), effective_permissions.join(", ")));
+    }
+
+    let render = RenderPlan::key_value(pairs);
+    Ok(CliResponse::ok(output, render))
+}
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+fn parse_expires(input: &str) -> Result<String, CliError> {
+    let trimmed = input.trim();
+    if let Some(num_str) = trimmed.strip_suffix('d') {
+        let days: i64 = num_str
+            .parse()
+            .map_err(|_| CliError::Config("invalid --expires format".into()))?;
+        let dt = Utc::now() + chrono::Duration::days(days);
+        return Ok(dt.to_rfc3339());
+    }
+    if let Some(num_str) = trimmed.strip_suffix('h') {
+        let hours: i64 = num_str
+            .parse()
+            .map_err(|_| CliError::Config("invalid --expires format".into()))?;
+        let dt = Utc::now() + chrono::Duration::hours(hours);
+        return Ok(dt.to_rfc3339());
+    }
+    if let Some(num_str) = trimmed.strip_suffix('m') {
+        let mins: i64 = num_str
+            .parse()
+            .map_err(|_| CliError::Config("invalid --expires format".into()))?;
+        let dt = Utc::now() + chrono::Duration::minutes(mins);
+        return Ok(dt.to_rfc3339());
+    }
+    if let Ok(date) = NaiveDate::parse_from_str(trimmed, "%Y-%m-%d") {
+        let dt = date.and_hms_opt(23, 59, 59).unwrap().and_utc();
+        return Ok(dt.to_rfc3339());
+    }
+    if chrono::DateTime::parse_from_rfc3339(trimmed).is_ok() {
+        return Ok(trimmed.to_string());
+    }
+    Err(CliError::Config(
+        "invalid --expires format. Use: 90d, 24h, 2026-12-31, or ISO 8601".into(),
+    ))
 }

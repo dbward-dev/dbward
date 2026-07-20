@@ -333,14 +333,35 @@ pub async fn run(mut cli: Cli) -> Result<Option<crate::output::CliOutcome>, CliE
     // New path: commands that return CliResponse<T> → CliOutcome
     // (Add new commands here as they are migrated)
     // -----------------------------------------------------------------------
-    if let Command::Token { action: token::TokenAction::List { ref subject, ref status, ref subject_type } } = cli.command {
-        // Need auth for token list
+    if let Command::Token { ref action } = cli.command {
         let cfg = config::load_resolved(cli.config.as_deref(), cli.merge_global)?.config;
         let (server_url, api_token) = authenticate(&cfg).await?;
         let sc = ServerClient::new(&server_url, &api_token);
 
-        let resp = token::run_token_list(&sc, subject.as_deref(), status.as_deref(), subject_type.as_deref()).await?;
-        return Ok(Some(resp.into()));
+        let outcome: crate::output::CliOutcome = match action {
+            token::TokenAction::List { subject, status, subject_type } => {
+                token::run_token_list(&sc, subject.as_deref(), status.as_deref(), subject_type.as_deref()).await?.into()
+            }
+            token::TokenAction::Create { subject, subject_type, scope_roles, no_scope_ceiling, name, expires, role } => {
+                token::run_token_create(
+                    &sc,
+                    subject.as_deref(),
+                    subject_type,
+                    scope_roles,
+                    *no_scope_ceiling,
+                    name.as_deref(),
+                    expires.as_deref(),
+                    role.as_deref(),
+                ).await?.into()
+            }
+            token::TokenAction::Revoke { id } => {
+                token::run_token_revoke(&sc, id).await?.into()
+            }
+            token::TokenAction::Inspect { id } => {
+                token::run_token_inspect(&sc, id).await?.into()
+            }
+        };
+        return Ok(Some(outcome));
     }
 
     // -----------------------------------------------------------------------
@@ -663,7 +684,7 @@ async fn run_legacy(cli: Cli) -> Result<(), CliError> {
         Command::Agents => misc::run_agents(&sc, json_output).await,
         Command::User { action } => user::run_user(&sc, action).await,
         Command::Group { action } => group::run_group(&sc, action).await,
-        Command::Token { action } => token::run_token_command(&action, &sc, json_output).await,
+        Command::Token { .. } => unreachable!("handled by new path"),
         Command::Policy { action } => match action {
             PolicyAction::Resolve {
                 database,
