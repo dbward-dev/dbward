@@ -151,7 +151,7 @@ impl SsrfValidator for NoopSsrfValidator {
 pub struct NoopWebhookSender;
 #[async_trait]
 impl WebhookSender for NoopWebhookSender {
-    async fn send_one(&self, _: &str, _: &str, _: Option<&str>) -> Result<(), String> {
+    async fn send_one(&self, _: &str, _: &str, _: Option<&str>, _: Option<&str>) -> Result<(), String> {
         Ok(())
     }
 }

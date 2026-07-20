@@ -9,7 +9,7 @@ pub trait Notifier: Send + Sync {
 /// Send a single webhook payload (used by DLQ retry task).
 #[async_trait::async_trait]
 pub trait WebhookSender: Send + Sync {
-    async fn send_one(&self, url: &str, body: &str, secret: Option<&str>) -> Result<(), String>;
+    async fn send_one(&self, url: &str, body: &str, secret: Option<&str>, event_type: Option<&str>) -> Result<(), String>;
 }
 
 #[derive(Clone)]

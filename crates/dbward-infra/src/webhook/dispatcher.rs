@@ -89,8 +89,9 @@ impl WebhookDispatcher {
         url: &str,
         body: &str,
         secret: Option<&str>,
+        event_type: Option<&str>,
     ) -> Result<(), String> {
-        send_with_retry(&self.client, url, body, secret)
+        send_with_retry(&self.client, url, body, secret, event_type)
             .await
             .map_err(|()| "delivery failed after retries".to_string())
     }
@@ -98,8 +99,8 @@ impl WebhookDispatcher {
 
 #[async_trait::async_trait]
 impl dbward_app::ports::WebhookSender for WebhookDispatcher {
-    async fn send_one(&self, url: &str, body: &str, secret: Option<&str>) -> Result<(), String> {
-        self.send_one(url, body, secret).await
+    async fn send_one(&self, url: &str, body: &str, secret: Option<&str>, event_type: Option<&str>) -> Result<(), String> {
+        self.send_one(url, body, secret, event_type).await
     }
 }
 
@@ -121,6 +122,7 @@ impl Notifier for WebhookDispatcher {
             let client = self.client.clone();
             let url = hook.url.clone();
             let secret = hook.secret.clone();
+            let event_type = event.event_type.clone();
             let body = match hook.format.as_str() {
                 "slack" => build_slack_body(&event),
                 _ => build_generic_body(&event),
@@ -147,8 +149,9 @@ impl Notifier for WebhookDispatcher {
                 }
                 let delivery_id = delivery.id.clone();
                 let repo = repo.clone();
+                let et = event_type.clone();
                 tokio::spawn(async move {
-                    match send_with_retry(&client, &url, &body, secret.as_deref()).await {
+                    match send_with_retry(&client, &url, &body, secret.as_deref(), Some(&et)).await {
                         Ok(()) => {
                             let now = chrono::Utc::now().to_rfc3339();
                             if let Err(e) = repo.mark_delivered(&delivery_id, &now) {
@@ -170,7 +173,7 @@ impl Notifier for WebhookDispatcher {
                 });
             } else {
                 tokio::spawn(async move {
-                    let _ = send_with_retry(&client, &url, &body, secret.as_deref()).await;
+                    let _ = send_with_retry(&client, &url, &body, secret.as_deref(), Some(&event_type)).await;
                 });
             }
         }
@@ -322,6 +325,7 @@ async fn send_with_retry(
     url: &str,
     body: &str,
     secret: Option<&str>,
+    event_type: Option<&str>,
 ) -> Result<(), ()> {
     for attempt in 0..3 {
         let mut req = client
@@ -331,6 +335,9 @@ async fn send_with_retry(
         if let Some(s) = secret {
             let sig = compute_webhook_signature(s, body);
             req = req.header("x-dbward-signature", sig);
+        }
+        if let Some(et) = event_type {
+            req = req.header("x-dbward-event", et);
         }
         if let Ok(resp) = req.send().await {
             let status = resp.status().as_u16();
