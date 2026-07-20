@@ -1,4 +1,5 @@
 mod format;
+#[allow(dead_code)]
 mod request;
 mod result;
 #[allow(unused_imports)]
@@ -9,6 +10,7 @@ pub(crate) use format::{
 };
 #[allow(unused_imports)]
 pub(crate) use request::LIST_DETAIL_WIDTH;
+#[allow(unused_imports)]
 pub(crate) use request::{print_approve_result, print_request_detail, print_request_list};
 pub use result::ResultFormat;
 #[allow(unused_imports)]

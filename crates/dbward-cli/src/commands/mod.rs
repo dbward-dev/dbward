@@ -557,6 +557,26 @@ pub async fn run(mut cli: Cli) -> Result<Option<crate::output::CliOutcome>, CliE
         return Ok(Some(outcome));
     }
 
+    // --- Request commands ---
+    if let Command::Request { ref action } = cli.command {
+        let cfg = config::load_resolved(cli.config.as_deref(), cli.merge_global)?.config;
+        let (server_url, api_token) = authenticate(&cfg).await?;
+        let sc = ServerClient::new(&server_url, &api_token);
+        let default_fmt = resolve_result_format(None, &cfg);
+        let outcome = request::run_request_cmd(
+            &sc,
+            action,
+            cli.database.as_deref(),
+            cli.environment.as_deref(),
+            cfg.results.dir.as_deref(),
+            default_fmt,
+            cli.yes,
+            cli.format,
+        )
+        .await?;
+        return Ok(Some(outcome));
+    }
+
     // --- Databases ---
     if let Command::Databases = cli.command {
         let cfg = config::load_resolved(cli.config.as_deref(), cli.merge_global)?.config;
@@ -764,20 +784,7 @@ async fn run_legacy(cli: Cli) -> Result<(), CliError> {
             )
             .await
         }
-        Command::Request { action } => {
-            let default_fmt = resolve_result_format(None, &cfg);
-            request::run_request(
-                &sc,
-                json_output,
-                action,
-                cli.database.as_deref(),
-                cli.environment.as_deref(),
-                cfg.results.dir.as_deref(),
-                default_fmt,
-                cli.yes,
-            )
-            .await
-        }
+        Command::Request { .. } => unreachable!("handled by new path"),
         Command::Preflight {
             ref sql,
             no_explain,
