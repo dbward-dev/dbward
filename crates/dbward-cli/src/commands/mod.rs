@@ -55,9 +55,9 @@ pub struct Cli {
     #[arg(short = 'e', long, env = "DBWARD_ENV", global = true)]
     pub environment: Option<String>,
 
-    /// Output format: human (default) or json
-    #[arg(long, default_value = "human", value_parser = ["human", "json"], global = true)]
-    pub format: String,
+    /// Output format: human (default), json, or quiet
+    #[arg(long, default_value = "human", value_enum, global = true)]
+    pub format: crate::output::OutputMode,
 
     /// Allow insecure HTTP connections to non-local servers (suppresses TLS warning)
     #[arg(long, global = true)]
@@ -323,11 +323,35 @@ async fn try_authenticate(config: &ClientConfig) -> Result<Option<(String, Strin
 // Main dispatch
 // ---------------------------------------------------------------------------
 
-pub async fn run(mut cli: Cli) -> Result<(), CliError> {
+pub async fn run(mut cli: Cli) -> Result<Option<crate::output::CliOutcome>, CliError> {
     // Merge DBWARD_YES env var (accepts 1/true/yes)
     if let (false, Ok(val)) = (cli.yes, std::env::var("DBWARD_YES")) {
         cli.yes = matches!(val.to_lowercase().as_str(), "1" | "true" | "yes");
     }
+
+    // -----------------------------------------------------------------------
+    // New path: commands that return CliResponse<T> → CliOutcome
+    // (Add new commands here as they are migrated)
+    // -----------------------------------------------------------------------
+    if let Command::Token { action: token::TokenAction::List { ref subject, ref status, ref subject_type } } = cli.command {
+        // Need auth for token list
+        let cfg = config::load_resolved(cli.config.as_deref(), cli.merge_global)?.config;
+        let (server_url, api_token) = authenticate(&cfg).await?;
+        let sc = ServerClient::new(&server_url, &api_token);
+
+        let resp = token::run_token_list(&sc, subject.as_deref(), status.as_deref(), subject_type.as_deref()).await?;
+        return Ok(Some(resp.into()));
+    }
+
+    // -----------------------------------------------------------------------
+    // Legacy path: commands still using println! directly.
+    // Returns None (output already written).
+    // -----------------------------------------------------------------------
+    run_legacy(cli).await?;
+    Ok(None)
+}
+
+async fn run_legacy(cli: Cli) -> Result<(), CliError> {
 
     // Commands that don't need config/auth
     match &cli.command {
@@ -429,13 +453,13 @@ pub async fn run(mut cli: Cli) -> Result<(), CliError> {
                 cli.config.as_deref(),
                 agent.clone(),
                 server.clone(),
-                cli.format == "json",
+                matches!(cli.format, crate::output::OutputMode::Json | crate::output::OutputMode::Quiet),
                 *timeout,
             )
             .await;
         }
         Command::Slack { action } => {
-            return slack::run(action.clone(), cli.format == "json").await;
+            return slack::run(action.clone(), matches!(cli.format, crate::output::OutputMode::Json | crate::output::OutputMode::Quiet)).await;
         }
         _ => {}
     }
@@ -503,7 +527,7 @@ pub async fn run(mut cli: Cli) -> Result<(), CliError> {
     let (server_url, api_token) = authenticate(&cfg).await?;
 
     let sc = ServerClient::new(&server_url, &api_token);
-    let json_output = cli.format == "json";
+    let json_output = matches!(cli.format, crate::output::OutputMode::Json | crate::output::OutputMode::Quiet);
 
     match cli.command {
         Command::Execute {
@@ -740,7 +764,7 @@ mod tests {
     #[test]
     fn global_format_option_parses_after_subcommand() {
         let cli = Cli::try_parse_from(["dbward", "request", "list", "--format", "json"]).unwrap();
-        assert_eq!(cli.format, "json");
+        assert_eq!(cli.format, crate::output::OutputMode::Json);
         assert!(matches!(cli.command, Command::Request { .. }));
     }
 

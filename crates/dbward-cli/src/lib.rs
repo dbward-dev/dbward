@@ -4,5 +4,6 @@ pub mod display;
 pub mod error;
 pub mod mcp;
 pub mod oidc_login;
+pub mod output;
 pub mod self_update;
 pub mod server_client;

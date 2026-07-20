@@ -1,8 +1,10 @@
 use chrono::{NaiveDate, Utc};
 use clap::Subcommand;
+use serde::Serialize;
 use serde_json::{Value, json};
 
 use crate::error::CliError;
+use crate::output::{CliResponse, Column, RenderPlan};
 use crate::server_client::ServerClient;
 
 fn parse_subject_type(s: &str) -> Result<String, String> {
@@ -162,71 +164,9 @@ pub async fn run_token_command(
                 println!("\n⚠ Save this token now. It cannot be retrieved later.");
             }
         }
-        TokenAction::List {
-            subject,
-            status,
-            subject_type,
-        } => {
-            let resp = client.list_tokens().await?;
-            let tokens = resp["tokens"].as_array().cloned().unwrap_or_default();
-            let filtered: Vec<&Value> = tokens
-                .iter()
-                .filter(|t| {
-                    subject
-                        .as_ref()
-                        .is_none_or(|s| t["subject_id"].as_str().unwrap_or("") == s)
-                        && status
-                            .as_ref()
-                            .is_none_or(|s| t["status"].as_str().unwrap_or("") == s)
-                        && subject_type
-                            .as_ref()
-                            .is_none_or(|s| t["subject_type"].as_str().unwrap_or("") == s)
-                })
-                .collect();
-
-            if json_output {
-                let out = json!({"tokens": filtered});
-                println!("{}", serde_json::to_string_pretty(&out).unwrap_or_default());
-            } else if filtered.is_empty() {
-                println!("No tokens found.");
-            } else {
-                println!(
-                    "{:<14} {:<10} {:<12} {:<6} {:<20} {:<16} {:<8} {:<10}",
-                    "ID", "Prefix", "Subject", "Type", "Ceiling", "Name", "Status", "Expires"
-                );
-                for t in &filtered {
-                    let id = t["id"].as_str().unwrap_or("-");
-                    let prefix = t["token_prefix"].as_str().unwrap_or("-");
-                    let subj = t["subject_id"].as_str().unwrap_or("-");
-                    let stype = t["subject_type"].as_str().unwrap_or("-");
-                    let ceiling = t["scope_ceiling"]["roles"]
-                        .as_array()
-                        .map(|a| {
-                            a.iter()
-                                .filter_map(|v| v.as_str())
-                                .collect::<Vec<_>>()
-                                .join(",")
-                        })
-                        .unwrap_or_else(|| "none".to_string());
-                    let name = t["name"].as_str().unwrap_or("-");
-                    let st = t["status"].as_str().unwrap_or("-");
-                    let exp = t["expires_at"]
-                        .as_str()
-                        .map(|s| s[..10].to_string())
-                        .unwrap_or_else(|| "never".to_string());
-                    println!(
-                        "{:<14} {:<10} {:<12} {:<6} {:<20} {:<16} {:<8} {}",
-                        &id[..id.len().min(14)],
-                        &prefix[..prefix.len().min(10)],
-                        &subj[..subj.len().min(12)],
-                        &stype[..stype.len().min(6)],
-                        &ceiling[..ceiling.len().min(20)],
-                        &name[..name.len().min(16)],
-                        st,
-                        exp
-                    );
-                }
-            }
+        TokenAction::List { .. } => {
+            // Handled by new path in run() — should never reach here
+            unreachable!("token list is handled by the new output path");
         }
         TokenAction::Revoke { id } => {
             let resp = client.revoke_token(id).await?;
@@ -314,4 +254,100 @@ fn parse_expires(input: &str) -> Result<String, CliError> {
     Err(CliError::Config(
         "invalid --expires format. Use: 90d, 24h, 2026-12-31, or ISO 8601".into(),
     ))
+}
+
+// ---------------------------------------------------------------------------
+// New output layer: token list
+// ---------------------------------------------------------------------------
+
+/// Output data for `token list`.
+#[derive(Serialize)]
+pub struct TokenListOutput {
+    pub tokens: Vec<TokenSummary>,
+}
+
+#[derive(Serialize)]
+pub struct TokenSummary {
+    pub id: String,
+    pub prefix: String,
+    pub subject: String,
+    pub subject_type: String,
+    pub ceiling: Vec<String>,
+    pub name: String,
+    pub status: String,
+    pub expires_at: Option<String>,
+}
+
+/// New-style token list implementation returning `CliResponse<TokenListOutput>`.
+pub async fn run_token_list(
+    client: &ServerClient,
+    subject: Option<&str>,
+    status: Option<&str>,
+    subject_type: Option<&str>,
+) -> Result<CliResponse<TokenListOutput>, CliError> {
+    let resp = client.list_tokens().await?;
+    let tokens = resp["tokens"].as_array().cloned().unwrap_or_default();
+
+    let filtered: Vec<&Value> = tokens
+        .iter()
+        .filter(|t| {
+            subject.is_none_or(|s| t["subject_id"].as_str().unwrap_or("") == s)
+                && status.is_none_or(|s| t["status"].as_str().unwrap_or("") == s)
+                && subject_type.is_none_or(|s| t["subject_type"].as_str().unwrap_or("") == s)
+        })
+        .collect();
+
+    let summaries: Vec<TokenSummary> = filtered
+        .iter()
+        .map(|t| TokenSummary {
+            id: t["id"].as_str().unwrap_or("-").to_string(),
+            prefix: t["token_prefix"].as_str().unwrap_or("-").to_string(),
+            subject: t["subject_id"].as_str().unwrap_or("-").to_string(),
+            subject_type: t["subject_type"].as_str().unwrap_or("-").to_string(),
+            ceiling: t["scope_ceiling"]["roles"]
+                .as_array()
+                .map(|a| a.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+                .unwrap_or_default(),
+            name: t["name"].as_str().unwrap_or("-").to_string(),
+            status: t["status"].as_str().unwrap_or("-").to_string(),
+            expires_at: t["expires_at"].as_str().map(|s| s[..10.min(s.len())].to_string()),
+        })
+        .collect();
+
+    let render = if summaries.is_empty() {
+        RenderPlan::empty_list("tokens")
+    } else {
+        let columns = vec![
+            Column::new("ID").with_max_width(14),
+            Column::new("Prefix").with_max_width(10),
+            Column::new("Subject").with_max_width(12),
+            Column::new("Type").with_max_width(6),
+            Column::new("Ceiling").with_max_width(20),
+            Column::new("Name").with_max_width(16),
+            Column::new("Status").with_max_width(8),
+            Column::new("Expires"),
+        ];
+        let rows: Vec<Vec<String>> = summaries
+            .iter()
+            .map(|t| {
+                vec![
+                    t.id.clone(),
+                    t.prefix.clone(),
+                    t.subject.clone(),
+                    t.subject_type.clone(),
+                    if t.ceiling.is_empty() {
+                        "none".to_string()
+                    } else {
+                        t.ceiling.join(",")
+                    },
+                    t.name.clone(),
+                    t.status.clone(),
+                    t.expires_at.clone().unwrap_or_else(|| "never".to_string()),
+                ]
+            })
+            .collect();
+        RenderPlan::table(columns, rows)
+    };
+
+    Ok(CliResponse::ok(TokenListOutput { tokens: summaries }, render))
 }
