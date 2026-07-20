@@ -4,9 +4,17 @@ use std::time::Duration;
 use dbward_api_client::{ApiClient, ApiError, ResponseHook};
 use serde_json::Value;
 
-use crate::error::CliError;
+use crate::output::CliError;
 
 const MAX_ERROR_BODY_PREVIEW: usize = 200;
+
+/// Stored version mismatch warning (set by response hook, read by callers).
+static VERSION_WARNING: OnceLock<String> = OnceLock::new();
+
+/// Retrieve a version mismatch warning if one was detected during HTTP calls.
+pub fn take_version_warning() -> Option<&'static str> {
+    VERSION_WARNING.get().map(|s| s.as_str())
+}
 
 /// Structured HTTP error from the server.
 #[derive(Debug)]
@@ -66,14 +74,16 @@ impl ServerError {
         if let Some(hint) = &self.hint {
             out.push_str(&format!("\n  Hint: {hint}"));
         }
-        CliError::Server(out)
+        CliError::Api {
+            code: self.code.unwrap_or_else(|| "server_error".into()),
+            message: out,
+        }
     }
 }
 
 fn version_check_hook() -> ResponseHook {
     Box::new(|resp: &reqwest::Response| {
-        static WARNED: OnceLock<()> = OnceLock::new();
-        if WARNED.get().is_some() {
+        if VERSION_WARNING.get().is_some() {
             return;
         }
         if let Some(sv) = resp
@@ -83,11 +93,9 @@ fn version_check_hook() -> ResponseHook {
         {
             let cv = env!("CARGO_PKG_VERSION");
             if sv != cv {
-                WARNED.get_or_init(|| {
-                    eprintln!(
-                        "warning: server is v{sv}, CLI is v{cv}. Run 'dbward self-update' to update."
-                    );
-                });
+                let _ = VERSION_WARNING.set(format!(
+                    "server is v{sv}, CLI is v{cv}. Run 'dbward self-update' to update."
+                ));
             }
         }
     })
@@ -173,7 +181,10 @@ impl ServerClient {
             return Err(ServerError::from_response(status, text).into_cli_error("create request"));
         }
         let cr: dbward_api_types::requests::CreateRequestResponse = serde_json::from_str(&text)
-            .map_err(|e| CliError::Server(format!("create request: invalid response: {e}")))?;
+            .map_err(|e| CliError::Api {
+                code: "server_error".into(),
+                message: format!("create request: invalid response: {e}"),
+            })?;
         Ok((cr.id, cr.status, cr.approvers))
     }
 
@@ -409,10 +420,9 @@ impl ServerClient {
             .get_with_status(path)
             .await
             .map_err(|e| api_to_cli(e, path))?;
-        let body: Value = serde_json::from_str(&text).map_err(|_| {
-            CliError::Server(format!(
-                "get {path}: server returned non-JSON response (HTTP {status})"
-            ))
+        let body: Value = serde_json::from_str(&text).map_err(|_| CliError::Api {
+            code: "server_error".into(),
+            message: format!("get {path}: server returned non-JSON response (HTTP {status})"),
         })?;
         Ok((status, body))
     }
@@ -493,8 +503,10 @@ impl ServerClient {
             .await
             .map_err(|e| api_to_cli(e, "token create"))?;
         if status == 201 {
-            serde_json::from_str(&text)
-                .map_err(|e| CliError::Server(format!("invalid response: {e}")))
+            serde_json::from_str(&text).map_err(|e| CliError::Api {
+                code: "server_error".into(),
+                message: format!("invalid response: {e}"),
+            })
         } else {
             Err(ServerError::from_response(status, text).into_cli_error("token create"))
         }
@@ -512,8 +524,10 @@ impl ServerClient {
             .await
             .map_err(|e| api_to_cli(e, "token revoke"))?;
         if status == 200 {
-            serde_json::from_str(&text)
-                .map_err(|e| CliError::Server(format!("invalid response: {e}")))
+            serde_json::from_str(&text).map_err(|e| CliError::Api {
+                code: "server_error".into(),
+                message: format!("invalid response: {e}"),
+            })
         } else {
             Err(ServerError::from_response(status, text).into_cli_error("token revoke"))
         }
@@ -527,8 +541,10 @@ impl ServerClient {
             .await
             .map_err(|e| api_to_cli(e, "token inspect"))?;
         if status == 200 {
-            serde_json::from_str(&text)
-                .map_err(|e| CliError::Server(format!("invalid response: {e}")))
+            serde_json::from_str(&text).map_err(|e| CliError::Api {
+                code: "server_error".into(),
+                message: format!("invalid response: {e}"),
+            })
         } else {
             Err(ServerError::from_response(status, text).into_cli_error("token inspect"))
         }
@@ -540,8 +556,11 @@ fn api_to_cli(e: ApiError, context: &str) -> CliError {
         ApiError::Http { status, body } => {
             ServerError::from_response(status, body).into_cli_error(context)
         }
-        ApiError::Network(e) => CliError::Transport(format!("{context}: {e}")),
-        ApiError::Deserialize(msg) => CliError::Server(format!("{context}: invalid JSON: {msg}")),
+        ApiError::Network(e) => CliError::Network(format!("{context}: {e}")),
+        ApiError::Deserialize(msg) => CliError::Api {
+            code: "server_error".into(),
+            message: format!("{context}: invalid JSON: {msg}"),
+        },
     }
 }
 
@@ -569,7 +588,10 @@ mod tests {
         let err = ServerError::from_response(502, "<html>bad gateway</html>".into());
 
         match err.into_cli_error("resume") {
-            CliError::Server(msg) => assert_eq!(msg, "resume: <html>bad gateway</html>"),
+            CliError::Api { code, message } => {
+                assert_eq!(code, "server_error");
+                assert_eq!(message, "resume: <html>bad gateway</html>");
+            }
             other => panic!("unexpected error variant: {other:?}"),
         }
     }
@@ -582,17 +604,19 @@ mod tests {
         );
 
         match err.into_cli_error("resume") {
-            CliError::Server(msg) => {
-                assert!(msg.contains("resume: request failed before receiving a server response"));
-                assert!(!msg.contains("secret"));
-                assert!(!msg.contains("https://"));
+            CliError::Api { message, .. } => {
+                assert!(
+                    message.contains("resume: request failed before receiving a server response")
+                );
+                assert!(!message.contains("secret"));
+                assert!(!message.contains("https://"));
             }
             other => panic!("unexpected error variant: {other:?}"),
         }
     }
 
     #[test]
-    fn network_error_maps_to_transport_variant() {
+    fn network_error_maps_to_network_variant() {
         // Build a reqwest::Error by making a request to an invalid URL
         let rt = tokio::runtime::Builder::new_current_thread()
             .enable_all()
@@ -608,8 +632,8 @@ mod tests {
         let api_err = ApiError::Network(err);
         let cli_err = api_to_cli(api_err, "whoami");
         assert!(
-            matches!(cli_err, CliError::Transport(ref msg) if msg.contains("whoami")),
-            "expected Transport variant, got: {cli_err:?}"
+            matches!(cli_err, CliError::Network(ref msg) if msg.contains("whoami")),
+            "expected Network variant, got: {cli_err:?}"
         );
     }
 }

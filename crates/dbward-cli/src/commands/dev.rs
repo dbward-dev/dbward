@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 use std::process::{Command as ProcessCommand, Stdio};
 
-use crate::error::CliError;
+use crate::output::CliError;
 
 pub async fn run_dev(database_url: &str, port: u16) -> Result<(), CliError> {
     let dev_dir = dirs::home_dir()
@@ -65,7 +65,7 @@ mode = "always"
         .arg(&server_config_path)
         .stderr(Stdio::inherit())
         .spawn()
-        .map_err(|e| CliError::Server(format!("failed to start server: {e}")))?;
+        .map_err(|e| CliError::Internal(format!("failed to start server: {e}")))?;
 
     // Wait for token files to appear (written by auto-bootstrap on first run)
     let admin_token_path = dev_dir.join("admin-token");
@@ -78,7 +78,7 @@ mode = "always"
         }
         if i == 29 {
             cleanup_child(&mut server_child);
-            return Err(CliError::Server(
+            return Err(CliError::Internal(
                 "timeout waiting for bootstrap token files".into(),
             ));
         }
@@ -98,7 +98,7 @@ mode = "always"
 
     if admin_token.is_empty() && !reusing_config {
         cleanup_child(&mut server_child);
-        return Err(CliError::Server(
+        return Err(CliError::Internal(
             "server did not produce bootstrap tokens and no existing config found. Remove ~/.dbward/dev and retry.".into(),
         ));
     }
@@ -107,7 +107,7 @@ mode = "always"
     let ready = wait_for_ready(&server_url, 10).await;
     if !ready {
         cleanup_child(&mut server_child);
-        return Err(CliError::Server(
+        return Err(CliError::Internal(
             "server failed to become ready within 10s".into(),
         ));
     }
@@ -150,7 +150,7 @@ url = "{database_url}"
         .spawn()
         .map_err(|e| {
             cleanup_child(&mut server_child);
-            CliError::Server(format!("failed to start agent: {e}"))
+            CliError::Internal(format!("failed to start agent: {e}"))
         })?;
 
     eprintln!("  Admin token:     {admin_token}");
@@ -236,7 +236,7 @@ fn find_binary(name: &str) -> Result<PathBuf, CliError> {
             return Ok(candidate);
         }
     }
-    Err(CliError::Server(format!(
+    Err(CliError::Internal(format!(
         "'{name}' not found. Install it or place it next to the dbward binary."
     )))
 }

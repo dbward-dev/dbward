@@ -20,10 +20,12 @@ pub(crate) mod workflow;
 use std::path::PathBuf;
 
 use clap::{Parser, Subcommand};
+use serde::Serialize;
 
 use crate::config::{self, ClientConfig};
-use crate::error::CliError;
 use crate::oidc_login;
+use crate::output::CliError;
+use crate::output::{CliResponse, ProgressSink, RenderPlan, StderrLine, StdoutRender};
 use crate::self_update;
 use crate::server_client::ServerClient;
 
@@ -55,9 +57,9 @@ pub struct Cli {
     #[arg(short = 'e', long, env = "DBWARD_ENV", global = true)]
     pub environment: Option<String>,
 
-    /// Output format: human (default) or json
-    #[arg(long, default_value = "human", value_parser = ["human", "json"], global = true)]
-    pub format: String,
+    /// Output format: human (default), json, or quiet
+    #[arg(long, default_value = "human", value_enum, global = true)]
+    pub format: crate::output::OutputMode,
 
     /// Allow insecure HTTP connections to non-local servers (suppresses TLS warning)
     #[arg(long, global = true)]
@@ -175,9 +177,9 @@ pub enum Command {
         /// Verify hash chain integrity
         #[arg(long)]
         verify: bool,
-        /// Output format: table (default), json, csv
+        /// Result format: table (default), json, csv
         #[arg(long, value_name = "FORMAT", default_value = "table")]
-        output: String,
+        result_format: String,
     },
     /// Start MCP stdio server
     Mcp,
@@ -264,6 +266,18 @@ pub enum PolicyAction {
 }
 
 // ---------------------------------------------------------------------------
+// Whoami output type
+// ---------------------------------------------------------------------------
+
+#[derive(Serialize)]
+pub struct WhoamiOutput {
+    pub subject_id: String,
+    pub subject_type: String,
+    pub roles: Vec<String>,
+    pub groups: Vec<String>,
+}
+
+// ---------------------------------------------------------------------------
 // Auth helper
 // ---------------------------------------------------------------------------
 
@@ -320,173 +334,616 @@ async fn try_authenticate(config: &ClientConfig) -> Result<Option<(String, Strin
 }
 
 // ---------------------------------------------------------------------------
+// Whoami implementation
+// ---------------------------------------------------------------------------
+
+async fn run_whoami(
+    cli: &Cli,
+    progress: &ProgressSink,
+) -> Result<CliResponse<WhoamiOutput>, CliError> {
+    let cfg_result = dbward_config::load_merged(cli.config.as_deref(), cli.merge_global);
+    let cfg = match cfg_result {
+        Ok(m) => Some(m.config),
+        Err(dbward_config::ConfigError::NotFound(_)) => None,
+        Err(e) => return Err(CliError::Config(e.to_string())),
+    };
+
+    if let Some(cfg) = &cfg {
+        // TLS transport security check before sending credentials
+        let has_oidc = cfg.server.oidc.is_some();
+        let allow_insecure = cfg.server.allow_insecure.unwrap_or(false) || cli.allow_insecure;
+        if let Err(e) = dbward_config::transport::check_transport_security(
+            &cfg.server.url,
+            allow_insecure,
+            has_oidc,
+        ) {
+            match &e {
+                dbward_config::transport::TransportError::InsecureHttp { .. } => {
+                    progress.warn(&format!("{e}"));
+                }
+                _ => return Err(CliError::Config(e.to_string())),
+            }
+        }
+
+        match try_authenticate(cfg).await {
+            Ok(Some((url, token))) => {
+                let sc = ServerClient::new(&url, &token);
+                match sc.get_json("/api/me").await {
+                    Ok(resp) => {
+                        return Ok(build_whoami_response(&resp));
+                    }
+                    Err(CliError::Network(_)) => {
+                        // Connection failure → fall through to local
+                    }
+                    Err(e) => return Err(e),
+                }
+            }
+            Ok(None) => {
+                // Auth not configured → fall through to local
+            }
+            Err(e) => {
+                // Auth failure (expired token etc) → warn then fall through to local
+                progress.warn(&format!("{e}"));
+            }
+        }
+    }
+
+    // Fallback: local OIDC credentials
+    match oidc_login::get_local_identity() {
+        Ok(identity) => {
+            let subject_id = identity
+                .email
+                .clone()
+                .or(identity.subject.clone())
+                .unwrap_or_else(|| "local".into());
+
+            let mut pairs = vec![];
+            if let Some(ref email) = identity.email {
+                let sub = identity.subject.as_deref().unwrap_or("unknown");
+                pairs.push(("Identity".into(), format!("{email} ({sub})")));
+            }
+            pairs.push(("Issuer".into(), identity.issuer.clone()));
+            pairs.push(("Expires".into(), identity.expires_at.clone()));
+
+            let output = WhoamiOutput {
+                subject_id,
+                subject_type: "oidc".into(),
+                roles: vec![],
+                groups: vec![],
+            };
+            let render = RenderPlan {
+                stdout: StdoutRender::KeyValue { pairs },
+                stderr: vec![StderrLine::Warn(
+                    "showing local credentials only — server not available or auth not configured"
+                        .into(),
+                )],
+            };
+            Ok(CliResponse::ok(output, render))
+        }
+        Err(_) => Err(CliError::Auth("Not logged in. Run: dbward login".into())),
+    }
+}
+
+fn build_whoami_response(resp: &serde_json::Value) -> CliResponse<WhoamiOutput> {
+    let subject = resp["subject_id"].as_str().unwrap_or("unknown").to_string();
+    let stype = resp["subject_type"]
+        .as_str()
+        .unwrap_or("unknown")
+        .to_string();
+
+    let roles: Vec<String> = resp["roles"]
+        .as_array()
+        .map(|a| {
+            a.iter()
+                .filter_map(|v| v["name"].as_str().or_else(|| v.as_str()))
+                .map(String::from)
+                .collect()
+        })
+        .unwrap_or_default();
+
+    let groups: Vec<String> = resp["groups"]
+        .as_array()
+        .map(|a| {
+            a.iter()
+                .filter_map(|v| v.as_str())
+                .map(String::from)
+                .collect()
+        })
+        .unwrap_or_default();
+
+    let mut pairs = vec![("Subject".into(), format!("{subject} ({stype})"))];
+    if !roles.is_empty() {
+        pairs.push(("Roles".into(), roles.join(", ")));
+    }
+    if !groups.is_empty() {
+        pairs.push(("Groups".into(), groups.join(", ")));
+    }
+
+    let output = WhoamiOutput {
+        subject_id: subject,
+        subject_type: stype,
+        roles,
+        groups,
+    };
+
+    let render = RenderPlan::key_value(pairs);
+    CliResponse::ok(output, render)
+}
+
+// ---------------------------------------------------------------------------
 // Main dispatch
 // ---------------------------------------------------------------------------
 
-pub async fn run(mut cli: Cli) -> Result<(), CliError> {
+pub async fn run(
+    mut cli: Cli,
+    progress: &ProgressSink,
+) -> Result<Option<crate::output::CliOutcome>, CliError> {
     // Merge DBWARD_YES env var (accepts 1/true/yes)
     if let (false, Ok(val)) = (cli.yes, std::env::var("DBWARD_YES")) {
         cli.yes = matches!(val.to_lowercase().as_str(), "1" | "true" | "yes");
     }
 
-    // Commands that don't need config/auth
-    match &cli.command {
-        Command::Init {
-            non_interactive,
-            force,
-            preset,
-            output_dir,
-            dry_run,
-        } => {
-            return auth::run_init(
-                &cli,
-                *non_interactive,
-                *force,
-                preset.as_deref(),
-                output_dir,
-                *dry_run,
-            );
-        }
-        Command::Logout => {
-            oidc_login::logout().await.map_err(CliError::Auth)?;
-            return Ok(());
-        }
-        Command::Whoami => {
-            let cfg_result = dbward_config::load_merged(cli.config.as_deref(), cli.merge_global);
-            let cfg = match cfg_result {
-                Ok(m) => Some(m.config),
-                Err(dbward_config::ConfigError::NotFound(_)) => None,
-                Err(e) => return Err(CliError::Config(e.to_string())),
-            };
+    // -----------------------------------------------------------------------
+    // New path: commands that return CliResponse<T> → CliOutcome
+    // (Add new commands here as they are migrated)
+    // -----------------------------------------------------------------------
 
-            if let Some(cfg) = &cfg {
-                // TLS transport security check before sending credentials
-                let has_oidc = cfg.server.oidc.is_some();
-                let allow_insecure =
-                    cfg.server.allow_insecure.unwrap_or(false) || cli.allow_insecure;
-                if let Err(e) = dbward_config::transport::check_transport_security(
-                    &cfg.server.url,
-                    allow_insecure,
-                    has_oidc,
-                ) {
-                    match &e {
-                        dbward_config::transport::TransportError::InsecureHttp { .. } => {
-                            eprintln!("warning: {e}");
-                        }
-                        _ => return Err(CliError::Config(e.to_string())),
-                    }
-                }
+    // --- Token commands ---
+    if let Command::Token { ref action } = cli.command {
+        let cfg = config::load_resolved(cli.config.as_deref(), cli.merge_global)?.config;
+        let (server_url, api_token) = authenticate(&cfg).await?;
+        let sc = ServerClient::new(&server_url, &api_token);
 
-                match try_authenticate(cfg).await {
-                    Ok(Some((url, token))) => {
-                        let sc = ServerClient::new(&url, &token);
-                        match sc.get_json("/api/me").await {
-                            Ok(resp) => {
-                                print_whoami_server(&resp);
-                                return Ok(());
-                            }
-                            Err(CliError::Transport(_)) => {
-                                // Connection failure → fall through to local
-                            }
-                            Err(e) => return Err(e),
-                        }
-                    }
-                    Ok(None) => {
-                        // Auth not configured → fall through to local
-                    }
-                    Err(e) => {
-                        // Auth failure (expired token etc) → warn then fall through to local
-                        eprintln!("warning: {e}");
-                    }
-                }
-            }
-
-            // Fallback: local OIDC credentials
-            if oidc_login::whoami().is_ok() {
-                eprintln!(
-                    "(showing local credentials only — server not available or auth not configured)"
-                );
-                return Ok(());
-            }
-            return Err(CliError::Auth("Not logged in. Run: dbward login".into()));
-        }
-        Command::Server { action } => return server::run_server_command(action).await,
-        Command::Agent {
-            config: agent_config_path,
-        } => return agent::run_agent(agent_config_path).await,
-        Command::Dev { database_url, port } => {
-            return dev::run_dev(database_url, *port).await;
-        }
-        Command::SelfUpdate => {
-            return self_update::run_self_update().await;
-        }
-        Command::Doctor {
-            agent,
-            server,
-            timeout,
-        } => {
-            return doctor::run(
-                cli.config.as_deref(),
-                agent.clone(),
-                server.clone(),
-                cli.format == "json",
-                *timeout,
+        let outcome: crate::output::CliOutcome = match action {
+            token::TokenAction::List {
+                subject,
+                status,
+                subject_type,
+            } => token::run_token_list(
+                &sc,
+                subject.as_deref(),
+                status.as_deref(),
+                subject_type.as_deref(),
             )
-            .await;
-        }
-        Command::Slack { action } => {
-            return slack::run(action.clone(), cli.format == "json").await;
-        }
-        _ => {}
+            .await?
+            .into(),
+            token::TokenAction::Create {
+                subject,
+                subject_type,
+                scope_roles,
+                no_scope_ceiling,
+                name,
+                expires,
+                role,
+            } => token::run_token_create(
+                &sc,
+                subject.as_deref(),
+                subject_type,
+                scope_roles,
+                *no_scope_ceiling,
+                name.as_deref(),
+                expires.as_deref(),
+                role.as_deref(),
+            )
+            .await?
+            .into(),
+            token::TokenAction::Revoke { id } => token::run_token_revoke(&sc, id).await?.into(),
+            token::TokenAction::Inspect { id } => token::run_token_inspect(&sc, id).await?.into(),
+        };
+        return Ok(Some(outcome));
     }
 
-    let cfg = config::load_resolved(cli.config.as_deref(), cli.merge_global)?.config;
-
-    // Login needs OIDC config but not full auth
-    if let Command::Login { device } = &cli.command {
-        let oc = cfg
-            .server
-            .oidc
-            .as_ref()
-            .ok_or_else(|| CliError::Config("[server.oidc] not configured".into()))?;
-        if *device {
-            oidc_login::login_device(
-                &oc.issuer,
-                &oc.client_id,
-                oc.discovery_url.as_deref(),
-                oc.browser_url.as_deref(),
-                oc.backchannel_url.as_deref(),
-            )
-            .await
-        } else {
-            oidc_login::login(
-                &oc.issuer,
-                &oc.client_id,
-                oc.discovery_url.as_deref(),
-                oc.backchannel_url.as_deref(),
-            )
-            .await
-        }
-        .map_err(CliError::Auth)?;
-        return Ok(());
+    // --- Whoami ---
+    if let Command::Whoami = cli.command {
+        let outcome: crate::output::CliOutcome = run_whoami(&cli, progress).await?.into();
+        return Ok(Some(outcome));
     }
 
-    // Migrate create is local-only
-    if let Command::Migrate {
-        action: migrate::MigrateAction::Create { ref name },
+    // --- User commands ---
+    if let Command::User { ref action } = cli.command {
+        let cfg = config::load_resolved(cli.config.as_deref(), cli.merge_global)?.config;
+        let (server_url, api_token) = authenticate(&cfg).await?;
+        let sc = ServerClient::new(&server_url, &api_token);
+
+        let outcome: crate::output::CliOutcome = match action {
+            user::UserAction::Add { id, role, group } => {
+                user::run_user_add(&sc, id, role, group).await?.into()
+            }
+            user::UserAction::List => user::run_user_list(&sc).await?.into(),
+            user::UserAction::Show { id } => user::run_user_show(&sc, id).await?.into(),
+            user::UserAction::Update {
+                id,
+                role,
+                add_role,
+                rm_role,
+                add_group,
+                rm_group,
+                slack_user_id,
+            } => user::run_user_update(
+                &sc,
+                id,
+                role,
+                add_role,
+                rm_role,
+                add_group,
+                rm_group,
+                slack_user_id.as_deref(),
+            )
+            .await?
+            .into(),
+            user::UserAction::Suspend { id } => user::run_user_suspend(&sc, id).await?.into(),
+            user::UserAction::Activate { id } => user::run_user_activate(&sc, id).await?.into(),
+            user::UserAction::Rm { id } => user::run_user_rm(&sc, id).await?.into(),
+            user::UserAction::ReissueInitialToken { id } => {
+                user::run_user_reissue_token(&sc, id).await?.into()
+            }
+        };
+        return Ok(Some(outcome));
+    }
+
+    // --- Group commands ---
+    if let Command::Group { ref action } = cli.command {
+        let cfg = config::load_resolved(cli.config.as_deref(), cli.merge_global)?.config;
+        let (server_url, api_token) = authenticate(&cfg).await?;
+        let sc = ServerClient::new(&server_url, &api_token);
+
+        let outcome: crate::output::CliOutcome = match action {
+            group::GroupAction::List => group::run_group_list(&sc).await?.into(),
+            group::GroupAction::Show { name } => group::run_group_show(&sc, name).await?.into(),
+        };
+        return Ok(Some(outcome));
+    }
+
+    // --- Request commands ---
+    if let Command::Request { ref action } = cli.command {
+        let cfg = config::load_resolved(cli.config.as_deref(), cli.merge_global)?.config;
+        let (server_url, api_token) = authenticate(&cfg).await?;
+        let sc = ServerClient::new(&server_url, &api_token);
+        let default_fmt = resolve_result_format(None, &cfg);
+        let outcome = request::run_request_cmd(
+            &sc,
+            action,
+            cli.database.as_deref(),
+            cli.environment.as_deref(),
+            cfg.results.dir.as_deref(),
+            default_fmt,
+            cli.yes,
+            cli.format,
+            progress,
+        )
+        .await?;
+        return Ok(Some(outcome));
+    }
+
+    // --- Databases ---
+    if let Command::Databases = cli.command {
+        let cfg = config::load_resolved(cli.config.as_deref(), cli.merge_global)?.config;
+        let (server_url, api_token) = authenticate(&cfg).await?;
+        let sc = ServerClient::new(&server_url, &api_token);
+        let outcome: crate::output::CliOutcome = misc::run_databases(&sc).await?.into();
+        return Ok(Some(outcome));
+    }
+
+    // --- Agents ---
+    if let Command::Agents = cli.command {
+        let cfg = config::load_resolved(cli.config.as_deref(), cli.merge_global)?.config;
+        let (server_url, api_token) = authenticate(&cfg).await?;
+        let sc = ServerClient::new(&server_url, &api_token);
+        let outcome: crate::output::CliOutcome = misc::run_agents(&sc).await?.into();
+        return Ok(Some(outcome));
+    }
+
+    // --- Init ---
+    if let Command::Init {
+        ref non_interactive,
+        ref force,
+        ref preset,
+        ref output_dir,
+        ref dry_run,
     } = cli.command
     {
-        let db_name = cfg.resolve_database_name(cli.database.as_deref())?;
-        let migrations_dir = cfg.migrations_dir_for(&db_name);
-        let migrator = dbward_migrate::LocalMigrator::new(migrations_dir);
-        let path = migrator.create(name)?;
-        println!("Created: {}", path.display());
-        return Ok(());
+        let outcome: crate::output::CliOutcome = auth::run_init(
+            &cli,
+            *non_interactive,
+            *force,
+            preset.as_deref(),
+            output_dir,
+            *dry_run,
+            cli.format,
+        )?
+        .into();
+        return Ok(Some(outcome));
     }
 
-    // TLS transport security check (OIDC + external HTTP → hard error)
+    // --- Logout ---
+    if let Command::Logout = cli.command {
+        let result = oidc_login::logout().await.map_err(CliError::Auth)?;
+        let msg = match result {
+            oidc_login::LogoutResult::Success => "Logged out. Credentials deleted.",
+            oidc_login::LogoutResult::NotLoggedIn => "Not logged in.",
+        };
+        let render = RenderPlan::status(msg);
+        let outcome: crate::output::CliOutcome = CliResponse::<()>::empty(render).into();
+        return Ok(Some(outcome));
+    }
+
+    // --- Server ---
+    if let Command::Server { ref action } = cli.command {
+        let outcome: crate::output::CliOutcome = server::run_server_command(action).await?.into();
+        return Ok(Some(outcome));
+    }
+
+    // --- Self-update ---
+    if let Command::SelfUpdate = cli.command {
+        let outcome: crate::output::CliOutcome = self_update::run_self_update().await?.into();
+        return Ok(Some(outcome));
+    }
+
+    // --- Doctor ---
+    if let Command::Doctor {
+        ref agent,
+        ref server,
+        ref timeout,
+    } = cli.command
+    {
+        let suppress = matches!(
+            cli.format,
+            crate::output::OutputMode::Json | crate::output::OutputMode::Quiet
+        );
+        let outcome: crate::output::CliOutcome = doctor::run(
+            cli.config.as_deref(),
+            agent.clone(),
+            server.clone(),
+            suppress,
+            *timeout,
+        )
+        .await?
+        .into();
+        return Ok(Some(outcome));
+    }
+
+    // --- Slack ---
+    if let Command::Slack { ref action } = cli.command {
+        let outcome: crate::output::CliOutcome = slack::run(action.clone()).await?.into();
+        return Ok(Some(outcome));
+    }
+
+    // --- Policy ---
+    if let Command::Policy { ref action } = cli.command {
+        let cfg = config::load_resolved(cli.config.as_deref(), cli.merge_global)?.config;
+        let (server_url, api_token) = authenticate(&cfg).await?;
+        let sc = ServerClient::new(&server_url, &api_token);
+
+        let outcome: crate::output::CliOutcome = match action {
+            PolicyAction::Resolve {
+                database,
+                environment,
+                operation,
+            } => policy::run_resolve(&sc, database, environment, operation.as_deref())
+                .await?
+                .into(),
+        };
+        return Ok(Some(outcome));
+    }
+
+    // --- Execute ---
+    if let Command::Execute {
+        ref sql,
+        emergency,
+        allow_ddl,
+        ref reason,
+        ref output,
+        ref ticket,
+        ref repo,
+        ref idempotency_key,
+        ref share_with,
+        no_result_store,
+        result_format,
+        timeout,
+    } = cli.command
+    {
+        let cfg = config::load_resolved(cli.config.as_deref(), cli.merge_global)?.config;
+        if let Some(w) = check_transport(&cfg, cli.allow_insecure)? {
+            progress.warn(&w);
+        }
+        let (server_url, api_token) = authenticate(&cfg).await?;
+        let sc = ServerClient::new(&server_url, &api_token);
+        let db_name = cfg.resolve_database_name(cli.database.as_deref())?;
+        let env_str = cli
+            .environment
+            .as_deref()
+            .or(cfg.default_environment.as_deref())
+            .unwrap_or("development");
+        let outcome: crate::output::CliOutcome = execute::run_execute(
+            &sc,
+            &db_name,
+            env_str,
+            cli.format,
+            sql,
+            emergency,
+            allow_ddl,
+            reason.as_deref(),
+            output.as_deref(),
+            cfg.results.dir.as_deref(),
+            ticket.as_deref(),
+            repo.as_deref(),
+            idempotency_key.as_deref(),
+            share_with,
+            no_result_store,
+            resolve_result_format(result_format, &cfg),
+            timeout,
+            cli.yes,
+            progress,
+        )
+        .await?
+        .into();
+        return Ok(Some(outcome));
+    }
+
+    // --- Preflight ---
+    if let Command::Preflight {
+        ref sql,
+        no_explain,
+        explain_timeout_ms,
+    } = cli.command
+    {
+        let cfg = config::load_resolved(cli.config.as_deref(), cli.merge_global)?.config;
+        if let Some(w) = check_transport(&cfg, cli.allow_insecure)? {
+            progress.warn(&w);
+        }
+        let (server_url, api_token) = authenticate(&cfg).await?;
+        let sc = ServerClient::new(&server_url, &api_token);
+        let db_name = cfg.resolve_database_name(cli.database.as_deref())?;
+        let env_str = cli
+            .environment
+            .as_deref()
+            .or(cfg.default_environment.as_deref())
+            .unwrap_or("development");
+        let outcome: crate::output::CliOutcome =
+            preflight::run_preflight(&sc, &db_name, env_str, sql, !no_explain, explain_timeout_ms)
+                .await?
+                .into();
+        return Ok(Some(outcome));
+    }
+
+    // --- Audit ---
+    if let Command::Audit {
+        ref limit,
+        ref user,
+        ref operation,
+        ref status,
+        ref event_type,
+        ref category,
+        ref outcome,
+        ref since,
+        ref until,
+        verify,
+        ref result_format,
+    } = cli.command
+    {
+        let cfg = config::load_resolved(cli.config.as_deref(), cli.merge_global)?.config;
+        if let Some(w) = check_transport(&cfg, cli.allow_insecure)? {
+            progress.warn(&w);
+        }
+        let (server_url, api_token) = authenticate(&cfg).await?;
+        let sc = ServerClient::new(&server_url, &api_token);
+        let cli_outcome: crate::output::CliOutcome = audit::run_audit(
+            &sc,
+            *limit,
+            user.as_deref(),
+            operation.as_deref(),
+            status.as_deref(),
+            event_type.as_deref(),
+            category.as_deref(),
+            outcome.as_deref(),
+            since.as_deref(),
+            until.as_deref(),
+            cli.environment.as_deref(),
+            verify,
+            result_format,
+        )
+        .await?
+        .into();
+        return Ok(Some(cli_outcome));
+    }
+
+    // --- Migrate ---
+    if let Command::Migrate { ref action } = cli.command {
+        let cfg = config::load_resolved(cli.config.as_deref(), cli.merge_global)?.config;
+        let db_name = cfg.resolve_database_name(cli.database.as_deref())?;
+
+        // migrate create is local-only
+        if let migrate::MigrateAction::Create { name } = action {
+            let outcome: crate::output::CliOutcome =
+                migrate::run_migrate_create(&cfg, &db_name, name)?.into();
+            return Ok(Some(outcome));
+        }
+
+        if let Some(w) = check_transport(&cfg, cli.allow_insecure)? {
+            progress.warn(&w);
+        }
+        let (server_url, api_token) = authenticate(&cfg).await?;
+        let sc = ServerClient::new(&server_url, &api_token);
+        let env_str = cli
+            .environment
+            .as_deref()
+            .or(cfg.default_environment.as_deref())
+            .unwrap_or("development");
+        let outcome: crate::output::CliOutcome = migrate::run_migrate(
+            &sc, &cfg, &db_name, env_str, cli.format, action, cli.yes, progress,
+        )
+        .await?
+        .into();
+        return Ok(Some(outcome));
+    }
+
+    // -----------------------------------------------------------------------
+    // Long-running / interactive commands: run directly, return None.
+    // -----------------------------------------------------------------------
+
+    match cli.command {
+        Command::Agent {
+            config: ref agent_config_path,
+        } => {
+            agent::run_agent(agent_config_path).await?;
+            Ok(None)
+        }
+        Command::Dev {
+            ref database_url,
+            port,
+        } => {
+            dev::run_dev(database_url, port).await?;
+            Ok(None)
+        }
+        Command::Login { device } => {
+            let cfg = config::load_resolved(cli.config.as_deref(), cli.merge_global)?.config;
+            let oc = cfg
+                .server
+                .oidc
+                .as_ref()
+                .ok_or_else(|| CliError::Config("[server.oidc] not configured".into()))?;
+            if device {
+                oidc_login::login_device(
+                    &oc.issuer,
+                    &oc.client_id,
+                    oc.discovery_url.as_deref(),
+                    oc.browser_url.as_deref(),
+                    oc.backchannel_url.as_deref(),
+                )
+                .await
+            } else {
+                oidc_login::login(
+                    &oc.issuer,
+                    &oc.client_id,
+                    oc.discovery_url.as_deref(),
+                    oc.backchannel_url.as_deref(),
+                )
+                .await
+            }
+            .map_err(CliError::Auth)?;
+            let render = RenderPlan::status("Login successful.");
+            let outcome: crate::output::CliOutcome = CliResponse::<()>::empty(render).into();
+            Ok(Some(outcome))
+        }
+        Command::Mcp => {
+            let cfg = config::load_resolved(cli.config.as_deref(), cli.merge_global)?.config;
+            let (server_url, api_token) = authenticate(&cfg).await?;
+            let sc = ServerClient::new(&server_url, &api_token);
+            crate::mcp::run_stdio(cfg, cli.database.as_deref(), sc).await?;
+            Ok(None)
+        }
+        _ => unreachable!("all commands should be handled above"),
+    }
+}
+
+/// TLS transport security check helper.
+/// Returns a warning message if HTTP is used for a non-local server (soft failure).
+fn check_transport(
+    cfg: &ClientConfig,
+    allow_insecure_flag: bool,
+) -> Result<Option<String>, CliError> {
     let has_oidc = cfg.server.oidc.is_some();
-    let allow_insecure = cfg.server.allow_insecure.unwrap_or(false);
+    let allow_insecure = cfg.server.allow_insecure.unwrap_or(false) || allow_insecure_flag;
     if let Err(e) = dbward_config::transport::check_transport_security(
         &cfg.server.url,
         allow_insecure,
@@ -494,206 +951,12 @@ pub async fn run(mut cli: Cli) -> Result<(), CliError> {
     ) {
         match &e {
             dbward_config::transport::TransportError::InsecureHttp { .. } => {
-                eprintln!("warning: {e}");
+                return Ok(Some(format!("{e}")));
             }
             _ => return Err(CliError::Config(e.to_string())),
         }
     }
-
-    let (server_url, api_token) = authenticate(&cfg).await?;
-
-    let sc = ServerClient::new(&server_url, &api_token);
-    let json_output = cli.format == "json";
-
-    match cli.command {
-        Command::Execute {
-            ref sql,
-            emergency,
-            allow_ddl,
-            ref reason,
-            ref output,
-            ref ticket,
-            ref repo,
-            ref idempotency_key,
-            ref share_with,
-            no_result_store,
-            result_format,
-            timeout,
-        } => {
-            let db_name = cfg.resolve_database_name(cli.database.as_deref())?;
-            let env_str = cli
-                .environment
-                .as_deref()
-                .or(cfg.default_environment.as_deref())
-                .unwrap_or("development");
-            execute::run_execute(
-                &sc,
-                &db_name,
-                env_str,
-                json_output,
-                sql,
-                emergency,
-                allow_ddl,
-                reason.as_deref(),
-                output.as_deref(),
-                cfg.results.dir.as_deref(),
-                ticket.as_deref(),
-                repo.as_deref(),
-                idempotency_key.as_deref(),
-                share_with,
-                no_result_store,
-                resolve_result_format(result_format, &cfg),
-                timeout,
-                cli.yes,
-            )
-            .await
-        }
-        Command::Migrate { ref action } => {
-            let db_name = cfg.resolve_database_name(cli.database.as_deref())?;
-            let env_str = cli
-                .environment
-                .as_deref()
-                .or(cfg.default_environment.as_deref())
-                .unwrap_or("development");
-            migrate::run_migrate(
-                &sc,
-                &cfg,
-                &db_name,
-                env_str,
-                json_output,
-                action,
-                cli.database.as_deref(),
-                cli.yes,
-            )
-            .await
-        }
-        Command::Request { action } => {
-            let default_fmt = resolve_result_format(None, &cfg);
-            request::run_request(
-                &sc,
-                json_output,
-                action,
-                cli.database.as_deref(),
-                cli.environment.as_deref(),
-                cfg.results.dir.as_deref(),
-                default_fmt,
-                cli.yes,
-            )
-            .await
-        }
-        Command::Databases => misc::run_databases(&sc, json_output).await,
-        Command::Preflight {
-            ref sql,
-            no_explain,
-            explain_timeout_ms,
-        } => {
-            let db_name = cfg.resolve_database_name(cli.database.as_deref())?;
-            let env_str = cli
-                .environment
-                .as_deref()
-                .or(cfg.default_environment.as_deref())
-                .unwrap_or("development");
-            preflight::run_preflight(
-                &sc,
-                &db_name,
-                env_str,
-                sql,
-                !no_explain,
-                explain_timeout_ms,
-                json_output,
-            )
-            .await
-        }
-        Command::Mcp => crate::mcp::run_stdio(cfg, cli.database.as_deref(), sc).await,
-        Command::Audit {
-            ref limit,
-            ref user,
-            ref operation,
-            ref status,
-            ref event_type,
-            ref category,
-            ref outcome,
-            ref since,
-            ref until,
-            verify,
-            ref output,
-        } => {
-            audit::run_audit(
-                &sc,
-                json_output,
-                *limit,
-                user.as_deref(),
-                operation.as_deref(),
-                status.as_deref(),
-                event_type.as_deref(),
-                category.as_deref(),
-                outcome.as_deref(),
-                since.as_deref(),
-                until.as_deref(),
-                cli.environment.as_deref(),
-                verify,
-                output,
-            )
-            .await
-        }
-        Command::Agents => misc::run_agents(&sc, json_output).await,
-        Command::User { action } => user::run_user(&sc, action).await,
-        Command::Group { action } => group::run_group(&sc, action).await,
-        Command::Token { action } => token::run_token_command(&action, &sc, json_output).await,
-        Command::Policy { action } => match action {
-            PolicyAction::Resolve {
-                database,
-                environment,
-                operation,
-            } => {
-                policy::run_resolve(
-                    &sc,
-                    json_output,
-                    &database,
-                    &environment,
-                    operation.as_deref(),
-                )
-                .await
-            }
-        },
-        // Handled above
-        Command::Init { .. }
-        | Command::Login { .. }
-        | Command::Logout
-        | Command::Whoami
-        | Command::Server { .. }
-        | Command::Agent { .. }
-        | Command::Dev { .. }
-        | Command::SelfUpdate
-        | Command::Doctor { .. }
-        | Command::Slack { .. } => unreachable!(),
-    }
-}
-
-fn print_whoami_server(resp: &serde_json::Value) {
-    let subject = resp["subject_id"].as_str().unwrap_or("unknown");
-    let stype = resp["subject_type"].as_str().unwrap_or("unknown");
-    println!("Subject: {subject} ({stype})");
-
-    let roles: Vec<&str> = resp["roles"]
-        .as_array()
-        .map(|a| {
-            a.iter()
-                .filter_map(|v| v["name"].as_str().or_else(|| v.as_str()))
-                .collect()
-        })
-        .unwrap_or_default();
-    if !roles.is_empty() {
-        println!("Roles: {}", roles.join(", "));
-    }
-
-    let groups: Vec<&str> = resp["groups"]
-        .as_array()
-        .map(|a| a.iter().filter_map(|v| v.as_str()).collect())
-        .unwrap_or_default();
-    if !groups.is_empty() {
-        println!("Groups: {}", groups.join(", "));
-    }
+    Ok(None)
 }
 
 #[cfg(test)]
@@ -740,7 +1003,7 @@ mod tests {
     #[test]
     fn global_format_option_parses_after_subcommand() {
         let cli = Cli::try_parse_from(["dbward", "request", "list", "--format", "json"]).unwrap();
-        assert_eq!(cli.format, "json");
+        assert_eq!(cli.format, crate::output::OutputMode::Json);
         assert!(matches!(cli.command, Command::Request { .. }));
     }
 
@@ -843,69 +1106,46 @@ mod tests {
     }
 
     #[test]
-    fn print_whoami_server_with_groups_and_roles() {
+    fn build_whoami_response_with_groups_and_roles() {
         let resp = serde_json::json!({
             "subject_id": "alice@example.com",
             "subject_type": "user",
             "roles": [{"name": "dba", "permissions": ["execute"]}, {"name": "dev"}],
             "groups": ["backend-team", "sre"]
         });
-        // Capture stdout to verify output
-        let output = capture_whoami_output(&resp);
-        assert!(output.contains("Subject: alice@example.com (user)"));
-        assert!(output.contains("Roles: dba, dev"));
-        assert!(output.contains("Groups: backend-team, sre"));
+        let cli_resp = build_whoami_response(&resp);
+        let data = cli_resp.data.unwrap();
+        assert_eq!(data.subject_id, "alice@example.com");
+        assert_eq!(data.subject_type, "user");
+        assert_eq!(data.roles, vec!["dba", "dev"]);
+        assert_eq!(data.groups, vec!["backend-team", "sre"]);
     }
 
     #[test]
-    fn print_whoami_server_empty_groups_and_roles() {
+    fn build_whoami_response_empty_groups_and_roles() {
         let resp = serde_json::json!({
             "subject_id": "bot",
             "subject_type": "api_token",
             "roles": [],
             "groups": []
         });
-        let output = capture_whoami_output(&resp);
-        assert!(output.contains("Subject: bot (api_token)"));
-        assert!(!output.contains("Roles:"));
-        assert!(!output.contains("Groups:"));
+        let cli_resp = build_whoami_response(&resp);
+        let data = cli_resp.data.unwrap();
+        assert_eq!(data.subject_id, "bot");
+        assert_eq!(data.subject_type, "api_token");
+        assert!(data.roles.is_empty());
+        assert!(data.groups.is_empty());
     }
 
     #[test]
-    fn print_whoami_server_legacy_string_roles() {
+    fn build_whoami_response_legacy_string_roles() {
         let resp = serde_json::json!({
             "subject_id": "old-server",
             "subject_type": "user",
             "roles": ["admin", "requester"]
         });
-        let output = capture_whoami_output(&resp);
-        assert!(output.contains("Roles: admin, requester"));
-    }
-
-    /// Helper: extract what print_whoami_server would produce by calling the internal logic directly
-    fn capture_whoami_output(resp: &serde_json::Value) -> String {
-        let subject = resp["subject_id"].as_str().unwrap_or("unknown");
-        let stype = resp["subject_type"].as_str().unwrap_or("unknown");
-        let roles: Vec<&str> = resp["roles"]
-            .as_array()
-            .map(|a| {
-                a.iter()
-                    .filter_map(|v| v["name"].as_str().or_else(|| v.as_str()))
-                    .collect()
-            })
-            .unwrap_or_default();
-        let groups: Vec<&str> = resp["groups"]
-            .as_array()
-            .map(|a| a.iter().filter_map(|v| v.as_str()).collect())
-            .unwrap_or_default();
-
-        let mut output = format!("Subject: {subject} ({stype})\n");
-        if !roles.is_empty() {
-            output.push_str(&format!("Roles: {}\n", roles.join(", ")));
-        }
-        if !groups.is_empty() {
-            output.push_str(&format!("Groups: {}\n", groups.join(", ")));
-        }
-        output
+        let cli_resp = build_whoami_response(&resp);
+        let data = cli_resp.data.unwrap();
+        assert_eq!(data.roles, vec!["admin", "requester"]);
     }
 }

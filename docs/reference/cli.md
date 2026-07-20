@@ -14,7 +14,7 @@ description: All dbward CLI commands and options
 | `--merge-global` | | | false | Merge global config when --config is set |
 | `--database <NAME>` | | `DBWARD_DATABASE` | | Target database |
 | `-e, --environment <ENV>` | `-e` | `DBWARD_ENV` | | Target environment |
-| `--format <FMT>` | | | human | Output format: `human`, `json` |
+| `--format <FMT>` | | | human | Output format: `human`, `json`, `quiet` |
 | `--allow-insecure` | | `DBWARD_ALLOW_INSECURE` | false | Allow HTTP connections to non-local servers. Suppresses transport security warnings. Does not bypass OIDC+HTTP rejection. |
 | `--yes` | `-y` | `DBWARD_YES` | false | Skip interactive confirmation prompts. Env accepts `1`, `true`, or `yes`. |
 
@@ -256,7 +256,7 @@ Search and verify audit logs.
 
 ```bash
 dbward audit
-dbward audit --user alice --since 2026-05-01 --output json
+dbward audit --user alice --since 2026-05-01 --result-format json
 dbward audit --verify
 ```
 
@@ -272,7 +272,7 @@ dbward audit --verify
 | `--since <DATETIME>` | | Events after this time |
 | `--until <DATETIME>` | | Events before this time |
 | `--verify` | false | Verify hash chain integrity |
-| `--output <FMT>` | table | Output format: `table`, `json`, `csv` |
+| `--result-format <FMT>` | table | Result format: `table`, `json`, `csv` |
 
 ---
 
@@ -640,4 +640,48 @@ dbward self-update      # download and install latest
 |------|---------|
 | 0 | Success |
 | 1 | Error (connection, validation, execution failure) |
-| 2 | Approval pending (request created but not yet approved) |
+| 2 | Pending / issues found (approval pending, doctor failure, usage error) |
+| 124 | Timeout (agent did not respond within `--timeout`) |
+| 130 | Interrupted (Ctrl-C / SIGINT) |
+
+## Output Modes
+
+The `--format` option controls the overall output contract for all commands.
+
+| Mode | stdout | stderr | Use case |
+|------|--------|--------|----------|
+| `human` (default) | Data (tables, key-value, raw values) | Status messages, warnings, hints, errors | Interactive terminal use |
+| `json` | JSON envelope (always valid JSON, one line) | Error message only | Scripts, CI/CD, `jq` piping |
+| `quiet` | JSON envelope (same as `json`) | Nothing (0 bytes) | Full automation, log-free pipelines |
+
+### JSON envelope structure
+
+All commands produce this structure on stdout when `--format json` or `--format quiet` is used:
+
+Success:
+```json
+{"ok": true, "data": { ... }}
+```
+
+Error:
+```json
+{"ok": false, "data": null, "error": {"code": "auth_error", "message": "token expired"}}
+```
+
+Data with issues (e.g., `doctor` with failures):
+```json
+{"ok": false, "data": {"checks": [...]}, "error": {"code": "doctor_issues_found", "message": "1 check(s) failed"}}
+```
+
+### stdout/stderr separation
+
+In `human` mode, stdout contains only data that can be piped (table output, token values, CSV). All auxiliary information (status messages, warnings, progress) goes to stderr. This means commands like `dbward token create | pbcopy` work reliably.
+
+### `--format` vs `--result-format`
+
+These are independent options:
+
+- `--format` (global) controls the CLI output contract (envelope structure, stream routing)
+- `--result-format` (execute/request result/audit only) controls how query results are rendered within the human-mode data area
+
+When `--format json` is active, `--result-format` is silently ignored — the full result data is always in the JSON envelope's `data` field.

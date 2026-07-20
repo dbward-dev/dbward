@@ -1,7 +1,7 @@
 use std::path::{Path, PathBuf};
 use std::process::Command as ProcessCommand;
 
-use crate::error::CliError;
+use crate::output::CliError;
 
 pub async fn run_agent(config_path: &Path) -> Result<(), CliError> {
     let binary = find_agent_binary()?;
@@ -9,9 +9,9 @@ pub async fn run_agent(config_path: &Path) -> Result<(), CliError> {
         .arg("--config")
         .arg(config_path)
         .status()
-        .map_err(|e| CliError::Server(format!("failed to start agent: {e}")))?;
+        .map_err(|e| CliError::Internal(format!("failed to start agent: {e}")))?;
     if !status.success() {
-        return Err(CliError::Server(format!("agent exited with {status}")));
+        return Err(CliError::Internal(format!("agent exited with {status}")));
     }
     Ok(())
 }
@@ -30,7 +30,7 @@ fn find_agent_binary() -> Result<PathBuf, CliError> {
             return Ok(candidate);
         }
     }
-    Err(CliError::Server(
+    Err(CliError::Internal(
         "'dbward-agent' not found. Install it or place it next to the dbward binary.".into(),
     ))
 }

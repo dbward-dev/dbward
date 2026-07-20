@@ -62,7 +62,7 @@ pub async fn run_stdio(
     config: ClientConfig,
     database: Option<&str>,
     client: crate::server_client::ServerClient,
-) -> Result<(), crate::error::CliError> {
+) -> Result<(), crate::output::CliError> {
     let db_name = config.resolve_database_name(database)?;
     let migrations_dir = config.migrations_dir_for(&db_name);
     let default_env: String = std::env::var("DBWARD_ENV")
@@ -127,7 +127,7 @@ pub async fn run_stdio(
                     }
                     Err(err) => {
                         workers.abort_all();
-                        return Err(crate::error::CliError::Server(format!("MCP worker task failed: {err}")));
+                        return Err(crate::output::CliError::Api { code: "server_error".into(), message: format!("MCP worker task failed: {err}") });
                     }
                 }
             }
@@ -288,9 +288,9 @@ pub async fn run_stdio(
     let _ = reader.await;
     match writer.await {
         Ok(Ok(())) => {}
-        Ok(Err(err)) => return Err(crate::error::CliError::Io(err)),
+        Ok(Err(err)) => return Err(crate::output::CliError::Internal(format!("io: {err}"))),
         Err(err) => {
-            return Err(crate::error::CliError::Server(format!(
+            return Err(crate::output::CliError::Internal(format!(
                 "MCP writer task failed: {err}"
             )));
         }

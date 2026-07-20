@@ -11,6 +11,7 @@ use dbward_mcp::ports::{
 };
 
 use crate::commands::workflow;
+use crate::output::{OutputMode, ProgressSink};
 use crate::server_client::ServerClient;
 
 /// CLI implementation of McpBackend — routes all operations through ServerClient (HTTP).
@@ -110,9 +111,16 @@ impl McpBackend for CliMcpBackend {
         };
 
         // Wait with timeout
+        let mcp_progress = ProgressSink::new(OutputMode::Quiet);
         match tokio::time::timeout(
             Duration::from_secs(timeout_secs),
-            workflow::wait_for_completion(&self.client, request_id, wait_status, false),
+            workflow::wait_for_completion(
+                &self.client,
+                request_id,
+                wait_status,
+                false,
+                &mcp_progress,
+            ),
         )
         .await
         {

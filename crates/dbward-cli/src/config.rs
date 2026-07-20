@@ -6,7 +6,7 @@ pub use dbward_config::{
 
 use std::path::Path;
 
-use crate::error::CliError;
+use crate::output::CliError;
 
 pub fn load(config_path: &Path) -> Result<ClientConfig, CliError> {
     ClientConfig::load(config_path).map_err(|e| CliError::Config(e.to_string()))

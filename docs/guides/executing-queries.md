@@ -48,19 +48,42 @@ The CLI submits the query, waits for approval (if required), and displays the re
 
 ## Output formats
 
+### Result display format (`--result-format`)
+
+Controls how query results are rendered in human mode:
+
 ```bash
 # Table (default)
 dbward execute "SELECT id, name FROM users"
 
-# JSON
+# Vertical (one row per block, useful for wide results)
+dbward execute --result-format vertical "SELECT * FROM users WHERE id = 1"
+
+# JSON (raw result data)
 dbward execute --result-format json "SELECT id, name FROM users"
 
-# CSV
+# CSV (for spreadsheets/scripts)
 dbward execute --result-format csv "SELECT id, name FROM users"
 
 # Save to file
 dbward execute --output results.csv --result-format csv "SELECT * FROM users"
 ```
+
+### Machine-readable output (`--format json`)
+
+For scripting and CI/CD, use `--format json` to get a structured JSON envelope on stdout:
+
+```bash
+dbward --format json -y execute "SELECT version()"
+```
+
+```json
+{"ok": true, "data": {"_dbward_result": true, "success": true, "execution_id": "...", "result_data": {"rows": [{"version": "PostgreSQL 16.2"}], "truncated": false}}}
+```
+
+When `--format json` is active, `--result-format` is silently ignored — the full result data is always in the JSON envelope's `data` field.
+
+See [CLI Reference: Output Modes](../reference/cli.md#output-modes) for full details on the JSON envelope structure and exit codes.
 
 ## Approval flow
 
@@ -90,7 +113,7 @@ dbward request approve <request-id> --comment "Verified the query is safe"
 | `--output <path>` | Save result to a file |
 | `--no-save` | Do not save result locally |
 | `--no-result-store` | Do not store query result on server (metadata and SQL always retained for audit) |
-| `--result-format <fmt>` | Output format: `table`, `json`, `csv` (default: table) |
+| `--result-format <fmt>` | Output format: `table`, `json`, `csv`, `vertical` (default: table) |
 | `--timeout <secs>` | Maximum wait time in seconds |
 | `--ticket <id>` | Attach ticket metadata (e.g., JIRA-123) |
 | `--repo <url>` | Attach repository metadata |

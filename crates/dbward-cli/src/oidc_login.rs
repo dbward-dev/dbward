@@ -243,7 +243,15 @@ pub async fn login_device(
     }
 }
 
-pub async fn logout() -> Result<(), String> {
+/// Result of a logout operation.
+pub enum LogoutResult {
+    /// Successfully logged out (credentials deleted).
+    Success,
+    /// Was not logged in (no credentials found).
+    NotLoggedIn,
+}
+
+pub async fn logout() -> Result<LogoutResult, String> {
     // Try to find credentials in any location
     let legacy = legacy_credentials_path();
     let path = if legacy.exists() {
@@ -260,25 +268,21 @@ pub async fn logout() -> Result<(), String> {
                     match first {
                         Some(entry) => entry.path(),
                         None => {
-                            eprintln!("Not logged in.");
-                            return Ok(());
+                            return Ok(LogoutResult::NotLoggedIn);
                         }
                     }
                 }
                 Err(_) => {
-                    eprintln!("Not logged in.");
-                    return Ok(());
+                    return Ok(LogoutResult::NotLoggedIn);
                 }
             }
         } else {
-            eprintln!("Not logged in.");
-            return Ok(());
+            return Ok(LogoutResult::NotLoggedIn);
         }
     };
 
     if !path.exists() {
-        eprintln!("Not logged in.");
-        return Ok(());
+        return Ok(LogoutResult::NotLoggedIn);
     }
 
     let creds: Credentials =
@@ -290,26 +294,34 @@ pub async fn logout() -> Result<(), String> {
         let discovery = discover(&creds.issuer).await.ok();
         if let Some(disc) = discovery
             && let Some(ref revoke_url) = disc.revocation_endpoint
-            && let Err(err) = reqwest::Client::new()
+        {
+            // Best-effort revocation — ignore failures
+            let _ = reqwest::Client::new()
                 .post(revoke_url)
                 .form(&[
                     ("token", refresh.as_str()),
                     ("client_id", creds.client_id.as_str()),
                 ])
                 .send()
-                .await
-        {
-            eprintln!("Warning: token revocation request failed: {err}");
+                .await;
         }
     }
 
     std::fs::remove_file(&path).map_err(|e| e.to_string())?;
-    eprintln!("Logged out. Credentials deleted.");
-    Ok(())
+    Ok(LogoutResult::Success)
 }
 
-pub fn whoami() -> Result<(), String> {
-    // Find credentials: try legacy first, then scoped dir
+/// Local OIDC identity information extracted from saved credentials.
+#[derive(Debug)]
+pub struct LocalIdentity {
+    pub email: Option<String>,
+    pub subject: Option<String>,
+    pub issuer: String,
+    pub expires_at: String,
+}
+
+/// Retrieve local OIDC identity data without printing anything.
+pub fn get_local_identity() -> Result<LocalIdentity, String> {
     let legacy = legacy_credentials_path();
     let path = if legacy.exists() {
         legacy
@@ -333,22 +345,43 @@ pub fn whoami() -> Result<(), String> {
         serde_json::from_str(&std::fs::read_to_string(&path).map_err(|e| e.to_string())?)
             .map_err(|e| format!("invalid credentials: {e}"))?;
 
-    // Decode JWT to show identity (without verification)
-    if let Some(ref id_token) = creds.id_token
-        && let Some(payload) = id_token.split('.').nth(1)
-    {
-        use base64::Engine;
-        if let Ok(bytes) = base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(payload)
-            && let Ok(claims) = serde_json::from_slice::<serde_json::Value>(&bytes)
-        {
-            let email = claims["email"].as_str().unwrap_or("unknown");
-            let sub = claims["sub"].as_str().unwrap_or("unknown");
-            println!("Identity: {email} ({sub})");
-        }
+    let (email, subject) = creds
+        .id_token
+        .as_ref()
+        .and_then(|id_token| id_token.split('.').nth(1))
+        .and_then(|payload| {
+            use base64::Engine;
+            base64::engine::general_purpose::URL_SAFE_NO_PAD
+                .decode(payload)
+                .ok()
+        })
+        .and_then(|bytes| serde_json::from_slice::<serde_json::Value>(&bytes).ok())
+        .map(|claims| {
+            (
+                claims["email"].as_str().map(String::from),
+                claims["sub"].as_str().map(String::from),
+            )
+        })
+        .unwrap_or((None, None));
+
+    Ok(LocalIdentity {
+        email,
+        subject,
+        issuer: creds.issuer,
+        expires_at: creds.expires_at,
+    })
+}
+
+pub fn whoami() -> Result<(), String> {
+    let identity = get_local_identity()?;
+
+    if let Some(ref email) = identity.email {
+        let sub = identity.subject.as_deref().unwrap_or("unknown");
+        println!("Identity: {email} ({sub})");
     }
 
-    println!("Issuer: {}", creds.issuer);
-    println!("Expires: {}", creds.expires_at);
+    println!("Issuer: {}", identity.issuer);
+    println!("Expires: {}", identity.expires_at);
     Ok(())
 }
 

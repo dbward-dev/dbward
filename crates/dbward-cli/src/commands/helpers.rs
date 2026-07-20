@@ -1,69 +1,6 @@
 use std::path::{Path, PathBuf};
 
-use crate::error::CliError;
-
-pub struct SubmissionSummary<'a> {
-    pub operation: &'a str,
-    pub database: &'a str,
-    pub environment: &'a str,
-    pub detail: &'a str,
-    pub emergency: bool,
-}
-
-/// Display submission summary and prompt for confirmation.
-/// Returns Ok(()) if confirmed, Err if rejected or non-interactive without skip.
-pub fn confirm_submission(summary: &SubmissionSummary, skip: bool) -> Result<(), CliError> {
-    if skip {
-        if std::env::var_os("DBWARD_YES").is_some() {
-            eprintln!("note: confirmation skipped (DBWARD_YES)");
-        }
-        return Ok(());
-    }
-
-    if !std::io::IsTerminal::is_terminal(&std::io::stdin()) {
-        return Err(CliError::Other(
-            "interactive confirmation required but stdin is not a terminal. Use --yes to skip."
-                .into(),
-        ));
-    }
-
-    eprintln!();
-    eprintln!("  Operation:   {}", summary.operation);
-    eprintln!("  Database:    {}", summary.database);
-    eprintln!("  Environment: {}", summary.environment);
-    if summary.emergency {
-        eprintln!("  Mode:        \u{26a0} EMERGENCY (bypass approval)");
-    }
-    let detail_display = truncate_detail(summary.detail, 200);
-    if !detail_display.is_empty() {
-        eprintln!("  Detail:      {}", detail_display);
-    }
-    eprintln!();
-    eprint!("Submit this request? [y/N] ");
-
-    let mut input = String::new();
-    std::io::stdin()
-        .read_line(&mut input)
-        .map_err(|e| CliError::Other(format!("failed to read input: {e}")))?;
-
-    match input.trim().to_lowercase().as_str() {
-        "y" | "yes" => Ok(()),
-        _ => Err(CliError::Other("aborted by user".into())),
-    }
-}
-
-fn truncate_detail(s: &str, max: usize) -> String {
-    if s.len() <= max {
-        return s.to_string();
-    }
-    let boundary = s
-        .char_indices()
-        .take_while(|(i, _)| *i <= max)
-        .last()
-        .map(|(i, _)| i)
-        .unwrap_or(0);
-    format!("{}…", &s[..boundary])
-}
+use crate::output::CliError;
 
 pub fn build_request_metadata(
     ticket: Option<&str>,
@@ -89,19 +26,42 @@ pub fn build_request_metadata(
     }
 }
 
+/// Result of a save_result operation.
+#[derive(Debug)]
+#[allow(dead_code)]
+pub struct SaveOutcome {
+    /// Path where the result was saved, if successful.
+    pub path: Option<PathBuf>,
+    /// Warning message if config-dir auto-save failed (non-fatal).
+    pub warning: Option<String>,
+}
+
 pub fn save_result(
     request_id: &str,
     resp: &serde_json::Value,
     output: Option<&Path>,
     config_dir: Option<&Path>,
-) -> Option<PathBuf> {
+) -> Result<SaveOutcome, CliError> {
     let (path, explicit) = match output {
         Some(p) => (p.to_path_buf(), true),
         None => {
-            let dir = config_dir?;
+            let dir = match config_dir {
+                Some(d) => d,
+                None => {
+                    return Ok(SaveOutcome {
+                        path: None,
+                        warning: None,
+                    });
+                }
+            };
             if let Err(e) = std::fs::create_dir_all(dir) {
-                eprintln!("Warning: cannot create results dir {}: {e}", dir.display());
-                return None;
+                return Ok(SaveOutcome {
+                    path: None,
+                    warning: Some(format!(
+                        "failed to create results dir {}: {e}",
+                        dir.display()
+                    )),
+                });
             }
             #[cfg(unix)]
             {
@@ -112,22 +72,33 @@ pub fn save_result(
         }
     };
     if explicit && path.is_dir() {
-        eprintln!("Error: --output path is a directory: {}", path.display());
-        std::process::exit(1);
+        return Err(CliError::Internal(format!(
+            "--output path is a directory: {}",
+            path.display()
+        )));
     }
     let content = serde_json::to_string_pretty(resp).unwrap_or_default();
     match write_secure(&path, content.as_bytes()) {
-        Ok(()) => {
-            eprintln!("Result saved to {}", path.display());
-            Some(path)
-        }
+        Ok(()) => Ok(SaveOutcome {
+            path: Some(path),
+            warning: None,
+        }),
         Err(e) => {
             if explicit {
-                eprintln!("Error: failed to save result to {}: {e}", path.display());
-                std::process::exit(1);
+                Err(CliError::Internal(format!(
+                    "failed to save result to {}: {e}",
+                    path.display()
+                )))
+            } else {
+                // Non-explicit save failure is non-fatal — return warning
+                Ok(SaveOutcome {
+                    path: None,
+                    warning: Some(format!(
+                        "failed to auto-save result to {}: {e}",
+                        path.display()
+                    )),
+                })
             }
-            eprintln!("Warning: failed to save result to {}: {e}", path.display());
-            None
         }
     }
 }
@@ -159,73 +130,19 @@ mod tests {
     }
 
     #[test]
-    fn confirm_submission_skip_true_returns_ok() {
-        let summary = SubmissionSummary {
-            operation: "execute_query",
-            database: "app",
-            environment: "production",
-            detail: "SELECT 1",
-            emergency: false,
-        };
-        assert!(confirm_submission(&summary, true).is_ok());
-    }
-
-    #[test]
-    fn confirm_submission_non_tty_without_skip_returns_error() {
-        // CI environments typically don't have a tty on stdin
-        if std::io::IsTerminal::is_terminal(&std::io::stdin()) {
-            // Skip in interactive terminals
-            return;
-        }
-        let summary = SubmissionSummary {
-            operation: "execute_query",
-            database: "app",
-            environment: "production",
-            detail: "DELETE FROM users",
-            emergency: true,
-        };
-        let result = confirm_submission(&summary, false);
-        assert!(result.is_err());
-        let err = result.unwrap_err();
-        assert!(err.to_string().contains("not a terminal"));
-    }
-
-    #[test]
-    fn truncate_detail_short_string_unchanged() {
-        assert_eq!(truncate_detail("hello", 200), "hello");
-    }
-
-    #[test]
-    fn truncate_detail_long_string_truncated() {
-        let long = "a".repeat(300);
-        let result = truncate_detail(&long, 200);
-        assert!(result.len() <= 204); // 200 + "…" (3 bytes)
-        assert!(result.ends_with('…'));
-    }
-
-    #[test]
-    fn truncate_detail_multibyte_boundary_safe() {
-        // Japanese chars are 3 bytes each
-        let jp = "あ".repeat(100); // 300 bytes
-        let result = truncate_detail(&jp, 200);
-        // Must be valid UTF-8 and end with …
-        assert!(result.ends_with('…'));
-        // The truncated part should be valid (no panics from mid-char slicing)
-        assert!(result.len() <= 203);
-    }
-
-    #[test]
     fn no_output_no_config_returns_none() {
-        let result = save_result("req_123", &sample_result(), None, None);
-        assert!(result.is_none());
+        let result = save_result("req_123", &sample_result(), None, None).unwrap();
+        assert!(result.path.is_none());
+        assert!(result.warning.is_none());
     }
 
     #[test]
     fn config_dir_saves_to_dir() {
         let dir = tempfile::tempdir().unwrap();
-        let result = save_result("req_456", &sample_result(), None, Some(dir.path()));
-        assert!(result.is_some());
-        let path = result.unwrap();
+        let result = save_result("req_456", &sample_result(), None, Some(dir.path())).unwrap();
+        assert!(result.path.is_some());
+        assert!(result.warning.is_none());
+        let path = result.path.unwrap();
         assert_eq!(path, dir.path().join("req_456.json"));
         assert!(path.exists());
         let content: serde_json::Value =
@@ -244,9 +161,10 @@ mod tests {
             &sample_result(),
             Some(&output_path),
             Some(config_dir.path()),
-        );
-        assert!(result.is_some());
-        assert_eq!(result.unwrap(), output_path);
+        )
+        .unwrap();
+        assert!(result.path.is_some());
+        assert_eq!(result.path.unwrap(), output_path);
         assert!(output_path.exists());
         // config_dir should NOT have a file
         assert!(!config_dir.path().join("req_789.json").exists());
@@ -257,8 +175,17 @@ mod tests {
         let output_dir = tempfile::tempdir().unwrap();
         let output_path = output_dir.path().join("explicit.json");
 
-        let result = save_result("req_abc", &sample_result(), Some(&output_path), None);
-        assert!(result.is_some());
+        let result = save_result("req_abc", &sample_result(), Some(&output_path), None).unwrap();
+        assert!(result.path.is_some());
         assert!(output_path.exists());
+    }
+
+    #[test]
+    fn output_is_directory_returns_error() {
+        let dir = tempfile::tempdir().unwrap();
+        let result = save_result("req_dir", &sample_result(), Some(dir.path()), None);
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(err.to_string().contains("directory"));
     }
 }

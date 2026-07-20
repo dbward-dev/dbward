@@ -1,6 +1,6 @@
 use serde_json::Value;
 
-use crate::error::CliError;
+use crate::output::{CliError, OutputMode, ProgressSink};
 use crate::server_client::{CreateRequest, ServerClient};
 
 const REQUEST_STATUS_WAIT_SECS: u64 = 30;
@@ -47,10 +47,11 @@ pub async fn wait_for_completion(
     request_id: &str,
     status: RequestStatus,
     verbose: bool,
+    progress: &ProgressSink,
 ) -> Result<Value, CliError> {
     match status {
         RequestStatus::Dispatched | RequestStatus::Running => {
-            wait_and_resolve(sc, request_id, verbose).await
+            wait_and_resolve(sc, request_id, verbose, progress).await
         }
         RequestStatus::Approved | RequestStatus::AutoApproved | RequestStatus::BreakGlass => {
             match sc.resume(request_id, None).await {
@@ -69,21 +70,29 @@ pub async fn wait_for_completion(
                             return resolve_terminal_result(sc, request_id).await;
                         }
                         _ => {
-                            return Err(CliError::Server(e.body.clone()));
+                            return Err(CliError::Api {
+                                code: "server_error".into(),
+                                message: e.body.clone(),
+                            });
                         }
                     }
                 }
-                Err(e) => return Err(CliError::Server(e.body.clone())),
+                Err(e) => {
+                    return Err(CliError::Api {
+                        code: "server_error".into(),
+                        message: e.body.clone(),
+                    });
+                }
             }
-            wait_and_resolve(sc, request_id, verbose).await
+            wait_and_resolve(sc, request_id, verbose, progress).await
         }
         RequestStatus::Executed | RequestStatus::Failed => {
             resolve_terminal_result(sc, request_id).await
         }
-        _ => Err(CliError::Server(format!(
-            "unexpected status for wait: {}",
-            status
-        ))),
+        _ => Err(CliError::Api {
+            code: "server_error".into(),
+            message: format!("unexpected status for wait: {}", status),
+        }),
     }
 }
 
@@ -95,12 +104,13 @@ pub async fn submit_and_orchestrate(
     sc: &ServerClient,
     params: CreateRequest<'_>,
     verbose: bool,
+    progress: &ProgressSink,
 ) -> Result<Outcome, CliError> {
     let cr = create_request(sc, params).await?;
 
     match cr.status {
         RequestStatus::Dispatched | RequestStatus::Running => {
-            let result = wait_and_resolve(sc, &cr.request_id, verbose).await?;
+            let result = wait_and_resolve(sc, &cr.request_id, verbose, progress).await?;
             Ok(Outcome::Completed {
                 request_id: cr.request_id,
                 result,
@@ -129,12 +139,22 @@ pub async fn submit_and_orchestrate(
                                 result,
                             });
                         }
-                        _ => return Err(CliError::Server(e.body.clone())),
+                        _ => {
+                            return Err(CliError::Api {
+                                code: "server_error".into(),
+                                message: e.body.clone(),
+                            });
+                        }
                     }
                 }
-                Err(e) => return Err(CliError::Server(e.body.clone())),
+                Err(e) => {
+                    return Err(CliError::Api {
+                        code: "server_error".into(),
+                        message: e.body.clone(),
+                    });
+                }
             }
-            let result = wait_and_resolve(sc, &cr.request_id, verbose).await?;
+            let result = wait_and_resolve(sc, &cr.request_id, verbose, progress).await?;
             Ok(Outcome::Completed {
                 request_id: cr.request_id,
                 result,
@@ -147,10 +167,10 @@ pub async fn submit_and_orchestrate(
             request_id: cr.request_id,
             approvers: cr.approvers,
         }),
-        _ => Err(CliError::Server(format!(
-            "unexpected status: {}",
-            cr.status
-        ))),
+        _ => Err(CliError::Api {
+            code: "server_error".into(),
+            message: format!("unexpected status: {}", cr.status),
+        }),
     }
 }
 
@@ -162,13 +182,18 @@ pub async fn wait_and_resolve(
     sc: &ServerClient,
     request_id: &str,
     verbose: bool,
+    progress: &ProgressSink,
 ) -> Result<Value, CliError> {
     if verbose {
-        eprintln!("Waiting for agent to execute...");
+        progress.status("Waiting for agent to execute...");
     }
 
     let _progress_guard = if verbose {
-        Some(spawn_progress_reporter(sc.clone(), request_id.to_string()))
+        Some(spawn_progress_reporter(
+            sc.clone(),
+            request_id.to_string(),
+            progress.mode(),
+        ))
     } else {
         None
     };
@@ -201,10 +226,11 @@ pub async fn resolve_terminal_result(
 
 /// Spawn a background task that prints progress updates.
 /// Returns a guard that aborts the task on drop.
-fn spawn_progress_reporter(sc: ServerClient, request_id: String) -> AbortOnDrop {
+fn spawn_progress_reporter(sc: ServerClient, request_id: String, mode: OutputMode) -> AbortOnDrop {
     AbortOnDrop(tokio::spawn(async move {
         let mut last_key = String::new();
         let start = std::time::Instant::now();
+        let sink = ProgressSink::new(mode);
         loop {
             tokio::time::sleep(std::time::Duration::from_secs(3)).await;
             let req = match tokio::time::timeout(
@@ -223,31 +249,32 @@ fn spawn_progress_reporter(sc: ServerClient, request_id: String) -> AbortOnDrop 
             if key != last_key {
                 match status {
                     RequestStatus::Dispatched => match queue_hint.as_str() {
-                        "no_agents" => eprintln!(
+                        "no_agents" => sink.status(&format!(
                             "  → queued — no agents online. Contact your admin  [{}s]",
                             elapsed
-                        ),
-                        "agents_saturated" => {
-                            eprintln!("  → queued — all agents at capacity  [{}s]", elapsed)
+                        )),
+                        "agents_saturated" => sink.status(&format!(
+                            "  → queued — all agents at capacity  [{}s]",
+                            elapsed
+                        )),
+                        "agents_draining" => sink.status(&format!(
+                            "  → queued — all agents draining (shutting down)  [{}s]",
+                            elapsed
+                        )),
+                        _ => {
+                            sink.status(&format!("  → queued (waiting for agent)  [{}s]", elapsed))
                         }
-                        "agents_draining" => {
-                            eprintln!(
-                                "  → queued — all agents draining (shutting down)  [{}s]",
-                                elapsed
-                            )
-                        }
-                        _ => eprintln!("  → queued (waiting for agent)  [{}s]", elapsed),
                     },
                     RequestStatus::Running => {
                         let agent = req["claimed_by"].as_str().unwrap_or("agent");
-                        eprintln!("  → executing by {}  [{}s]", agent, elapsed);
+                        sink.status(&format!("  → executing by {}  [{}s]", agent, elapsed));
                     }
                     RequestStatus::ExecutionLost => {
-                        eprintln!("  → execution_lost (agent disconnected)");
+                        sink.warn("execution_lost (agent disconnected)");
                         break;
                     }
                     RequestStatus::Approved => {
-                        eprintln!("  → resume expired (no agent picked up)");
+                        sink.warn("resume expired (no agent picked up)");
                         break;
                     }
                     _ => {}
@@ -269,9 +296,12 @@ async fn poll_until_terminal(
 
     loop {
         if std::time::Instant::now() > deadline {
-            return Err(CliError::Server(format!(
-                "Timed out waiting for execution (5m). Check status: dbward request show {request_id}"
-            )));
+            return Err(CliError::Api {
+                code: "server_error".into(),
+                message: format!(
+                    "Timed out waiting for execution (5m). Check status: dbward request show {request_id}"
+                ),
+            });
         }
         let remaining_secs = deadline
             .saturating_duration_since(std::time::Instant::now())
@@ -304,30 +334,42 @@ async fn poll_until_terminal(
                                 return resolve_from_request(sc, request_id, &req).await.map(Some);
                             }
                             _ => {
-                                return Err(CliError::Server(format!(
-                                    "request {request_id} is '{}' and resume was rejected: {}. Run: dbward request show {request_id}",
-                                    actual, e.body
-                                )));
+                                return Err(CliError::Api {
+                                    code: "server_error".into(),
+                                    message: format!(
+                                        "request {request_id} is '{}' and resume was rejected: {}. Run: dbward request show {request_id}",
+                                        actual, e.body
+                                    ),
+                                });
                             }
                         }
                     }
                     Err(e) => {
-                        return Err(CliError::Server(format!(
-                            "request {request_id} is approved but resume failed: {}. Run: dbward request resume {request_id}",
-                            e.body
-                        )));
+                        return Err(CliError::Api {
+                            code: "server_error".into(),
+                            message: format!(
+                                "request {request_id} is approved but resume failed: {}. Run: dbward request resume {request_id}",
+                                e.body
+                            ),
+                        });
                     }
                 }
             }
             RequestStatus::Pending => {
-                return Err(CliError::Server(format!(
-                    "Request {request_id} requires approval. Check status: dbward request show {request_id}"
-                )));
+                return Err(CliError::Api {
+                    code: "server_error".into(),
+                    message: format!(
+                        "Request {request_id} requires approval. Check status: dbward request show {request_id}"
+                    ),
+                });
             }
             _ => {
-                return Err(CliError::Server(format!(
-                    "unexpected status: {status}. Try: dbward request resume {request_id}"
-                )));
+                return Err(CliError::Api {
+                    code: "server_error".into(),
+                    message: format!(
+                        "unexpected status: {status}. Try: dbward request resume {request_id}"
+                    ),
+                });
             }
         }
     }
@@ -355,9 +397,12 @@ async fn resolve_from_request(
                 Err(err) => Err(err),
             }
         }
-        _ => Err(CliError::Server(format!(
-            "unexpected status: {status}. Try: dbward request resume {request_id}"
-        ))),
+        _ => Err(CliError::Api {
+            code: "server_error".into(),
+            message: format!(
+                "unexpected status: {status}. Try: dbward request resume {request_id}"
+            ),
+        }),
     }
 }
 
@@ -380,7 +425,7 @@ fn terminal_payload_from_request(req: &Value) -> Option<Value> {
 
 fn is_missing_result_content_error(err: &CliError) -> bool {
     match err {
-        CliError::Server(msg) => msg.contains("result not stored for this request"),
+        CliError::Api { message, .. } => message.contains("result not stored for this request"),
         _ => false,
     }
 }
@@ -511,9 +556,10 @@ mod tests {
         });
 
         let client = ServerClient::new(&format!("http://{addr}"), "test-token");
+        let progress = ProgressSink::new(OutputMode::Quiet);
         let result = tokio::time::timeout(
             std::time::Duration::from_secs(5),
-            wait_and_resolve(&client, "test-req", false),
+            wait_and_resolve(&client, "test-req", false, &progress),
         )
         .await;
 
@@ -581,9 +627,10 @@ mod tests {
         });
 
         let client = ServerClient::new(&format!("http://{addr}"), "test-token");
+        let progress = ProgressSink::new(OutputMode::Quiet);
         let result = tokio::time::timeout(
             std::time::Duration::from_secs(5),
-            wait_and_resolve(&client, "test-req", false),
+            wait_and_resolve(&client, "test-req", false, &progress),
         )
         .await;
 

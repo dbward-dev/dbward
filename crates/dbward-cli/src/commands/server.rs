@@ -2,8 +2,10 @@ use std::path::PathBuf;
 use std::process::Command as ProcessCommand;
 
 use clap::Subcommand;
+use serde::Serialize;
 
-use crate::error::CliError;
+use crate::output::CliError;
+use crate::output::{CliResponse, RenderPlan};
 
 #[derive(Subcommand)]
 pub enum ServerAction {
@@ -24,14 +26,33 @@ pub enum ServerAction {
     },
 }
 
-pub async fn run_server_command(action: &ServerAction) -> Result<(), CliError> {
+// ---------------------------------------------------------------------------
+// Output types
+// ---------------------------------------------------------------------------
+
+#[derive(Serialize)]
+pub struct ServerReloadOutput {
+    pub pid: u32,
+    pub signal: String,
+}
+
+// ---------------------------------------------------------------------------
+// Command implementation
+// ---------------------------------------------------------------------------
+
+pub async fn run_server_command(
+    action: &ServerAction,
+) -> Result<CliResponse<ServerReloadOutput>, CliError> {
     match action {
         ServerAction::Start { listen, config } => run_server_start(listen, config).await,
         ServerAction::Reload { pid, server_config } => run_server_reload(*pid, server_config),
     }
 }
 
-async fn run_server_start(listen: &str, config: &str) -> Result<(), CliError> {
+async fn run_server_start(
+    listen: &str,
+    config: &str,
+) -> Result<CliResponse<ServerReloadOutput>, CliError> {
     let binary = find_server_binary()?;
     let status = ProcessCommand::new(&binary)
         .arg("--listen")
@@ -39,11 +60,13 @@ async fn run_server_start(listen: &str, config: &str) -> Result<(), CliError> {
         .arg("--config")
         .arg(config)
         .status()
-        .map_err(|e| CliError::Server(format!("failed to start server: {e}")))?;
+        .map_err(|e| CliError::Internal(format!("failed to start server: {e}")))?;
     if !status.success() {
-        return Err(CliError::Server(format!("server exited with {status}")));
+        return Err(CliError::Internal(format!("server exited with {status}")));
     }
-    Ok(())
+    // Server start is a long-running process; this only returns if it exits cleanly
+    let render = RenderPlan::status("Server exited.");
+    Ok(CliResponse::empty(render))
 }
 
 fn find_server_binary() -> Result<PathBuf, CliError> {
@@ -56,7 +79,10 @@ fn find_server_binary() -> Result<PathBuf, CliError> {
     which_binary("dbward-server")
 }
 
-fn run_server_reload(pid_arg: Option<u32>, config: &str) -> Result<(), CliError> {
+fn run_server_reload(
+    pid_arg: Option<u32>,
+    config: &str,
+) -> Result<CliResponse<ServerReloadOutput>, CliError> {
     #[cfg(unix)]
     {
         use std::io::Read;
@@ -80,7 +106,7 @@ fn run_server_reload(pid_arg: Option<u32>, config: &str) -> Result<(), CliError>
             std::fs::File::open(&pid_path)
                 .and_then(|mut f| f.read_to_string(&mut content))
                 .map_err(|_| {
-                    CliError::Server(format!(
+                    CliError::Internal(format!(
                         "cannot read PID file at {}. Use --pid to specify manually.",
                         pid_path.display()
                     ))
@@ -88,16 +114,20 @@ fn run_server_reload(pid_arg: Option<u32>, config: &str) -> Result<(), CliError>
             content
                 .trim()
                 .parse::<u32>()
-                .map_err(|_| CliError::Server("invalid PID in pid file".into()))?
+                .map_err(|_| CliError::Internal("invalid PID in pid file".into()))?
         };
 
         // Send SIGHUP
         let ret = unsafe { libc::kill(pid as libc::pid_t, libc::SIGHUP) };
         if ret == 0 {
-            println!("✅ Sent SIGHUP to server (PID {pid})");
-            Ok(())
+            let output = ServerReloadOutput {
+                pid,
+                signal: "SIGHUP".into(),
+            };
+            let render = RenderPlan::status(format!("✅ Sent SIGHUP to server (PID {pid})"));
+            Ok(CliResponse::ok(output, render))
         } else {
-            Err(CliError::Server(format!(
+            Err(CliError::Internal(format!(
                 "failed to send SIGHUP to PID {pid}: {}",
                 std::io::Error::last_os_error()
             )))
@@ -106,7 +136,7 @@ fn run_server_reload(pid_arg: Option<u32>, config: &str) -> Result<(), CliError>
     #[cfg(not(unix))]
     {
         let _ = (pid_arg, config);
-        Err(CliError::Server(
+        Err(CliError::Internal(
             "server reload via SIGHUP is only supported on Unix".into(),
         ))
     }
@@ -120,7 +150,7 @@ fn which_binary(name: &str) -> Result<PathBuf, CliError> {
             return Ok(candidate);
         }
     }
-    Err(CliError::Server(format!(
+    Err(CliError::Internal(format!(
         "'{name}' not found. Install it or place it next to the dbward binary."
     )))
 }

@@ -1,53 +1,73 @@
-use crate::error::CliError;
+use serde::Serialize;
+use serde_json::Value;
+
+use crate::output::CliError;
+use crate::output::{CliResponse, RenderPlan, StdoutRender};
 use crate::server_client::ServerClient;
+
+// ---------------------------------------------------------------------------
+// Output type
+// ---------------------------------------------------------------------------
+
+#[derive(Serialize)]
+pub struct PolicyResolveOutput {
+    #[serde(flatten)]
+    pub raw: Value,
+}
+
+// ---------------------------------------------------------------------------
+// Command implementation
+// ---------------------------------------------------------------------------
 
 pub async fn run_resolve(
     sc: &ServerClient,
-    json_output: bool,
     database: &str,
     environment: &str,
     operation: Option<&str>,
-) -> Result<(), CliError> {
-    let mut url = format!("/api/policy-resolution?database={database}&environment={environment}",);
+) -> Result<CliResponse<PolicyResolveOutput>, CliError> {
+    let mut url = format!("/api/policy-resolution?database={database}&environment={environment}");
     if let Some(op) = operation {
         url.push_str(&format!("&operation={op}"));
     }
 
     let resp = sc.get_json(&url).await?;
 
-    if json_output {
-        println!("{}", serde_json::to_string_pretty(&resp)?);
-        return Ok(());
-    }
+    // Build human-readable key-value output
+    let mut lines = Vec::new();
 
-    // Human output
     let db = resp["database"].as_str().unwrap_or("");
     let env = resp["environment"].as_str().unwrap_or("");
     let registered = resp["registered"].as_bool().unwrap_or(false);
 
     if !registered {
-        println!("Database:    {db}");
-        println!("Environment: {env}");
-        println!("Decision:    deny (database not registered)");
-        return Ok(());
+        lines.push(format!("Database:    {db}"));
+        lines.push(format!("Environment: {env}"));
+        lines.push("Decision:    deny (database not registered)".into());
+        let render = RenderPlan {
+            stdout: StdoutRender::Raw {
+                value: lines.join("\n"),
+            },
+            stderr: vec![],
+        };
+        return Ok(CliResponse::ok(PolicyResolveOutput { raw: resp }, render));
     }
 
     // Matrix mode
     if let Some(resolutions) = resp["resolutions"].as_array() {
-        println!("Database:    {db}");
-        println!("Environment: {env}");
-        println!();
-        // Compute column widths based on data
+        lines.push(format!("Database:    {db}"));
+        lines.push(format!("Environment: {env}"));
+        lines.push(String::new());
+
         let wf_width = resolutions
             .iter()
             .map(|r| r["workflow_id"].as_str().unwrap_or("-").len())
             .max()
             .unwrap_or(8)
             .max(8);
-        println!(
+        lines.push(format!(
             "  {:<16} {:<wf_width$} {:<16} DECISION",
             "OPERATION", "WORKFLOW", "MATCHED BY"
-        );
+        ));
         for r in resolutions {
             let op = r["operation"].as_str().unwrap_or("");
             let wf_id = r["workflow_id"].as_str().unwrap_or("-");
@@ -59,9 +79,17 @@ pub async fn run_resolve(
             } else {
                 format!("{decision} ({reason})")
             };
-            println!("  {op:<16} {wf_id:<wf_width$} {matched:<16} {decision_display}");
+            lines.push(format!(
+                "  {op:<16} {wf_id:<wf_width$} {matched:<16} {decision_display}"
+            ));
         }
-        return Ok(());
+        let render = RenderPlan {
+            stdout: StdoutRender::Raw {
+                value: lines.join("\n"),
+            },
+            stderr: vec![],
+        };
+        return Ok(CliResponse::ok(PolicyResolveOutput { raw: resp }, render));
     }
 
     // Single operation mode
@@ -69,16 +97,18 @@ pub async fn run_resolve(
     let decision = resp["decision_preview"].as_str().unwrap_or("");
     let reason = resp["reason_code"].as_str().unwrap_or("");
 
-    println!("Database:    {db}");
-    println!("Environment: {env}");
-    println!("Operation:   {op}");
+    lines.push(format!("Database:    {db}"));
+    lines.push(format!("Environment: {env}"));
+    lines.push(format!("Operation:   {op}"));
 
     if let Some(wf) = resp["workflow"].as_object() {
         let wf_id = wf.get("id").and_then(|v| v.as_str()).unwrap_or("");
         let matched_by = wf.get("matched_by").and_then(|v| v.as_str()).unwrap_or("");
         let steps = wf.get("steps").and_then(|v| v.as_array());
         let step_count = steps.map(|s| s.len()).unwrap_or(0);
-        println!("Workflow:    {wf_id} (matched by {matched_by}, {step_count} step(s))");
+        lines.push(format!(
+            "Workflow:    {wf_id} (matched by {matched_by}, {step_count} step(s))"
+        ));
         if let Some(steps) = steps {
             for (i, step) in steps.iter().enumerate() {
                 let approvers = step["approvers"]
@@ -92,11 +122,14 @@ pub async fn run_resolve(
                     .unwrap_or_default();
                 let mode = step["mode"].as_str().unwrap_or("all");
                 let min = step["min"].as_u64().unwrap_or(1);
-                println!("  Step {}:    {} ({mode}, min {min})", i + 1, approvers);
+                lines.push(format!(
+                    "  Step {}:    {} ({mode}, min {min})",
+                    i + 1,
+                    approvers
+                ));
             }
         }
 
-        // Only show auto_approve / execution_policy when workflow matched
         if let Some(aa) = resp["auto_approve"].as_object() {
             let mode = aa.get("mode").and_then(|v| v.as_str()).unwrap_or("unknown");
             let display = match mode {
@@ -128,9 +161,9 @@ pub async fn run_resolve(
             } else {
                 format!(" ({})", flags.join(", "))
             };
-            println!("Auto-approve: {display}{flags_str}");
+            lines.push(format!("Auto-approve: {display}{flags_str}"));
         } else if resp.get("auto_approve").is_some_and(|v| v.is_null()) {
-            println!("Auto-approve: disabled (no auto_approve configured)");
+            lines.push("Auto-approve: disabled (no auto_approve configured)".into());
         }
 
         if let Some(ep) = resp["execution_policy"].as_object() {
@@ -138,17 +171,17 @@ pub async fn run_resolve(
                 .get("statement_timeout_secs")
                 .and_then(|v| v.as_u64())
                 .unwrap_or(30);
-            println!("Timeout:     {timeout}s");
+            lines.push(format!("Timeout:     {timeout}s"));
             let mig_timeout = ep
                 .get("migration_statement_timeout_secs")
                 .and_then(|v| v.as_u64());
             match mig_timeout {
-                Some(0) | None => println!("Mig timeout: unlimited"),
-                Some(t) => println!("Mig timeout: {t}s"),
+                Some(0) | None => lines.push("Mig timeout: unlimited".into()),
+                Some(t) => lines.push(format!("Mig timeout: {t}s")),
             }
         }
     } else {
-        println!("Workflow:    none");
+        lines.push("Workflow:    none".into());
     }
 
     let reason_display = match reason {
@@ -159,7 +192,13 @@ pub async fn run_resolve(
         "db_not_registered" => "database not registered",
         other => other,
     };
-    println!("Decision:    {decision} ({reason_display})");
+    lines.push(format!("Decision:    {decision} ({reason_display})"));
 
-    Ok(())
+    let render = RenderPlan {
+        stdout: StdoutRender::Raw {
+            value: lines.join("\n"),
+        },
+        stderr: vec![],
+    };
+    Ok(CliResponse::ok(PolicyResolveOutput { raw: resp }, render))
 }

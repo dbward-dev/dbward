@@ -1,7 +1,9 @@
 use clap::Subcommand;
 use percent_encoding::{NON_ALPHANUMERIC, utf8_percent_encode};
+use serde::Serialize;
 
-use crate::error::CliError;
+use crate::output::CliError;
+use crate::output::{CliResponse, RenderPlan, StderrLine, StdoutRender};
 
 #[derive(Clone, Subcommand)]
 pub enum SlackAction {
@@ -22,14 +24,29 @@ pub enum SlackAction {
     },
 }
 
-pub async fn run(action: SlackAction, json_output: bool) -> Result<(), CliError> {
+// ---------------------------------------------------------------------------
+// Output type
+// ---------------------------------------------------------------------------
+
+#[derive(Serialize)]
+pub struct SlackInitOutput {
+    pub manifest_yaml: String,
+    pub create_url: String,
+    pub next_steps: Vec<String>,
+}
+
+// ---------------------------------------------------------------------------
+// Command implementation
+// ---------------------------------------------------------------------------
+
+pub async fn run(action: SlackAction) -> Result<CliResponse<SlackInitOutput>, CliError> {
     match action {
         SlackAction::Init {
             server_url,
             app_name,
             open,
             manifest_only,
-        } => run_init(&server_url, &app_name, open, manifest_only, json_output),
+        } => run_init(&server_url, &app_name, open, manifest_only),
     }
 }
 
@@ -38,68 +55,81 @@ fn run_init(
     app_name: &str,
     open_browser: bool,
     manifest_only: bool,
-    json_output: bool,
-) -> Result<(), CliError> {
+) -> Result<CliResponse<SlackInitOutput>, CliError> {
     let server_url = validate_and_normalize_url(server_url)?;
     validate_app_name(app_name)?;
     let manifest = generate_manifest(&server_url, app_name);
 
-    if manifest_only {
-        print!("{manifest}");
-        return Ok(());
-    }
-
     let encoded = utf8_percent_encode(&manifest, NON_ALPHANUMERIC).to_string();
     let create_url = format!("https://api.slack.com/apps?new_app=1&manifest_yaml={encoded}");
 
-    if json_output {
-        let output = serde_json::json!({
-            "manifest_yaml": manifest,
-            "create_url": create_url,
-            "next_steps": [
-                "Create app via URL",
-                "Copy Signing Secret",
-                "Install to Workspace",
-                "Copy Bot Token",
-                "Configure server.toml"
-            ]
-        });
-        println!("{}", serde_json::to_string_pretty(&output).unwrap());
+    let next_steps = vec![
+        "Create app via URL".into(),
+        "Copy Signing Secret".into(),
+        "Install to Workspace".into(),
+        "Copy Bot Token".into(),
+        "Configure server.toml".into(),
+    ];
+
+    let output = SlackInitOutput {
+        manifest_yaml: manifest.clone(),
+        create_url: create_url.clone(),
+        next_steps: next_steps.clone(),
+    };
+
+    let render = if manifest_only {
+        RenderPlan {
+            stdout: StdoutRender::Raw { value: manifest },
+            stderr: vec![],
+        }
     } else {
-        eprintln!("dbward slack init — Slack App Setup\n");
-        eprintln!("Manifest generated for: {server_url}\n");
-        eprintln!("Next steps:\n");
-        eprintln!("  1. Open this URL to create your Slack App:");
-        eprintln!("     {create_url}\n");
-        eprintln!("  2. Select your workspace → Click \"Create\"\n");
-        eprintln!("  3. Go to \"Basic Information\" and copy:");
-        eprintln!("     • Signing Secret → server.toml [slack] signing_secret\n");
-        eprintln!("  4. Go to \"Install App\" → \"Install to Workspace\"\n");
-        eprintln!(
-            "  5. Copy the Bot User OAuth Token (xoxb-...) → server.toml [slack] bot_token\n"
-        );
-        eprintln!("  6. Add to your server.toml:\n");
-        eprintln!("     [slack]");
-        eprintln!(
-            "     bot_token = \"\"           # paste xoxb-... token here (or use ${{SLACK_BOT_TOKEN}})"
-        );
-        eprintln!(
-            "     signing_secret = \"\"      # paste signing secret here (or use ${{SLACK_SIGNING_SECRET}})"
-        );
-        eprintln!(
-            "     channel = \"C0123ABC456\"  # Channel ID (right-click channel → View channel details → copy ID)\n"
-        );
-        eprintln!("  7. Invite the bot to your channel:");
-        eprintln!("     /invite @{app_name}\n");
-        eprintln!("Done! Run `dbward doctor --server server.toml` to verify.");
-    }
+        let stderr = vec![
+            StderrLine::Status("dbward slack init — Slack App Setup".into()),
+            StderrLine::Status(String::new()),
+            StderrLine::Status(format!("Manifest generated for: {server_url}")),
+            StderrLine::Status(String::new()),
+            StderrLine::Status("Next steps:".into()),
+            StderrLine::Status(String::new()),
+            StderrLine::Status("  1. Open this URL to create your Slack App:".into()),
+            StderrLine::Status(format!("     {create_url}")),
+            StderrLine::Status(String::new()),
+            StderrLine::Status("  2. Select your workspace → Click \"Create\"".into()),
+            StderrLine::Status(String::new()),
+            StderrLine::Status("  3. Go to \"Basic Information\" and copy:".into()),
+            StderrLine::Status("     • Signing Secret → server.toml [slack] signing_secret".into()),
+            StderrLine::Status(String::new()),
+            StderrLine::Status("  4. Go to \"Install App\" → \"Install to Workspace\"".into()),
+            StderrLine::Status(String::new()),
+            StderrLine::Status("  5. Copy the Bot User OAuth Token (xoxb-...) → server.toml [slack] bot_token".into()),
+            StderrLine::Status(String::new()),
+            StderrLine::Status("  6. Add to your server.toml:".into()),
+            StderrLine::Status(String::new()),
+            StderrLine::Status("     [slack]".into()),
+            StderrLine::Status("     bot_token = \"\"           # paste xoxb-... token here (or use ${SLACK_BOT_TOKEN})".into()),
+            StderrLine::Status("     signing_secret = \"\"      # paste signing secret here (or use ${SLACK_SIGNING_SECRET})".into()),
+            StderrLine::Status("     channel = \"C0123ABC456\"  # Channel ID (right-click channel → View channel details → copy ID)".into()),
+            StderrLine::Status(String::new()),
+            StderrLine::Status("  7. Invite the bot to your channel:".to_string()),
+            StderrLine::Status(format!("     /invite @{app_name}")),
+            StderrLine::Status(String::new()),
+            StderrLine::Status("Done! Run `dbward doctor --server server.toml` to verify.".into()),
+        ];
+
+        RenderPlan {
+            stdout: StdoutRender::None,
+            stderr,
+        }
+    };
 
     if open_browser && let Err(e) = open::that(&create_url) {
-        eprintln!("warning: failed to open browser: {e}");
-        eprintln!("         Open the URL above manually.");
+        // Non-fatal warning added to the response.
+        let resp = CliResponse::ok(output, render).with_warning(format!(
+            "failed to open browser: {e}. Open the URL above manually."
+        ));
+        return Ok(resp);
     }
 
-    Ok(())
+    Ok(CliResponse::ok(output, render))
 }
 
 fn validate_and_normalize_url(url: &str) -> Result<String, CliError> {

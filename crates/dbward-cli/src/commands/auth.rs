@@ -1,8 +1,25 @@
 use std::io::{self, BufRead, Write};
 use std::path::{Path, PathBuf};
 
+use serde::Serialize;
+
 use super::Cli;
-use crate::error::CliError;
+use crate::output::CliError;
+use crate::output::{CliResponse, OutputMode, RenderPlan, StderrLine, StdoutRender};
+
+// ---------------------------------------------------------------------------
+// Output types
+// ---------------------------------------------------------------------------
+
+#[derive(Serialize)]
+pub struct InitOutput {
+    pub files_created: Vec<String>,
+    pub preset: Option<String>,
+}
+
+// ---------------------------------------------------------------------------
+// Command implementation
+// ---------------------------------------------------------------------------
 
 pub fn run_init(
     cli: &Cli,
@@ -11,7 +28,15 @@ pub fn run_init(
     preset: Option<&str>,
     output_dir: &Path,
     dry_run: bool,
-) -> Result<(), CliError> {
+    mode: OutputMode,
+) -> Result<CliResponse<InitOutput>, CliError> {
+    // Interactive prompts are not possible in json/quiet mode
+    if !non_interactive && mode != OutputMode::Human {
+        return Err(CliError::Config(
+            "init requires --non-interactive in json/quiet mode".into(),
+        ));
+    }
+
     match preset {
         Some("small-team") => run_preset_small_team(non_interactive, force, output_dir, dry_run),
         Some(other) => Err(CliError::Config(format!(
@@ -25,7 +50,11 @@ pub fn run_init(
 // Basic init (existing behavior)
 // ---------------------------------------------------------------------------
 
-fn run_basic_init(cli: &Cli, non_interactive: bool, force: bool) -> Result<(), CliError> {
+fn run_basic_init(
+    cli: &Cli,
+    non_interactive: bool,
+    force: bool,
+) -> Result<CliResponse<InitOutput>, CliError> {
     // Standalone mode: write single file (backward compat)
     if let Some(ref config_path) = cli.config {
         if config_path.exists() && !force {
@@ -46,18 +75,28 @@ url = "{server_url}"
 "#
         );
         std::fs::write(config_path, content.trim_end())?;
-        eprintln!("Created {}", config_path.display());
-        return Ok(());
+
+        let output = InitOutput {
+            files_created: vec![config_path.display().to_string()],
+            preset: None,
+        };
+        let render = RenderPlan::status(format!("Created {}", config_path.display()));
+        return Ok(CliResponse::ok(output, render));
     }
 
     // Auto-detect mode: global + project
     let (server_url, db_name) = prompt_inputs(non_interactive)?;
+    let mut files_created = Vec::new();
 
     // 1. Global config
     let global_dir = crate::config::global_config_dir();
     let global_path = global_dir.join("config.toml");
+    let mut stderr = Vec::new();
     if global_path.exists() && !force {
-        eprintln!("ℹ Using existing server config: {}", global_path.display());
+        stderr.push(StderrLine::Status(format!(
+            "ℹ Using existing server config: {}",
+            global_path.display()
+        )));
     } else {
         std::fs::create_dir_all(&global_dir)?;
         let global_content = format!(
@@ -73,7 +112,11 @@ url = "{server_url}"
             let _ = std::fs::set_permissions(&global_dir, std::fs::Permissions::from_mode(0o700));
             let _ = std::fs::set_permissions(&global_path, std::fs::Permissions::from_mode(0o600));
         }
-        eprintln!("✓ Created {}", global_path.display());
+        files_created.push(global_path.display().to_string());
+        stderr.push(StderrLine::Status(format!(
+            "✓ Created {}",
+            global_path.display()
+        )));
     }
 
     // 2. Project config
@@ -92,8 +135,21 @@ migrations_dir = "migrations"
 "#
     );
     std::fs::write(&project_path, project_content.trim_end())?;
-    eprintln!("✓ Created {}", project_path.display());
-    Ok(())
+    files_created.push(project_path.display().to_string());
+    stderr.push(StderrLine::Status(format!(
+        "✓ Created {}",
+        project_path.display()
+    )));
+
+    let output = InitOutput {
+        files_created,
+        preset: None,
+    };
+    let render = RenderPlan {
+        stdout: StdoutRender::None,
+        stderr,
+    };
+    Ok(CliResponse::ok(output, render))
 }
 
 // ---------------------------------------------------------------------------
@@ -105,7 +161,7 @@ fn run_preset_small_team(
     force: bool,
     output_dir: &Path,
     dry_run: bool,
-) -> Result<(), CliError> {
+) -> Result<CliResponse<InitOutput>, CliError> {
     let (server_url, db_name) = prompt_inputs(non_interactive)?;
     validate_db_name(&db_name)?;
     validate_server_url(&server_url)?;
@@ -113,11 +169,22 @@ fn run_preset_small_team(
     let files = generate_small_team(&server_url, &db_name);
 
     if dry_run {
+        let mut stdout_lines = Vec::new();
         for (name, content) in &files {
-            println!("# --- {name} ---");
-            println!("{content}");
+            stdout_lines.push(format!("# --- {name} ---"));
+            stdout_lines.push(content.clone());
         }
-        return Ok(());
+        let output = InitOutput {
+            files_created: files.iter().map(|(n, _)| n.to_string()).collect(),
+            preset: Some("small-team".into()),
+        };
+        let render = RenderPlan {
+            stdout: StdoutRender::Raw {
+                value: stdout_lines.join("\n"),
+            },
+            stderr: vec![],
+        };
+        return Ok(CliResponse::ok(output, render));
     }
 
     // Ensure output dir exists before conflict check
@@ -138,7 +205,7 @@ fn run_preset_small_team(
 
     // Atomic write: tmpdir on same filesystem + rename
     let tmp_dir = tempfile::tempdir_in(output_dir)
-        .map_err(|e| CliError::Other(format!("failed to create temp dir: {e}")))?;
+        .map_err(|e| CliError::Internal(format!("failed to create temp dir: {e}")))?;
     for (name, content) in &files {
         let tmp_path = tmp_dir.path().join(name);
         std::fs::write(&tmp_path, content)?;
@@ -147,28 +214,49 @@ fn run_preset_small_team(
         let src = tmp_dir.path().join(name);
         let dst = output_dir.join(name);
         std::fs::rename(&src, &dst)
-            .map_err(|e| CliError::Other(format!("failed to write {}: {e}", dst.display())))?;
+            .map_err(|e| CliError::Internal(format!("failed to write {}: {e}", dst.display())))?;
     }
 
-    eprintln!("\n✓ Created dbward.toml, server.toml, agent.toml");
-    eprintln!();
-    eprintln!("━━ Required ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
-    eprintln!("  agent.toml:  Set DATABASE_URL_* env vars for target databases");
-    eprintln!("  dbward.toml: API token will be generated in step 1 below");
-    eprintln!();
-    eprintln!("━━ Next steps ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
-    eprintln!("  1. dbward-server --config server.toml");
-    eprintln!("     → First run auto-creates tokens in /data/");
-    eprintln!("  2. Set CLI token in dbward.toml: token = \"$(cat /data/admin-token)\"");
-    eprintln!("  3. DBWARD_AGENT_TOKEN=$(cat /data/agent-token) dbward-agent --config agent.toml");
-    eprintln!("  4. dbward doctor        # verify connectivity + config");
-    eprintln!("  5. dbward execute \"SELECT 1\"");
-    eprintln!();
-    eprintln!("━━ Optional tuning ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
-    eprintln!("  server.toml: team roles, approval rules, auto-approve thresholds");
-    eprintln!();
-    eprintln!("Docs: https://github.com/dbward-dev/dbward/blob/main/docs/getting-started.md");
-    Ok(())
+    let output = InitOutput {
+        files_created: files.iter().map(|(n, _)| n.to_string()).collect(),
+        preset: Some("small-team".into()),
+    };
+    let render = RenderPlan {
+        stdout: StdoutRender::None,
+        stderr: vec![
+            StderrLine::Status("✓ Created dbward.toml, server.toml, agent.toml".into()),
+            StderrLine::Status(String::new()),
+            StderrLine::Status("━━ Required ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━".into()),
+            StderrLine::Status(
+                "  agent.toml:  Set DATABASE_URL_* env vars for target databases".into(),
+            ),
+            StderrLine::Status("  dbward.toml: API token will be generated in step 1 below".into()),
+            StderrLine::Status(String::new()),
+            StderrLine::Status("━━ Next steps ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━".into()),
+            StderrLine::Status("  1. dbward-server --config server.toml".into()),
+            StderrLine::Status("     → First run auto-creates tokens in /data/".into()),
+            StderrLine::Status(
+                "  2. Set CLI token in dbward.toml: token = \"$(cat /data/admin-token)\"".into(),
+            ),
+            StderrLine::Status(
+                "  3. DBWARD_AGENT_TOKEN=$(cat /data/agent-token) dbward-agent --config agent.toml"
+                    .into(),
+            ),
+            StderrLine::Status("  4. dbward doctor        # verify connectivity + config".into()),
+            StderrLine::Status("  5. dbward execute \"SELECT 1\"".into()),
+            StderrLine::Status(String::new()),
+            StderrLine::Status("━━ Optional tuning ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━".into()),
+            StderrLine::Status(
+                "  server.toml: team roles, approval rules, auto-approve thresholds".into(),
+            ),
+            StderrLine::Status(String::new()),
+            StderrLine::Hint(
+                "Docs: https://github.com/dbward-dev/dbward/blob/main/docs/getting-started.md"
+                    .into(),
+            ),
+        ],
+    };
+    Ok(CliResponse::ok(output, render))
 }
 
 fn generate_small_team(server_url: &str, db_name: &str) -> Vec<(&'static str, String)> {
@@ -389,17 +477,20 @@ mod tests {
     #[test]
     fn preset_writes_files_to_output_dir() {
         let dir = tempfile::tempdir().unwrap();
-        run_preset_small_team(true, false, dir.path(), false).unwrap();
+        let resp = run_preset_small_team(true, false, dir.path(), false).unwrap();
         assert!(dir.path().join("dbward.toml").exists());
         assert!(dir.path().join("server.toml").exists());
         assert!(dir.path().join("agent.toml").exists());
+        assert!(resp.data.is_some());
     }
 
     #[test]
     fn preset_conflict_without_force() {
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(dir.path().join("server.toml"), "existing").unwrap();
-        let err = run_preset_small_team(true, false, dir.path(), false).unwrap_err();
+        let result = run_preset_small_team(true, false, dir.path(), false);
+        assert!(result.is_err());
+        let err = result.err().unwrap();
         assert!(err.to_string().contains("already exists"));
     }
 }
