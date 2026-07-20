@@ -156,7 +156,7 @@ min = 1
 | `steps` | Step[] | | `[]` | Approval steps. Requires `[workflows.auto_approve]` if empty. |
 | `require_reason` | bool | | `false` | Reject requests without `--reason`. |
 | `allow_self_approve` | bool | | `false` | Allow requester to approve own request. |
-| `allow_same_approver_across_steps` | bool | | `true` | Allow same person to approve multiple steps. |
+| `allow_same_approver_across_steps` | bool | | `false` | Allow same person to approve multiple steps. |
 | `explain` | bool | | `true` | Auto-run EXPLAIN on request creation. |
 | `pending_ttl_secs` | u64 | | — | Request expires if not approved within this window. Falls back to `retention.approval_ttl_secs`. |
 | `statement_timeout_secs` | u64 | | — | Override agent's statement timeout. Capped by `execution_policies.max_statement_timeout_secs`. |

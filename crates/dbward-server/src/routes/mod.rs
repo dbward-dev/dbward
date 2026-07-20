@@ -72,7 +72,9 @@ fn map_error(e: AppError) -> (StatusCode, Json<serde_json::Value>) {
     let code = e.code();
     let hint: Option<String> = match &e {
         AppError::Forbidden(_) => Some("check your role permissions".into()),
-        AppError::PlanLimit(_) => Some("delete inactive users via DELETE /api/users/{id}, or upgrade to Pro plan".into()),
+        AppError::PlanLimit(_) => {
+            Some("delete inactive users via DELETE /api/users/{id}, or upgrade to Pro plan".into())
+        }
         AppError::Conflict(_) => Some("request may have been modified concurrently".into()),
         AppError::Validation(msg) if msg == "reason_required" => {
             Some("This workflow requires a reason. Pass the 'reason' parameter.".into())

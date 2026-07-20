@@ -99,7 +99,13 @@ impl WebhookDispatcher {
 
 #[async_trait::async_trait]
 impl dbward_app::ports::WebhookSender for WebhookDispatcher {
-    async fn send_one(&self, url: &str, body: &str, secret: Option<&str>, event_type: Option<&str>) -> Result<(), String> {
+    async fn send_one(
+        &self,
+        url: &str,
+        body: &str,
+        secret: Option<&str>,
+        event_type: Option<&str>,
+    ) -> Result<(), String> {
         self.send_one(url, body, secret, event_type).await
     }
 }
@@ -151,7 +157,8 @@ impl Notifier for WebhookDispatcher {
                 let repo = repo.clone();
                 let et = event_type.clone();
                 tokio::spawn(async move {
-                    match send_with_retry(&client, &url, &body, secret.as_deref(), Some(&et)).await {
+                    match send_with_retry(&client, &url, &body, secret.as_deref(), Some(&et)).await
+                    {
                         Ok(()) => {
                             let now = chrono::Utc::now().to_rfc3339();
                             if let Err(e) = repo.mark_delivered(&delivery_id, &now) {
@@ -173,7 +180,9 @@ impl Notifier for WebhookDispatcher {
                 });
             } else {
                 tokio::spawn(async move {
-                    let _ = send_with_retry(&client, &url, &body, secret.as_deref(), Some(&event_type)).await;
+                    let _ =
+                        send_with_retry(&client, &url, &body, secret.as_deref(), Some(&event_type))
+                            .await;
                 });
             }
         }

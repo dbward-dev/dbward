@@ -70,7 +70,12 @@ pub(crate) async fn run_webhook_retry_once(state: &AppState) -> TickResult {
                     let send_result = state
                         .background()
                         .webhook_sender()
-                        .send_one(&url, &delivery.payload, secret.as_deref(), Some(&delivery.event_type))
+                        .send_one(
+                            &url,
+                            &delivery.payload,
+                            secret.as_deref(),
+                            Some(&delivery.event_type),
+                        )
                         .await;
                     match send_result {
                         Ok(()) => {
