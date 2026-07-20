@@ -2,71 +2,6 @@ use std::path::{Path, PathBuf};
 
 use crate::output::CliError;
 
-#[allow(dead_code)]
-pub struct SubmissionSummary<'a> {
-    pub operation: &'a str,
-    pub database: &'a str,
-    pub environment: &'a str,
-    pub detail: &'a str,
-    pub emergency: bool,
-}
-
-/// Display submission summary and prompt for confirmation.
-/// Returns Ok(()) if confirmed, Err if rejected or non-interactive without skip.
-#[allow(dead_code)]
-pub fn confirm_submission(summary: &SubmissionSummary, skip: bool) -> Result<(), CliError> {
-    if skip {
-        if std::env::var_os("DBWARD_YES").is_some() {
-            eprintln!("note: confirmation skipped (DBWARD_YES)");
-        }
-        return Ok(());
-    }
-
-    if !std::io::IsTerminal::is_terminal(&std::io::stdin()) {
-        return Err(CliError::Internal(
-            "interactive confirmation required but stdin is not a terminal. Use --yes to skip."
-                .into(),
-        ));
-    }
-
-    eprintln!();
-    eprintln!("  Operation:   {}", summary.operation);
-    eprintln!("  Database:    {}", summary.database);
-    eprintln!("  Environment: {}", summary.environment);
-    if summary.emergency {
-        eprintln!("  Mode:        \u{26a0} EMERGENCY (bypass approval)");
-    }
-    let detail_display = truncate_detail(summary.detail, 200);
-    if !detail_display.is_empty() {
-        eprintln!("  Detail:      {}", detail_display);
-    }
-    eprintln!();
-    eprint!("Submit this request? [y/N] ");
-
-    let mut input = String::new();
-    std::io::stdin()
-        .read_line(&mut input)
-        .map_err(|e| CliError::Internal(format!("failed to read input: {e}")))?;
-
-    match input.trim().to_lowercase().as_str() {
-        "y" | "yes" => Ok(()),
-        _ => Err(CliError::Internal("aborted by user".into())),
-    }
-}
-
-fn truncate_detail(s: &str, max: usize) -> String {
-    if s.len() <= max {
-        return s.to_string();
-    }
-    let boundary = s
-        .char_indices()
-        .take_while(|(i, _)| *i <= max)
-        .last()
-        .map(|(i, _)| i)
-        .unwrap_or(0);
-    format!("{}…", &s[..boundary])
-}
-
 pub fn build_request_metadata(
     ticket: Option<&str>,
     repo: Option<&str>,
@@ -192,62 +127,6 @@ mod tests {
 
     fn sample_result() -> serde_json::Value {
         serde_json::json!({"success": true, "result": {"rows": []}})
-    }
-
-    #[test]
-    fn confirm_submission_skip_true_returns_ok() {
-        let summary = SubmissionSummary {
-            operation: "execute_query",
-            database: "app",
-            environment: "production",
-            detail: "SELECT 1",
-            emergency: false,
-        };
-        assert!(confirm_submission(&summary, true).is_ok());
-    }
-
-    #[test]
-    fn confirm_submission_non_tty_without_skip_returns_error() {
-        // CI environments typically don't have a tty on stdin
-        if std::io::IsTerminal::is_terminal(&std::io::stdin()) {
-            // Skip in interactive terminals
-            return;
-        }
-        let summary = SubmissionSummary {
-            operation: "execute_query",
-            database: "app",
-            environment: "production",
-            detail: "DELETE FROM users",
-            emergency: true,
-        };
-        let result = confirm_submission(&summary, false);
-        assert!(result.is_err());
-        let err = result.unwrap_err();
-        assert!(err.to_string().contains("not a terminal"));
-    }
-
-    #[test]
-    fn truncate_detail_short_string_unchanged() {
-        assert_eq!(truncate_detail("hello", 200), "hello");
-    }
-
-    #[test]
-    fn truncate_detail_long_string_truncated() {
-        let long = "a".repeat(300);
-        let result = truncate_detail(&long, 200);
-        assert!(result.len() <= 204); // 200 + "…" (3 bytes)
-        assert!(result.ends_with('…'));
-    }
-
-    #[test]
-    fn truncate_detail_multibyte_boundary_safe() {
-        // Japanese chars are 3 bytes each
-        let jp = "あ".repeat(100); // 300 bytes
-        let result = truncate_detail(&jp, 200);
-        // Must be valid UTF-8 and end with …
-        assert!(result.ends_with('…'));
-        // The truncated part should be valid (no panics from mid-char slicing)
-        assert!(result.len() <= 203);
     }
 
     #[test]
