@@ -2,7 +2,7 @@ use std::path::Path;
 
 use serde_json::Value;
 
-use crate::error::CliError;
+use crate::output::CliError;
 use crate::output::{CliResponse, OutputMode, RenderPlan, StderrLine, StdoutRender};
 use crate::server_client::{CreateRequest, ServerClient};
 
@@ -48,8 +48,8 @@ pub async fn run_execute(
 
     // Confirmation: use confirm_or_reject for non-interactive safety
     crate::output::confirm_or_reject(mode, yes).map_err(|e| match e {
-        crate::output::CliError::Blocked { reason } => CliError::Other(reason),
-        other => CliError::Other(other.to_string()),
+        crate::output::CliError::Blocked { reason } => CliError::Blocked { reason },
+        other => CliError::Internal(other.to_string()),
     })?;
 
     let metadata = build_request_metadata(ticket, repo);
@@ -96,10 +96,7 @@ pub async fn run_execute(
                 return Ok(resp);
             }
             _ = tokio::time::sleep(std::time::Duration::from_secs(secs)) => {
-                return Err(CliError::Other(format!(
-                    "timed out after {secs}s waiting for completion. \
-                     Request may still be in progress. Check: dbward request list"
-                )));
+                return Err(CliError::Timeout { seconds: secs });
             }
         }
     } else {
@@ -146,20 +143,25 @@ pub async fn run_execute(
                 "status": "pending_approval",
                 "approvers": approvers,
             });
-            let mut stderr = vec![
-                StderrLine::Status(format!("Request {request_id} requires approval.")),
-            ];
+            let mut stderr = vec![StderrLine::Status(format!(
+                "Request {request_id} requires approval."
+            ))];
             if !approvers.is_empty() {
                 stderr.push(StderrLine::Info("Approvers".into(), approvers.join(", ")));
             }
-            stderr.push(StderrLine::Hint(format!("Run: dbward request resume {request_id}")));
+            stderr.push(StderrLine::Hint(format!(
+                "Run: dbward request resume {request_id}"
+            )));
 
             let render = RenderPlan {
                 stdout: StdoutRender::None,
                 stderr,
             };
-            CliResponse::ok(output, render)
-                .with_issues(2, "pending_approval", format!("request {request_id} requires approval"))
+            CliResponse::ok(output, render).with_issues(
+                2,
+                "pending_approval",
+                format!("request {request_id} requires approval"),
+            )
         }
         Outcome::Approved { request_id } => {
             let output = serde_json::json!({
@@ -169,7 +171,9 @@ pub async fn run_execute(
             let render = RenderPlan {
                 stdout: StdoutRender::None,
                 stderr: vec![
-                    StderrLine::Status(format!("Request {request_id} is approved but not yet resumed.")),
+                    StderrLine::Status(format!(
+                        "Request {request_id} is approved but not yet resumed."
+                    )),
                     StderrLine::Hint(format!("Run: dbward request resume {request_id}")),
                 ],
             };

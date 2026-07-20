@@ -3,7 +3,7 @@ use clap::Subcommand;
 use serde::Serialize;
 use serde_json::{Value, json};
 
-use crate::error::CliError;
+use crate::output::CliError;
 use crate::output::{CliResponse, Column, RenderPlan, StderrLine};
 use crate::server_client::ServerClient;
 
@@ -119,6 +119,7 @@ pub struct TokenInspectOutput {
 // Command implementations
 // ---------------------------------------------------------------------------
 
+#[allow(clippy::too_many_arguments)]
 pub async fn run_token_create(
     client: &ServerClient,
     subject: Option<&str>,
@@ -182,7 +183,11 @@ pub async fn run_token_create(
     let prefix = resp["prefix"].as_str().unwrap_or("-").to_string();
     let ceiling: Vec<String> = resp["scope_ceiling"]["roles"]
         .as_array()
-        .map(|a| a.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+        .map(|a| {
+            a.iter()
+                .filter_map(|v| v.as_str().map(String::from))
+                .collect()
+        })
         .unwrap_or_default();
 
     let output = TokenCreateOutput {
@@ -201,10 +206,17 @@ pub async fn run_token_create(
             StderrLine::Status("Token created successfully.".into()),
             StderrLine::Info("ID".into(), id),
             StderrLine::Info("Prefix".into(), prefix),
-            StderrLine::Info("Subject".into(), format!("{resolved_subject} ({subject_type})")),
+            StderrLine::Info(
+                "Subject".into(),
+                format!("{resolved_subject} ({subject_type})"),
+            ),
             StderrLine::Info(
                 "Ceiling".into(),
-                if ceiling.is_empty() { "unrestricted".into() } else { ceiling.join(", ") },
+                if ceiling.is_empty() {
+                    "unrestricted".into()
+                } else {
+                    ceiling.join(", ")
+                },
             ),
             StderrLine::Info(
                 "Expires".into(),
@@ -248,11 +260,17 @@ pub async fn run_token_list(
             subject_type: t["subject_type"].as_str().unwrap_or("-").to_string(),
             ceiling: t["scope_ceiling"]["roles"]
                 .as_array()
-                .map(|a| a.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+                .map(|a| {
+                    a.iter()
+                        .filter_map(|v| v.as_str().map(String::from))
+                        .collect()
+                })
                 .unwrap_or_default(),
             name: t["name"].as_str().unwrap_or("-").to_string(),
             status: t["status"].as_str().unwrap_or("-").to_string(),
-            expires_at: t["expires_at"].as_str().map(|s| s[..10.min(s.len())].to_string()),
+            expires_at: t["expires_at"]
+                .as_str()
+                .map(|s| s[..10.min(s.len())].to_string()),
         })
         .collect();
 
@@ -277,7 +295,11 @@ pub async fn run_token_list(
                     t.prefix.clone(),
                     t.subject.clone(),
                     t.subject_type.clone(),
-                    if t.ceiling.is_empty() { "none".to_string() } else { t.ceiling.join(",") },
+                    if t.ceiling.is_empty() {
+                        "none".to_string()
+                    } else {
+                        t.ceiling.join(",")
+                    },
                     t.name.clone(),
                     t.status.clone(),
                     t.expires_at.clone().unwrap_or_else(|| "never".to_string()),
@@ -287,7 +309,10 @@ pub async fn run_token_list(
         RenderPlan::table(columns, rows)
     };
 
-    Ok(CliResponse::ok(TokenListOutput { tokens: summaries }, render))
+    Ok(CliResponse::ok(
+        TokenListOutput { tokens: summaries },
+        render,
+    ))
 }
 
 pub async fn run_token_revoke(
@@ -313,19 +338,35 @@ pub async fn run_token_inspect(
 
     let ceiling: Vec<String> = resp["scope_ceiling"]["roles"]
         .as_array()
-        .map(|a| a.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+        .map(|a| {
+            a.iter()
+                .filter_map(|v| v.as_str().map(String::from))
+                .collect()
+        })
         .unwrap_or_default();
     let resolved_roles: Vec<String> = resp["resolved_roles"]
         .as_array()
-        .map(|a| a.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+        .map(|a| {
+            a.iter()
+                .filter_map(|v| v.as_str().map(String::from))
+                .collect()
+        })
         .unwrap_or_default();
     let effective_roles: Vec<String> = resp["effective_roles"]
         .as_array()
-        .map(|a| a.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+        .map(|a| {
+            a.iter()
+                .filter_map(|v| v.as_str().map(String::from))
+                .collect()
+        })
         .unwrap_or_default();
     let effective_permissions: Vec<String> = resp["effective_permissions"]
         .as_array()
-        .map(|a| a.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+        .map(|a| {
+            a.iter()
+                .filter_map(|v| v.as_str().map(String::from))
+                .collect()
+        })
         .unwrap_or_default();
 
     let output = TokenInspectOutput {
@@ -340,9 +381,19 @@ pub async fn run_token_inspect(
     };
 
     let mut pairs = vec![
-        ("Subject".into(), format!("{} ({})", output.subject, output.subject_type)),
+        (
+            "Subject".into(),
+            format!("{} ({})", output.subject, output.subject_type),
+        ),
         ("Status".into(), output.status.clone()),
-        ("Ceiling".into(), if ceiling.is_empty() { "unrestricted".into() } else { ceiling.join(", ") }),
+        (
+            "Ceiling".into(),
+            if ceiling.is_empty() {
+                "unrestricted".into()
+            } else {
+                ceiling.join(", ")
+            },
+        ),
     ];
     if !resolved_roles.is_empty() {
         pairs.push(("Resolved".into(), resolved_roles.join(", ")));

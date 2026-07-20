@@ -1,6 +1,6 @@
 use serde_json::Value;
 
-use crate::error::CliError;
+use crate::output::CliError;
 use crate::output::{CliResponse, Column, RenderPlan, StderrLine, StdoutRender};
 use crate::server_client::ServerClient;
 
@@ -141,17 +141,21 @@ async fn run_audit_verify(sc: &ServerClient) -> Result<CliResponse<Value>, CliEr
         };
         Ok(CliResponse::ok(resp, render))
     } else {
-        let broken = resp["first_broken_id"].as_str().unwrap_or("unknown").to_string();
+        let broken = resp["first_broken_id"]
+            .as_str()
+            .unwrap_or("unknown")
+            .to_string();
         let render = RenderPlan {
             stdout: StdoutRender::None,
             stderr: vec![StderrLine::Status(format!(
                 "✗ Hash chain BROKEN at event {broken} ({count} events verified before break)"
             ))],
         };
-        Ok(CliResponse::ok(resp, render)
-            .with_issues(1, "integrity_violation", format!(
-                "hash chain broken at event {broken}"
-            )))
+        Ok(CliResponse::ok(resp, render).with_issues(
+            1,
+            "integrity_violation",
+            format!("hash chain broken at event {broken}"),
+        ))
     }
 }
 

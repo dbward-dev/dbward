@@ -3,7 +3,7 @@ use std::collections::BTreeMap;
 use serde::Serialize;
 
 use crate::display::{format_duration_ago, format_duration_short};
-use crate::error::CliError;
+use crate::output::CliError;
 use crate::output::{CliResponse, Column, RenderPlan, StderrLine, StdoutRender};
 use crate::server_client::ServerClient;
 
@@ -49,9 +49,7 @@ pub struct AgentJob {
 // Command implementations
 // ---------------------------------------------------------------------------
 
-pub async fn run_databases(
-    sc: &ServerClient,
-) -> Result<CliResponse<DatabasesOutput>, CliError> {
+pub async fn run_databases(sc: &ServerClient) -> Result<CliResponse<DatabasesOutput>, CliError> {
     let resp = sc.get_json("/api/databases").await?;
     let dbs = resp["databases"].as_array().cloned().unwrap_or_default();
 
@@ -86,9 +84,7 @@ pub async fn run_databases(
     Ok(CliResponse::ok(DatabasesOutput { databases }, render))
 }
 
-pub async fn run_agents(
-    sc: &ServerClient,
-) -> Result<CliResponse<AgentsOutput>, CliError> {
+pub async fn run_agents(sc: &ServerClient) -> Result<CliResponse<AgentsOutput>, CliError> {
     let body = sc.get_json("/api/agents").await?;
     let agents_arr = body["agents"].as_array().cloned().unwrap_or_default();
 
@@ -157,7 +153,10 @@ pub async fn run_agents(
             stderr.push(StderrLine::Status(format!("  {}:", a.id)));
             for j in &a.active_jobs {
                 let short_id: String = j.request_id.chars().take(8).collect();
-                stderr.push(StderrLine::Status(format!("    {}  {}", short_id, j.operation)));
+                stderr.push(StderrLine::Status(format!(
+                    "    {}  {}",
+                    short_id, j.operation
+                )));
             }
         }
     }

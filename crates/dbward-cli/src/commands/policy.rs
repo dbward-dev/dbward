@@ -1,7 +1,7 @@
 use serde::Serialize;
 use serde_json::Value;
 
-use crate::error::CliError;
+use crate::output::CliError;
 use crate::output::{CliResponse, RenderPlan, StdoutRender};
 use crate::server_client::ServerClient;
 
@@ -44,7 +44,9 @@ pub async fn run_resolve(
         lines.push(format!("Environment: {env}"));
         lines.push("Decision:    deny (database not registered)".into());
         let render = RenderPlan {
-            stdout: StdoutRender::Raw { value: lines.join("\n") },
+            stdout: StdoutRender::Raw {
+                value: lines.join("\n"),
+            },
             stderr: vec![],
         };
         return Ok(CliResponse::ok(PolicyResolveOutput { raw: resp }, render));
@@ -77,10 +79,14 @@ pub async fn run_resolve(
             } else {
                 format!("{decision} ({reason})")
             };
-            lines.push(format!("  {op:<16} {wf_id:<wf_width$} {matched:<16} {decision_display}"));
+            lines.push(format!(
+                "  {op:<16} {wf_id:<wf_width$} {matched:<16} {decision_display}"
+            ));
         }
         let render = RenderPlan {
-            stdout: StdoutRender::Raw { value: lines.join("\n") },
+            stdout: StdoutRender::Raw {
+                value: lines.join("\n"),
+            },
             stderr: vec![],
         };
         return Ok(CliResponse::ok(PolicyResolveOutput { raw: resp }, render));
@@ -100,7 +106,9 @@ pub async fn run_resolve(
         let matched_by = wf.get("matched_by").and_then(|v| v.as_str()).unwrap_or("");
         let steps = wf.get("steps").and_then(|v| v.as_array());
         let step_count = steps.map(|s| s.len()).unwrap_or(0);
-        lines.push(format!("Workflow:    {wf_id} (matched by {matched_by}, {step_count} step(s))"));
+        lines.push(format!(
+            "Workflow:    {wf_id} (matched by {matched_by}, {step_count} step(s))"
+        ));
         if let Some(steps) = steps {
             for (i, step) in steps.iter().enumerate() {
                 let approvers = step["approvers"]
@@ -114,7 +122,11 @@ pub async fn run_resolve(
                     .unwrap_or_default();
                 let mode = step["mode"].as_str().unwrap_or("all");
                 let min = step["min"].as_u64().unwrap_or(1);
-                lines.push(format!("  Step {}:    {} ({mode}, min {min})", i + 1, approvers));
+                lines.push(format!(
+                    "  Step {}:    {} ({mode}, min {min})",
+                    i + 1,
+                    approvers
+                ));
             }
         }
 
@@ -183,7 +195,9 @@ pub async fn run_resolve(
     lines.push(format!("Decision:    {decision} ({reason_display})"));
 
     let render = RenderPlan {
-        stdout: StdoutRender::Raw { value: lines.join("\n") },
+        stdout: StdoutRender::Raw {
+            value: lines.join("\n"),
+        },
         stderr: vec![],
     };
     Ok(CliResponse::ok(PolicyResolveOutput { raw: resp }, render))

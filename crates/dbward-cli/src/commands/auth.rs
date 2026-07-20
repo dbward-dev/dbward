@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use serde::Serialize;
 
 use super::Cli;
-use crate::error::CliError;
+use crate::output::CliError;
 use crate::output::{CliResponse, OutputMode, RenderPlan, StderrLine, StdoutRender};
 
 // ---------------------------------------------------------------------------
@@ -113,7 +113,10 @@ url = "{server_url}"
             let _ = std::fs::set_permissions(&global_path, std::fs::Permissions::from_mode(0o600));
         }
         files_created.push(global_path.display().to_string());
-        stderr.push(StderrLine::Status(format!("✓ Created {}", global_path.display())));
+        stderr.push(StderrLine::Status(format!(
+            "✓ Created {}",
+            global_path.display()
+        )));
     }
 
     // 2. Project config
@@ -133,7 +136,10 @@ migrations_dir = "migrations"
     );
     std::fs::write(&project_path, project_content.trim_end())?;
     files_created.push(project_path.display().to_string());
-    stderr.push(StderrLine::Status(format!("✓ Created {}", project_path.display())));
+    stderr.push(StderrLine::Status(format!(
+        "✓ Created {}",
+        project_path.display()
+    )));
 
     let output = InitOutput {
         files_created,
@@ -173,7 +179,9 @@ fn run_preset_small_team(
             preset: Some("small-team".into()),
         };
         let render = RenderPlan {
-            stdout: StdoutRender::Raw { value: stdout_lines.join("\n") },
+            stdout: StdoutRender::Raw {
+                value: stdout_lines.join("\n"),
+            },
             stderr: vec![],
         };
         return Ok(CliResponse::ok(output, render));
@@ -197,7 +205,7 @@ fn run_preset_small_team(
 
     // Atomic write: tmpdir on same filesystem + rename
     let tmp_dir = tempfile::tempdir_in(output_dir)
-        .map_err(|e| CliError::Other(format!("failed to create temp dir: {e}")))?;
+        .map_err(|e| CliError::Internal(format!("failed to create temp dir: {e}")))?;
     for (name, content) in &files {
         let tmp_path = tmp_dir.path().join(name);
         std::fs::write(&tmp_path, content)?;
@@ -206,7 +214,7 @@ fn run_preset_small_team(
         let src = tmp_dir.path().join(name);
         let dst = output_dir.join(name);
         std::fs::rename(&src, &dst)
-            .map_err(|e| CliError::Other(format!("failed to write {}: {e}", dst.display())))?;
+            .map_err(|e| CliError::Internal(format!("failed to write {}: {e}", dst.display())))?;
     }
 
     let output = InitOutput {
@@ -219,21 +227,33 @@ fn run_preset_small_team(
             StderrLine::Status("✓ Created dbward.toml, server.toml, agent.toml".into()),
             StderrLine::Status(String::new()),
             StderrLine::Status("━━ Required ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━".into()),
-            StderrLine::Status("  agent.toml:  Set DATABASE_URL_* env vars for target databases".into()),
+            StderrLine::Status(
+                "  agent.toml:  Set DATABASE_URL_* env vars for target databases".into(),
+            ),
             StderrLine::Status("  dbward.toml: API token will be generated in step 1 below".into()),
             StderrLine::Status(String::new()),
             StderrLine::Status("━━ Next steps ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━".into()),
             StderrLine::Status("  1. dbward-server --config server.toml".into()),
             StderrLine::Status("     → First run auto-creates tokens in /data/".into()),
-            StderrLine::Status("  2. Set CLI token in dbward.toml: token = \"$(cat /data/admin-token)\"".into()),
-            StderrLine::Status("  3. DBWARD_AGENT_TOKEN=$(cat /data/agent-token) dbward-agent --config agent.toml".into()),
+            StderrLine::Status(
+                "  2. Set CLI token in dbward.toml: token = \"$(cat /data/admin-token)\"".into(),
+            ),
+            StderrLine::Status(
+                "  3. DBWARD_AGENT_TOKEN=$(cat /data/agent-token) dbward-agent --config agent.toml"
+                    .into(),
+            ),
             StderrLine::Status("  4. dbward doctor        # verify connectivity + config".into()),
             StderrLine::Status("  5. dbward execute \"SELECT 1\"".into()),
             StderrLine::Status(String::new()),
             StderrLine::Status("━━ Optional tuning ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━".into()),
-            StderrLine::Status("  server.toml: team roles, approval rules, auto-approve thresholds".into()),
+            StderrLine::Status(
+                "  server.toml: team roles, approval rules, auto-approve thresholds".into(),
+            ),
             StderrLine::Status(String::new()),
-            StderrLine::Hint("Docs: https://github.com/dbward-dev/dbward/blob/main/docs/getting-started.md".into()),
+            StderrLine::Hint(
+                "Docs: https://github.com/dbward-dev/dbward/blob/main/docs/getting-started.md"
+                    .into(),
+            ),
         ],
     };
     Ok(CliResponse::ok(output, render))

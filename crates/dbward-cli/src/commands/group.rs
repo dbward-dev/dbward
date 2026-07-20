@@ -1,7 +1,7 @@
 use clap::Subcommand;
 use serde::Serialize;
 
-use crate::error::CliError;
+use crate::output::CliError;
 use crate::output::{CliResponse, Column, RenderPlan};
 use crate::server_client::ServerClient;
 
@@ -37,14 +37,16 @@ pub struct GroupShowOutput {
 // Command implementations
 // ---------------------------------------------------------------------------
 
-pub async fn run_group_list(
-    sc: &ServerClient,
-) -> Result<CliResponse<GroupListOutput>, CliError> {
+pub async fn run_group_list(sc: &ServerClient) -> Result<CliResponse<GroupListOutput>, CliError> {
     let resp: serde_json::Value = sc.get("/api/groups").await?;
     let groups: Vec<String> = resp
         .get("groups")
         .and_then(|v| v.as_array())
-        .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str().map(String::from))
+                .collect()
+        })
         .unwrap_or_default();
 
     let render = if groups.is_empty() {
@@ -67,7 +69,11 @@ pub async fn run_group_show(
     let members: Vec<String> = resp
         .get("members")
         .and_then(|v| v.as_array())
-        .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str().map(String::from))
+                .collect()
+        })
         .unwrap_or_default();
 
     let mut pairs = vec![("Name".into(), name.to_string())];

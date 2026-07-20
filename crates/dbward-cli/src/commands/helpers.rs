@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
 
-use crate::error::CliError;
+use crate::output::CliError;
 
 #[allow(dead_code)]
 pub struct SubmissionSummary<'a> {
@@ -23,7 +23,7 @@ pub fn confirm_submission(summary: &SubmissionSummary, skip: bool) -> Result<(),
     }
 
     if !std::io::IsTerminal::is_terminal(&std::io::stdin()) {
-        return Err(CliError::Other(
+        return Err(CliError::Internal(
             "interactive confirmation required but stdin is not a terminal. Use --yes to skip."
                 .into(),
         ));
@@ -46,11 +46,11 @@ pub fn confirm_submission(summary: &SubmissionSummary, skip: bool) -> Result<(),
     let mut input = String::new();
     std::io::stdin()
         .read_line(&mut input)
-        .map_err(|e| CliError::Other(format!("failed to read input: {e}")))?;
+        .map_err(|e| CliError::Internal(format!("failed to read input: {e}")))?;
 
     match input.trim().to_lowercase().as_str() {
         "y" | "yes" => Ok(()),
-        _ => Err(CliError::Other("aborted by user".into())),
+        _ => Err(CliError::Internal("aborted by user".into())),
     }
 }
 

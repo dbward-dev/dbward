@@ -229,18 +229,15 @@ impl<T: Serialize> From<CliResponse<T>> for CliOutcome {
         let ok = exit_code == 0;
 
         // Serialization failure is an implementation bug — panic to surface it.
-        let data = resp.data.map(|d| {
-            serde_json::to_value(&d).expect("BUG: CliResponse data must be serializable")
-        });
+        let data = resp
+            .data
+            .map(|d| serde_json::to_value(&d).expect("BUG: CliResponse data must be serializable"));
 
         let error = if !ok {
-            Some(
-                resp.error_info
-                    .unwrap_or_else(|| ErrorInfo {
-                        code: "unknown".into(),
-                        message: "non-zero exit without error info (bug)".into(),
-                    }),
-            )
+            Some(resp.error_info.unwrap_or_else(|| ErrorInfo {
+                code: "unknown".into(),
+                message: "non-zero exit without error info (bug)".into(),
+            }))
             .map(|info| EnvelopeError {
                 code: info.code,
                 message: info.message,

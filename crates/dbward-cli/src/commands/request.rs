@@ -4,9 +4,9 @@ use clap::Subcommand;
 use serde::Serialize;
 use serde_json::Value;
 
-use crate::display::{format_created_time, short_request_id, truncate_table_cell};
 use crate::display::ResultFormat;
-use crate::error::CliError;
+use crate::display::{format_created_time, short_request_id, truncate_table_cell};
+use crate::output::CliError;
 use crate::output::{
     CliResponse, Column, OutputMode, RenderPlan, StderrLine, StdoutRender, confirm_or_reject,
 };
@@ -314,9 +314,7 @@ async fn run_approve(
                     "All steps complete. Resume: dbward request resume {short_id}"
                 )));
             } else {
-                stderr.push(StderrLine::Status(
-                    "Waiting for further approvals.".into(),
-                ));
+                stderr.push(StderrLine::Status("Waiting for further approvals.".into()));
             }
 
             let output = RequestApproveOutput {
@@ -334,19 +332,28 @@ async fn run_approve(
         }
         Err(e) => {
             if e.status == 404 {
-                return Err(CliError::Server(format!("Request {id} not found")));
+                return Err(CliError::Api {
+                    code: "not_found".into(),
+                    message: format!("Request {id} not found"),
+                });
             }
             let body_lower = e.body.to_lowercase();
             if e.status == 409
                 && (body_lower.contains("already approved")
                     || body_lower.contains("already dispatched"))
             {
-                return Err(CliError::Server(format!(
-                    "Request is already approved. The requester can resume with: dbward request resume {id}"
-                )));
+                return Err(CliError::Api {
+                    code: "already_approved".into(),
+                    message: format!(
+                        "Request is already approved. The requester can resume with: dbward request resume {id}"
+                    ),
+                });
             }
             if e.status == 403 {
-                return Err(CliError::Server(e.body));
+                return Err(CliError::Api {
+                    code: "forbidden".into(),
+                    message: e.body,
+                });
             }
             Err(e.into_cli_error("approve"))
         }
@@ -366,10 +373,16 @@ async fn run_reject(
         }
         Err(e) => {
             if e.status == 404 {
-                return Err(CliError::Server(format!("Request {id} not found")));
+                return Err(CliError::Api {
+                    code: "not_found".into(),
+                    message: format!("Request {id} not found"),
+                });
             }
             if e.status == 403 {
-                return Err(CliError::Server(e.body));
+                return Err(CliError::Api {
+                    code: "forbidden".into(),
+                    message: e.body,
+                });
             }
             Err(e.into_cli_error("reject"))
         }
@@ -393,7 +406,7 @@ async fn run_cancel(
         eprintln!("⚠ Query is currently executing on the database.");
         eprintln!("  Cancelling will kill the running query and roll back any changes.");
         if confirm_or_reject(mode, false).is_err() {
-            return Err(CliError::Other("aborted by user".into()));
+            return Err(CliError::Internal("aborted by user".into()));
         }
     }
 
@@ -405,10 +418,16 @@ async fn run_cancel(
         }
         Err(e) => {
             if e.status == 404 {
-                return Err(CliError::Server(format!("Request {id} not found")));
+                return Err(CliError::Api {
+                    code: "not_found".into(),
+                    message: format!("Request {id} not found"),
+                });
             }
             if e.status == 403 {
-                return Err(CliError::Server(e.body));
+                return Err(CliError::Api {
+                    code: "forbidden".into(),
+                    message: e.body,
+                });
             }
             Err(e.into_cli_error("cancel"))
         }
@@ -439,9 +458,7 @@ async fn run_list(
         .unwrap_or(&empty);
 
     if requests.is_empty() {
-        let output = RequestListOutput {
-            requests: vec![],
-        };
+        let output = RequestListOutput { requests: vec![] };
         let render = RenderPlan::empty_list("requests");
         return Ok(CliResponse::ok(output, render));
     }
@@ -506,10 +523,7 @@ async fn run_list(
     ))
 }
 
-async fn run_show(
-    sc: &ServerClient,
-    id: &str,
-) -> Result<CliResponse<RequestShowOutput>, CliError> {
+async fn run_show(sc: &ServerClient, id: &str) -> Result<CliResponse<RequestShowOutput>, CliError> {
     let body = sc.get_request(id).await?;
 
     // Build key-value pairs for human display
@@ -591,10 +605,7 @@ fn build_show_pairs(body: &Value) -> Vec<(String, String)> {
                 let review_str = if findings == 0 {
                     "passed".to_string()
                 } else {
-                    format!(
-                        "{findings} warning{}",
-                        if findings > 1 { "s" } else { "" }
-                    )
+                    format!("{findings} warning{}", if findings > 1 { "s" } else { "" })
                 };
                 pairs.push(("SQL Review".into(), review_str));
             }
@@ -842,7 +853,7 @@ async fn run_resume(
         && operation == "execute_query"
     {
         if !std::io::IsTerminal::is_terminal(&std::io::stdin()) {
-            return Err(CliError::Other(
+            return Err(CliError::Internal(
                 "interactive confirmation required but stdin is not a terminal. Use --yes to skip."
                     .into(),
             ));
@@ -894,12 +905,13 @@ async fn run_resume(
                     }
                 }
             } else {
-                eprintln!(
-                    "Request {id} cannot be resumed yet (may still be pending approval)."
-                );
+                eprintln!("Request {id} cannot be resumed yet (may still be pending approval).");
             }
             eprintln!("Check status: dbward request show {id}");
-            return Err(CliError::Server("request not ready for resume".into()));
+            return Err(CliError::Api {
+                code: "not_ready".into(),
+                message: "request not ready for resume".into(),
+            });
         }
         return Err(e.into_cli_error("resume"));
     }
@@ -969,9 +981,7 @@ async fn run_executions(
     let executions_arr = body["executions"].as_array().cloned().unwrap_or_default();
 
     if executions_arr.is_empty() {
-        let output = ExecutionListOutput {
-            executions: vec![],
-        };
+        let output = ExecutionListOutput { executions: vec![] };
         let render = RenderPlan::empty_list("executions");
         return Ok(CliResponse::ok(output, render));
     }
@@ -1069,9 +1079,7 @@ async fn run_results(
 
     let render = RenderPlan::table(columns, rows);
     Ok(CliResponse::ok(
-        RequestResultsOutput {
-            results: summaries,
-        },
+        RequestResultsOutput { results: summaries },
         render,
     ))
 }
@@ -1093,9 +1101,10 @@ async fn resolve_request_id(sc: &ServerClient, id: &str) -> Result<String, CliEr
         return Ok(id.to_string());
     }
     let resp = sc.list_requests(Some(100), None, None, None, None).await?;
-    let requests = resp["requests"]
-        .as_array()
-        .ok_or_else(|| CliError::Server("unexpected response from list_requests".into()))?;
+    let requests = resp["requests"].as_array().ok_or_else(|| CliError::Api {
+        code: "server_error".into(),
+        message: "unexpected response from list_requests".into(),
+    })?;
     let matches: Vec<&str> = requests
         .iter()
         .filter_map(|r| r["id"].as_str())
@@ -1108,15 +1117,19 @@ async fn resolve_request_id(sc: &ServerClient, id: &str) -> Result<String, CliEr
             } else {
                 ""
             };
-            Err(CliError::Server(format!(
-                "no request found matching prefix '{id}'{hint}"
-            )))
+            Err(CliError::Api {
+                code: "not_found".into(),
+                message: format!("no request found matching prefix '{id}'{hint}"),
+            })
         }
         1 => Ok(matches[0].to_string()),
-        _ => Err(CliError::Server(format!(
-            "ambiguous prefix '{id}': matches {} requests. Use a longer prefix.",
-            matches.len()
-        ))),
+        _ => Err(CliError::Api {
+            code: "ambiguous".into(),
+            message: format!(
+                "ambiguous prefix '{id}': matches {} requests. Use a longer prefix.",
+                matches.len()
+            ),
+        }),
     }
 }
 
@@ -1168,9 +1181,17 @@ mod tests {
             "updated_at": "2026-01-01T00:01:00Z",
         });
         let pairs = build_show_pairs(&body);
-        assert!(pairs.iter().any(|(k, v)| k == "Request" && v.contains("550e8400")));
+        assert!(
+            pairs
+                .iter()
+                .any(|(k, v)| k == "Request" && v.contains("550e8400"))
+        );
         assert!(pairs.iter().any(|(k, v)| k == "Status" && v == "pending"));
-        assert!(pairs.iter().any(|(k, v)| k == "Operation" && v == "execute_query"));
+        assert!(
+            pairs
+                .iter()
+                .any(|(k, v)| k == "Operation" && v == "execute_query")
+        );
     }
 
     #[test]

@@ -1,7 +1,7 @@
 use serde::Serialize;
 use serde_json::Value;
 
-use crate::error::CliError;
+use crate::output::CliError;
 use crate::output::{CliResponse, RenderPlan, StderrLine, StdoutRender};
 use crate::server_client::ServerClient;
 
@@ -50,9 +50,21 @@ pub async fn run_preflight(
     } else if factors.len() == 1 {
         pairs.push(("Risk".into(), format!("{risk} ({})", factors[0])));
     } else {
-        let detail = factors.iter().take(5).map(|f| format!("- {f}")).collect::<Vec<_>>().join("\n               ");
-        let suffix = if factors.len() > 5 { format!("\n               (+{} more)", factors.len() - 5) } else { String::new() };
-        pairs.push(("Risk".into(), format!("{risk}\n               {detail}{suffix}")));
+        let detail = factors
+            .iter()
+            .take(5)
+            .map(|f| format!("- {f}"))
+            .collect::<Vec<_>>()
+            .join("\n               ");
+        let suffix = if factors.len() > 5 {
+            format!("\n               (+{} more)", factors.len() - 5)
+        } else {
+            String::new()
+        };
+        pairs.push((
+            "Risk".into(),
+            format!("{risk}\n               {detail}{suffix}"),
+        ));
     }
 
     // Statement type
@@ -194,8 +206,13 @@ pub async fn run_preflight(
     let output = PreflightOutput { raw: result };
 
     if is_blocked {
-        Ok(CliResponse::ok(output, render)
-            .with_issues(1, "blocked", "SQL blocked by review rules"))
+        Ok(
+            CliResponse::ok(output, render).with_issues(
+                1,
+                "blocked",
+                "SQL blocked by review rules",
+            ),
+        )
     } else {
         Ok(CliResponse::ok(output, render))
     }

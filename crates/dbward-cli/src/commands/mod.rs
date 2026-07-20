@@ -23,8 +23,8 @@ use clap::{Parser, Subcommand};
 use serde::Serialize;
 
 use crate::config::{self, ClientConfig};
-use crate::error::CliError;
 use crate::oidc_login;
+use crate::output::CliError;
 use crate::output::{CliResponse, RenderPlan, StdoutRender};
 use crate::self_update;
 use crate::server_client::ServerClient;
@@ -369,7 +369,7 @@ async fn run_whoami(cli: &Cli) -> Result<CliResponse<WhoamiOutput>, CliError> {
                     Ok(resp) => {
                         return Ok(build_whoami_response(&resp));
                     }
-                    Err(CliError::Transport(_)) => {
+                    Err(CliError::Network(_)) => {
                         // Connection failure → fall through to local
                     }
                     Err(e) => return Err(e),
@@ -387,9 +387,7 @@ async fn run_whoami(cli: &Cli) -> Result<CliResponse<WhoamiOutput>, CliError> {
 
     // Fallback: local OIDC credentials
     if oidc_login::whoami().is_ok() {
-        eprintln!(
-            "(showing local credentials only — server not available or auth not configured)"
-        );
+        eprintln!("(showing local credentials only — server not available or auth not configured)");
         // Return a minimal output for local-only case
         let output = WhoamiOutput {
             subject_id: "local".into(),
@@ -409,7 +407,10 @@ async fn run_whoami(cli: &Cli) -> Result<CliResponse<WhoamiOutput>, CliError> {
 
 fn build_whoami_response(resp: &serde_json::Value) -> CliResponse<WhoamiOutput> {
     let subject = resp["subject_id"].as_str().unwrap_or("unknown").to_string();
-    let stype = resp["subject_type"].as_str().unwrap_or("unknown").to_string();
+    let stype = resp["subject_type"]
+        .as_str()
+        .unwrap_or("unknown")
+        .to_string();
 
     let roles: Vec<String> = resp["roles"]
         .as_array()
@@ -423,12 +424,15 @@ fn build_whoami_response(resp: &serde_json::Value) -> CliResponse<WhoamiOutput> 
 
     let groups: Vec<String> = resp["groups"]
         .as_array()
-        .map(|a| a.iter().filter_map(|v| v.as_str()).map(String::from).collect())
+        .map(|a| {
+            a.iter()
+                .filter_map(|v| v.as_str())
+                .map(String::from)
+                .collect()
+        })
         .unwrap_or_default();
 
-    let mut pairs = vec![
-        ("Subject".into(), format!("{subject} ({stype})")),
-    ];
+    let mut pairs = vec![("Subject".into(), format!("{subject} ({stype})"))];
     if !roles.is_empty() {
         pairs.push(("Roles".into(), roles.join(", ")));
     }
@@ -469,27 +473,40 @@ pub async fn run(mut cli: Cli) -> Result<Option<crate::output::CliOutcome>, CliE
         let sc = ServerClient::new(&server_url, &api_token);
 
         let outcome: crate::output::CliOutcome = match action {
-            token::TokenAction::List { subject, status, subject_type } => {
-                token::run_token_list(&sc, subject.as_deref(), status.as_deref(), subject_type.as_deref()).await?.into()
-            }
-            token::TokenAction::Create { subject, subject_type, scope_roles, no_scope_ceiling, name, expires, role } => {
-                token::run_token_create(
-                    &sc,
-                    subject.as_deref(),
-                    subject_type,
-                    scope_roles,
-                    *no_scope_ceiling,
-                    name.as_deref(),
-                    expires.as_deref(),
-                    role.as_deref(),
-                ).await?.into()
-            }
-            token::TokenAction::Revoke { id } => {
-                token::run_token_revoke(&sc, id).await?.into()
-            }
-            token::TokenAction::Inspect { id } => {
-                token::run_token_inspect(&sc, id).await?.into()
-            }
+            token::TokenAction::List {
+                subject,
+                status,
+                subject_type,
+            } => token::run_token_list(
+                &sc,
+                subject.as_deref(),
+                status.as_deref(),
+                subject_type.as_deref(),
+            )
+            .await?
+            .into(),
+            token::TokenAction::Create {
+                subject,
+                subject_type,
+                scope_roles,
+                no_scope_ceiling,
+                name,
+                expires,
+                role,
+            } => token::run_token_create(
+                &sc,
+                subject.as_deref(),
+                subject_type,
+                scope_roles,
+                *no_scope_ceiling,
+                name.as_deref(),
+                expires.as_deref(),
+                role.as_deref(),
+            )
+            .await?
+            .into(),
+            token::TokenAction::Revoke { id } => token::run_token_revoke(&sc, id).await?.into(),
+            token::TokenAction::Inspect { id } => token::run_token_inspect(&sc, id).await?.into(),
         };
         return Ok(Some(outcome));
     }
@@ -510,29 +527,31 @@ pub async fn run(mut cli: Cli) -> Result<Option<crate::output::CliOutcome>, CliE
             user::UserAction::Add { id, role, group } => {
                 user::run_user_add(&sc, id, role, group).await?.into()
             }
-            user::UserAction::List => {
-                user::run_user_list(&sc).await?.into()
-            }
-            user::UserAction::Show { id } => {
-                user::run_user_show(&sc, id).await?.into()
-            }
+            user::UserAction::List => user::run_user_list(&sc).await?.into(),
+            user::UserAction::Show { id } => user::run_user_show(&sc, id).await?.into(),
             user::UserAction::Update {
-                id, role, add_role, rm_role, add_group, rm_group, slack_user_id,
-            } => {
-                user::run_user_update(
-                    &sc, id, role, add_role, rm_role, add_group, rm_group,
-                    slack_user_id.as_deref(),
-                ).await?.into()
-            }
-            user::UserAction::Suspend { id } => {
-                user::run_user_suspend(&sc, id).await?.into()
-            }
-            user::UserAction::Activate { id } => {
-                user::run_user_activate(&sc, id).await?.into()
-            }
-            user::UserAction::Rm { id } => {
-                user::run_user_rm(&sc, id).await?.into()
-            }
+                id,
+                role,
+                add_role,
+                rm_role,
+                add_group,
+                rm_group,
+                slack_user_id,
+            } => user::run_user_update(
+                &sc,
+                id,
+                role,
+                add_role,
+                rm_role,
+                add_group,
+                rm_group,
+                slack_user_id.as_deref(),
+            )
+            .await?
+            .into(),
+            user::UserAction::Suspend { id } => user::run_user_suspend(&sc, id).await?.into(),
+            user::UserAction::Activate { id } => user::run_user_activate(&sc, id).await?.into(),
+            user::UserAction::Rm { id } => user::run_user_rm(&sc, id).await?.into(),
             user::UserAction::ReissueInitialToken { id } => {
                 user::run_user_reissue_token(&sc, id).await?.into()
             }
@@ -547,12 +566,8 @@ pub async fn run(mut cli: Cli) -> Result<Option<crate::output::CliOutcome>, CliE
         let sc = ServerClient::new(&server_url, &api_token);
 
         let outcome: crate::output::CliOutcome = match action {
-            group::GroupAction::List => {
-                group::run_group_list(&sc).await?.into()
-            }
-            group::GroupAction::Show { name } => {
-                group::run_group_show(&sc, name).await?.into()
-            }
+            group::GroupAction::List => group::run_group_list(&sc).await?.into(),
+            group::GroupAction::Show { name } => group::run_group_show(&sc, name).await?.into(),
         };
         return Ok(Some(outcome));
     }
@@ -612,7 +627,8 @@ pub async fn run(mut cli: Cli) -> Result<Option<crate::output::CliOutcome>, CliE
             output_dir,
             *dry_run,
             cli.format,
-        )?.into();
+        )?
+        .into();
         return Ok(Some(outcome));
     }
 
@@ -643,7 +659,10 @@ pub async fn run(mut cli: Cli) -> Result<Option<crate::output::CliOutcome>, CliE
         ref timeout,
     } = cli.command
     {
-        let suppress = matches!(cli.format, crate::output::OutputMode::Json | crate::output::OutputMode::Quiet);
+        let suppress = matches!(
+            cli.format,
+            crate::output::OutputMode::Json | crate::output::OutputMode::Quiet
+        );
         let outcome: crate::output::CliOutcome = doctor::run(
             cli.config.as_deref(),
             agent.clone(),
@@ -651,7 +670,8 @@ pub async fn run(mut cli: Cli) -> Result<Option<crate::output::CliOutcome>, CliE
             suppress,
             *timeout,
         )
-        .await?.into();
+        .await?
+        .into();
         return Ok(Some(outcome));
     }
 
@@ -672,9 +692,9 @@ pub async fn run(mut cli: Cli) -> Result<Option<crate::output::CliOutcome>, CliE
                 database,
                 environment,
                 operation,
-            } => {
-                policy::run_resolve(&sc, database, environment, operation.as_deref()).await?.into()
-            }
+            } => policy::run_resolve(&sc, database, environment, operation.as_deref())
+                .await?
+                .into(),
         };
         return Ok(Some(outcome));
     }
@@ -725,7 +745,8 @@ pub async fn run(mut cli: Cli) -> Result<Option<crate::output::CliOutcome>, CliE
             timeout,
             cli.yes,
         )
-        .await?.into();
+        .await?
+        .into();
         return Ok(Some(outcome));
     }
 
@@ -746,15 +767,10 @@ pub async fn run(mut cli: Cli) -> Result<Option<crate::output::CliOutcome>, CliE
             .as_deref()
             .or(cfg.default_environment.as_deref())
             .unwrap_or("development");
-        let outcome: crate::output::CliOutcome = preflight::run_preflight(
-            &sc,
-            &db_name,
-            env_str,
-            sql,
-            !no_explain,
-            explain_timeout_ms,
-        )
-        .await?.into();
+        let outcome: crate::output::CliOutcome =
+            preflight::run_preflight(&sc, &db_name, env_str, sql, !no_explain, explain_timeout_ms)
+                .await?
+                .into();
         return Ok(Some(outcome));
     }
 
@@ -792,7 +808,8 @@ pub async fn run(mut cli: Cli) -> Result<Option<crate::output::CliOutcome>, CliE
             verify,
             output,
         )
-        .await?.into();
+        .await?
+        .into();
         return Ok(Some(cli_outcome));
     }
 
@@ -816,25 +833,68 @@ pub async fn run(mut cli: Cli) -> Result<Option<crate::output::CliOutcome>, CliE
             .as_deref()
             .or(cfg.default_environment.as_deref())
             .unwrap_or("development");
-        let outcome: crate::output::CliOutcome = migrate::run_migrate(
-            &sc,
-            &cfg,
-            &db_name,
-            env_str,
-            cli.format,
-            action,
-            cli.yes,
-        )
-        .await?.into();
+        let outcome: crate::output::CliOutcome =
+            migrate::run_migrate(&sc, &cfg, &db_name, env_str, cli.format, action, cli.yes)
+                .await?
+                .into();
         return Ok(Some(outcome));
     }
 
     // -----------------------------------------------------------------------
-    // Legacy path: commands still using println! directly.
-    // Returns None (output already written).
+    // Long-running / interactive commands: run directly, return None.
     // -----------------------------------------------------------------------
-    run_legacy(cli).await?;
-    Ok(None)
+
+    match cli.command {
+        Command::Agent {
+            config: ref agent_config_path,
+        } => {
+            agent::run_agent(agent_config_path).await?;
+            Ok(None)
+        }
+        Command::Dev {
+            ref database_url,
+            port,
+        } => {
+            dev::run_dev(database_url, port).await?;
+            Ok(None)
+        }
+        Command::Login { device } => {
+            let cfg = config::load_resolved(cli.config.as_deref(), cli.merge_global)?.config;
+            let oc = cfg
+                .server
+                .oidc
+                .as_ref()
+                .ok_or_else(|| CliError::Config("[server.oidc] not configured".into()))?;
+            if device {
+                oidc_login::login_device(
+                    &oc.issuer,
+                    &oc.client_id,
+                    oc.discovery_url.as_deref(),
+                    oc.browser_url.as_deref(),
+                    oc.backchannel_url.as_deref(),
+                )
+                .await
+            } else {
+                oidc_login::login(
+                    &oc.issuer,
+                    &oc.client_id,
+                    oc.discovery_url.as_deref(),
+                    oc.backchannel_url.as_deref(),
+                )
+                .await
+            }
+            .map_err(CliError::Auth)?;
+            Ok(None)
+        }
+        Command::Mcp => {
+            let cfg = config::load_resolved(cli.config.as_deref(), cli.merge_global)?.config;
+            let (server_url, api_token) = authenticate(&cfg).await?;
+            let sc = ServerClient::new(&server_url, &api_token);
+            crate::mcp::run_stdio(cfg, cli.database.as_deref(), sc).await?;
+            Ok(None)
+        }
+        _ => unreachable!("all commands should be handled above"),
+    }
 }
 
 /// TLS transport security check helper.
@@ -854,59 +914,6 @@ fn check_transport(cfg: &ClientConfig, allow_insecure_flag: bool) -> Result<(), 
         }
     }
     Ok(())
-}
-
-async fn run_legacy(cli: Cli) -> Result<(), CliError> {
-    // Commands that don't need config/auth
-    match &cli.command {
-        Command::Agent {
-            config: agent_config_path,
-        } => return agent::run_agent(agent_config_path).await,
-        Command::Dev { database_url, port } => {
-            return dev::run_dev(database_url, *port).await;
-        }
-        _ => {}
-    }
-
-    let cfg = config::load_resolved(cli.config.as_deref(), cli.merge_global)?.config;
-
-    // Login needs OIDC config but not full auth
-    if let Command::Login { device } = &cli.command {
-        let oc = cfg
-            .server
-            .oidc
-            .as_ref()
-            .ok_or_else(|| CliError::Config("[server.oidc] not configured".into()))?;
-        if *device {
-            oidc_login::login_device(
-                &oc.issuer,
-                &oc.client_id,
-                oc.discovery_url.as_deref(),
-                oc.browser_url.as_deref(),
-                oc.backchannel_url.as_deref(),
-            )
-            .await
-        } else {
-            oidc_login::login(
-                &oc.issuer,
-                &oc.client_id,
-                oc.discovery_url.as_deref(),
-                oc.backchannel_url.as_deref(),
-            )
-            .await
-        }
-        .map_err(CliError::Auth)?;
-        return Ok(());
-    }
-
-    let (server_url, api_token) = authenticate(&cfg).await?;
-    let sc = ServerClient::new(&server_url, &api_token);
-
-    match cli.command {
-        Command::Mcp => crate::mcp::run_stdio(cfg, cli.database.as_deref(), sc).await,
-        // All other commands handled by new path
-        _ => unreachable!("all commands should be handled by new path"),
-    }
 }
 
 #[cfg(test)]

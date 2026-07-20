@@ -1,7 +1,7 @@
 use clap::Subcommand;
 use serde::Serialize;
 
-use crate::error::CliError;
+use crate::output::CliError;
 use crate::output::{CliResponse, Column, RenderPlan, StderrLine};
 use crate::server_client::ServerClient;
 
@@ -153,11 +153,19 @@ pub async fn run_user_add(
         .to_string();
     let roles: Vec<String> = resp["roles"]
         .as_array()
-        .map(|a| a.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+        .map(|a| {
+            a.iter()
+                .filter_map(|v| v.as_str().map(String::from))
+                .collect()
+        })
         .unwrap_or_default();
     let groups: Vec<String> = resp["groups"]
         .as_array()
-        .map(|a| a.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+        .map(|a| {
+            a.iter()
+                .filter_map(|v| v.as_str().map(String::from))
+                .collect()
+        })
         .unwrap_or_default();
 
     let output = UserAddOutput {
@@ -179,9 +187,7 @@ pub async fn run_user_add(
     Ok(CliResponse::ok(output, render))
 }
 
-pub async fn run_user_list(
-    sc: &ServerClient,
-) -> Result<CliResponse<UserListOutput>, CliError> {
+pub async fn run_user_list(sc: &ServerClient) -> Result<CliResponse<UserListOutput>, CliError> {
     let resp: serde_json::Value = sc.get("/api/users").await?;
     let users_arr = resp
         .get("users")
@@ -192,8 +198,16 @@ pub async fn run_user_list(
     let summaries: Vec<UserSummary> = users_arr
         .iter()
         .map(|u| UserSummary {
-            id: u.get("id").and_then(|v| v.as_str()).unwrap_or("?").to_string(),
-            status: u.get("status").and_then(|v| v.as_str()).unwrap_or("?").to_string(),
+            id: u
+                .get("id")
+                .and_then(|v| v.as_str())
+                .unwrap_or("?")
+                .to_string(),
+            status: u
+                .get("status")
+                .and_then(|v| v.as_str())
+                .unwrap_or("?")
+                .to_string(),
         })
         .collect();
 
@@ -382,7 +396,10 @@ pub async fn run_user_reissue_token(
     } else if delivery == "failed" {
         stderr.push(StderrLine::Warn("Slack DM delivery failed.".into()));
     } else {
-        stderr.push(StderrLine::Info("Delivery".into(), "Slack not configured.".into()));
+        stderr.push(StderrLine::Info(
+            "Delivery".into(),
+            "Slack not configured.".into(),
+        ));
     }
 
     if let Some(ref tid) = reissued_token_id {

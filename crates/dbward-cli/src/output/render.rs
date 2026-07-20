@@ -61,10 +61,8 @@ fn render_json(outcome: &CliOutcome, suppress_stderr: bool) {
     );
 
     // stderr: error message only in json mode; nothing in quiet mode
-    if !suppress_stderr {
-        if let Some(ref err) = outcome.error {
-            eprintln!("Error: {}", err.message);
-        }
+    if !suppress_stderr && let Some(ref err) = outcome.error {
+        eprintln!("Error: {}", err.message);
     }
 }
 
@@ -106,10 +104,10 @@ fn render_human(outcome: &CliOutcome) {
 
     // Error display: only if render.stderr didn't already contain contextual messages
     // (CliError path has empty render.stderr, so the error shows here)
-    if let Some(ref err) = outcome.error {
-        if outcome.render.stderr.is_empty() {
-            eprintln!("Error: {}", err.message);
-        }
+    if let Some(ref err) = outcome.error
+        && outcome.render.stderr.is_empty()
+    {
+        eprintln!("Error: {}", err.message);
     }
 }
 
@@ -139,10 +137,10 @@ fn print_table(columns: &[Column], rows: &[Vec<String>]) {
 
     // Apply max_width constraints
     for (i, col) in columns.iter().enumerate() {
-        if let Some(max) = col.max_width {
-            if widths[i] > max {
-                widths[i] = max;
-            }
+        if let Some(max) = col.max_width
+            && widths[i] > max
+        {
+            widths[i] = max;
         }
     }
 
@@ -190,9 +188,7 @@ mod tests {
     use serde::Serialize;
     use serde_json::Value;
 
-    use crate::output::types::{
-        CliOutcome, CliResponse, EnvelopeError, RenderPlan,
-    };
+    use crate::output::types::{CliOutcome, CliResponse, EnvelopeError, RenderPlan};
 
     /// Captures stdout by building the envelope manually and checking it.
     #[test]
@@ -314,10 +310,7 @@ mod tests {
             value: i32,
         }
 
-        let resp = CliResponse::ok(
-            Dummy { value: 42 },
-            RenderPlan::status("done"),
-        );
+        let resp = CliResponse::ok(Dummy { value: 42 }, RenderPlan::status("done"));
         let outcome: CliOutcome = resp.into();
 
         assert!(outcome.ok);
@@ -333,8 +326,11 @@ mod tests {
             total: u32,
         }
 
-        let resp = CliResponse::ok(Checks { total: 5 }, RenderPlan::none())
-            .with_issues(2, "doctor_issues_found", "2 failed");
+        let resp = CliResponse::ok(Checks { total: 5 }, RenderPlan::none()).with_issues(
+            2,
+            "doctor_issues_found",
+            "2 failed",
+        );
         let outcome: CliOutcome = resp.into();
 
         assert!(!outcome.ok);

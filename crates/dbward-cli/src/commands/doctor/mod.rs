@@ -7,7 +7,7 @@ use std::time::Duration;
 
 use serde::Serialize;
 
-use crate::error::CliError;
+use crate::output::CliError;
 use crate::output::{CliResponse, Column, RenderPlan, StderrLine, StdoutRender};
 
 // ---------------------------------------------------------------------------
@@ -160,20 +160,12 @@ fn build_response(ctx: &DoctorContext) -> Result<CliResponse<DoctorOutput>, CliE
                 Status::Fail => "❌",
                 Status::Skip => "⏭️",
             };
-            vec![
-                icon.to_string(),
-                r.id.to_string(),
-                r.message.clone(),
-            ]
+            vec![icon.to_string(), r.id.to_string(), r.message.clone()]
         })
         .collect();
 
     // Add summary row
-    rows.push(vec![
-        String::new(),
-        String::new(),
-        String::new(),
-    ]);
+    rows.push(vec![String::new(), String::new(), String::new()]);
     rows.push(vec![
         String::new(),
         "TOTAL".into(),
@@ -199,11 +191,7 @@ fn build_response(ctx: &DoctorContext) -> Result<CliResponse<DoctorOutput>, CliE
     let has_failure = fail > 0;
     let resp = CliResponse::ok(output, render);
     if has_failure {
-        Ok(resp.with_issues(
-            2,
-            "doctor_issues_found",
-            format!("{fail} check(s) failed"),
-        ))
+        Ok(resp.with_issues(2, "doctor_issues_found", format!("{fail} check(s) failed")))
     } else {
         Ok(resp)
     }

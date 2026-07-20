@@ -50,9 +50,7 @@ impl CliError {
             Self::Config(msg) => ("config_error".into(), msg.clone()),
             Self::Network(msg) => ("network_error".into(), msg.clone()),
             Self::Api { code, message } => (code.clone(), message.clone()),
-            Self::Timeout { seconds } => {
-                ("timeout".into(), format!("timed out after {seconds}s"))
-            }
+            Self::Timeout { seconds } => ("timeout".into(), format!("timed out after {seconds}s")),
             Self::Blocked { reason } => ("blocked".into(), reason.clone()),
             Self::Internal(msg) => ("internal_error".into(), msg.clone()),
         }
@@ -175,7 +173,14 @@ mod tests {
         assert_eq!(outcome.exit_code, 1);
         assert!(outcome.data.is_none());
         assert_eq!(outcome.error.as_ref().unwrap().code, "auth_error");
-        assert!(outcome.error.as_ref().unwrap().message.contains("token expired"));
+        assert!(
+            outcome
+                .error
+                .as_ref()
+                .unwrap()
+                .message
+                .contains("token expired")
+        );
     }
 
     #[test]

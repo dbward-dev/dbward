@@ -2,7 +2,7 @@ use clap::Subcommand;
 use percent_encoding::{NON_ALPHANUMERIC, utf8_percent_encode};
 use serde::Serialize;
 
-use crate::error::CliError;
+use crate::output::CliError;
 use crate::output::{CliResponse, RenderPlan, StderrLine, StdoutRender};
 
 #[derive(Clone, Subcommand)]
@@ -123,8 +123,9 @@ fn run_init(
 
     if open_browser && let Err(e) = open::that(&create_url) {
         // Non-fatal warning added to the response.
-        let resp = CliResponse::ok(output, render)
-            .with_warning(format!("failed to open browser: {e}. Open the URL above manually."));
+        let resp = CliResponse::ok(output, render).with_warning(format!(
+            "failed to open browser: {e}. Open the URL above manually."
+        ));
         return Ok(resp);
     }
 

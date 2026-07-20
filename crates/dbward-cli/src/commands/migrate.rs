@@ -3,7 +3,7 @@ use serde::Serialize;
 use serde_json::Value;
 
 use crate::config::ClientConfig;
-use crate::error::CliError;
+use crate::output::CliError;
 use crate::output::{CliResponse, OutputMode, RenderPlan, StderrLine, StdoutRender};
 use crate::server_client::{CreateRequest, ServerClient};
 
@@ -120,10 +120,10 @@ pub async fn run_migrate(
         } => {
             let migrations_dir = config.migrations_dir_for(db_name);
             let mut d = dbward_migrate::build_migrate_up_detail(&migrations_dir, &[])
-                .map_err(|e| CliError::Other(e.to_string()))?;
+                .map_err(|e| CliError::Internal(e.to_string()))?;
             if d.migrations.is_empty() {
                 if !migrations_dir.exists() {
-                    return Err(CliError::Other(format!(
+                    return Err(CliError::Internal(format!(
                         "migrations directory not found: {}",
                         migrations_dir.display()
                     )));
@@ -134,14 +134,14 @@ pub async fn run_migrate(
                         .any(|e| e.path().extension().is_some_and(|ext| ext == "sql")),
                     Err(e) if e.kind() == std::io::ErrorKind::NotFound => false,
                     Err(e) => {
-                        return Err(CliError::Other(format!(
+                        return Err(CliError::Internal(format!(
                             "cannot read migrations directory {}: {e}",
                             migrations_dir.display()
                         )));
                     }
                 };
                 if has_sql_files {
-                    return Err(CliError::Other(format!(
+                    return Err(CliError::Internal(format!(
                         "found .sql files in {} but none matched the expected format.\n\
                          Expected: <timestamp>_<name>.sql with '-- migrate:up' marker inside.\n\
                          Run 'dbward migrate create <name>' to generate a correctly formatted file.",
@@ -157,7 +157,7 @@ pub async fn run_migrate(
             d.max_count = *count;
             let detail_str = d
                 .to_detail_string()
-                .map_err(|e| CliError::Other(e.to_string()))?;
+                .map_err(|e| CliError::Internal(e.to_string()))?;
             (
                 "migrate_up",
                 detail_str,
@@ -174,13 +174,13 @@ pub async fn run_migrate(
         } => {
             let migrations_dir = config.migrations_dir_for(db_name);
             let all_down = dbward_migrate::list_down_versions(&migrations_dir)
-                .map_err(|e| CliError::Other(e.to_string()))?;
+                .map_err(|e| CliError::Internal(e.to_string()))?;
             let mut d = dbward_migrate::build_migrate_down_detail(&migrations_dir, &all_down)
-                .map_err(|e| CliError::Other(e.to_string()))?;
+                .map_err(|e| CliError::Internal(e.to_string()))?;
             d.max_count = Some(*count);
             let detail_str = d
                 .to_detail_string()
-                .map_err(|e| CliError::Other(e.to_string()))?;
+                .map_err(|e| CliError::Internal(e.to_string()))?;
             (
                 "migrate_down",
                 detail_str,
@@ -210,7 +210,7 @@ pub async fn run_migrate(
             repo,
         } => {
             if !emergency {
-                return Err(CliError::Other(
+                return Err(CliError::Internal(
                     "--emergency flag is required for migrate repair. \
                      This command modifies schema_migrations metadata only, not the actual schema. \
                      Verify DB state manually before use."
@@ -218,7 +218,7 @@ pub async fn run_migrate(
                 ));
             }
             if reason.is_none() {
-                return Err(CliError::Other(
+                return Err(CliError::Internal(
                     "--reason is required for emergency repair requests.".into(),
                 ));
             }
@@ -226,7 +226,7 @@ pub async fn run_migrate(
                 "mark-applied" => "mark_applied",
                 "remove" => "remove",
                 _ => {
-                    return Err(CliError::Other(format!(
+                    return Err(CliError::Internal(format!(
                         "unknown repair action '{action}'. Valid: mark-applied, remove"
                     )));
                 }
@@ -261,8 +261,8 @@ pub async fn run_migrate(
     // migrate_status is read-only — no confirmation needed
     if operation != "migrate_status" {
         crate::output::confirm_or_reject(mode, yes).map_err(|e| match e {
-            crate::output::CliError::Blocked { reason } => CliError::Other(reason),
-            other => CliError::Other(other.to_string()),
+            crate::output::CliError::Blocked { reason } => CliError::Internal(reason),
+            other => CliError::Internal(other.to_string()),
         })?;
     }
 
@@ -319,20 +319,25 @@ pub async fn run_migrate(
                 "status": "pending_approval",
                 "approvers": approvers,
             });
-            let mut stderr = vec![
-                StderrLine::Status(format!("Request {request_id} requires approval.")),
-            ];
+            let mut stderr = vec![StderrLine::Status(format!(
+                "Request {request_id} requires approval."
+            ))];
             if !approvers.is_empty() {
                 stderr.push(StderrLine::Info("Approvers".into(), approvers.join(", ")));
             }
-            stderr.push(StderrLine::Hint(format!("Run: dbward request resume {request_id}")));
+            stderr.push(StderrLine::Hint(format!(
+                "Run: dbward request resume {request_id}"
+            )));
 
             let render = RenderPlan {
                 stdout: StdoutRender::None,
                 stderr,
             };
-            Ok(CliResponse::ok(output, render)
-                .with_issues(2, "pending_approval", format!("request {request_id} requires approval")))
+            Ok(CliResponse::ok(output, render).with_issues(
+                2,
+                "pending_approval",
+                format!("request {request_id} requires approval"),
+            ))
         }
         Outcome::Approved { request_id } => {
             let output = serde_json::json!({
@@ -342,7 +347,9 @@ pub async fn run_migrate(
             let render = RenderPlan {
                 stdout: StdoutRender::None,
                 stderr: vec![
-                    StderrLine::Status(format!("Request {request_id} is approved but not yet resumed.")),
+                    StderrLine::Status(format!(
+                        "Request {request_id} is approved but not yet resumed."
+                    )),
                     StderrLine::Hint(format!("Run: dbward request resume {request_id}")),
                 ],
             };

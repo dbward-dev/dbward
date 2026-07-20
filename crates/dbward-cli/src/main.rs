@@ -17,8 +17,7 @@ fn main() {
             }
 
             let mode = output::detect_format_from_args();
-            let outcome: CliOutcome =
-                output::CliError::Usage(clap_err.render().to_string()).into();
+            let outcome: CliOutcome = output::CliError::Usage(clap_err.render().to_string()).into();
             render(mode, &outcome);
             std::process::exit(outcome.exit_code);
         }
@@ -40,38 +39,16 @@ fn main() {
 
     match result {
         Ok(Some(outcome)) => {
-            // New path: command returned CliOutcome → render it
             render(mode, &outcome);
             std::process::exit(outcome.exit_code);
         }
         Ok(None) => {
-            // Legacy path: command already wrote its output directly
+            // Long-running command (Login/Mcp/Agent/Dev) — already wrote its output
         }
         Err(e) => {
-            // Convert old CliError to new output system
-            let outcome = convert_legacy_error(e);
+            let outcome: CliOutcome = e.into();
             render(mode, &outcome);
             std::process::exit(outcome.exit_code);
         }
     }
-}
-
-/// Transitional: convert old CliError to CliOutcome for the new render pipeline.
-/// This will be removed once all commands return CliResponse<T>.
-fn convert_legacy_error(e: dbward::error::CliError) -> CliOutcome {
-    use dbward::error::CliError as OldErr;
-
-    let new_err = match &e {
-        OldErr::Config(msg) => output::CliError::Config(msg.clone()),
-        OldErr::Auth(msg) => output::CliError::Auth(msg.clone()),
-        OldErr::Server(msg) => output::CliError::Api {
-            code: "server_error".into(),
-            message: msg.clone(),
-        },
-        OldErr::Transport(msg) => output::CliError::Network(msg.clone()),
-        OldErr::Io(io_err) => output::CliError::Internal(format!("io: {io_err}")),
-        OldErr::Other(msg) => output::CliError::Internal(msg.clone()),
-    };
-
-    new_err.into()
 }

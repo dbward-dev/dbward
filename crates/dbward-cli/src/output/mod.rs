@@ -21,13 +21,13 @@ pub use types::{
 pub fn detect_format_from_args() -> OutputMode {
     let args: Vec<String> = std::env::args().collect();
     for (i, arg) in args.iter().enumerate() {
-        if arg == "--format" {
-            if let Some(val) = args.get(i + 1) {
-                match val.as_str() {
-                    "json" => return OutputMode::Json,
-                    "quiet" => return OutputMode::Quiet,
-                    _ => {}
-                }
+        if arg == "--format"
+            && let Some(val) = args.get(i + 1)
+        {
+            match val.as_str() {
+                "json" => return OutputMode::Json,
+                "quiet" => return OutputMode::Quiet,
+                _ => {}
             }
         }
         if let Some(val) = arg.strip_prefix("--format=") {

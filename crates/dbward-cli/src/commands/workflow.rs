@@ -1,6 +1,6 @@
 use serde_json::Value;
 
-use crate::error::CliError;
+use crate::output::CliError;
 use crate::server_client::{CreateRequest, ServerClient};
 
 const REQUEST_STATUS_WAIT_SECS: u64 = 30;
@@ -69,21 +69,29 @@ pub async fn wait_for_completion(
                             return resolve_terminal_result(sc, request_id).await;
                         }
                         _ => {
-                            return Err(CliError::Server(e.body.clone()));
+                            return Err(CliError::Api {
+                                code: "server_error".into(),
+                                message: e.body.clone(),
+                            });
                         }
                     }
                 }
-                Err(e) => return Err(CliError::Server(e.body.clone())),
+                Err(e) => {
+                    return Err(CliError::Api {
+                        code: "server_error".into(),
+                        message: e.body.clone(),
+                    });
+                }
             }
             wait_and_resolve(sc, request_id, verbose).await
         }
         RequestStatus::Executed | RequestStatus::Failed => {
             resolve_terminal_result(sc, request_id).await
         }
-        _ => Err(CliError::Server(format!(
-            "unexpected status for wait: {}",
-            status
-        ))),
+        _ => Err(CliError::Api {
+            code: "server_error".into(),
+            message: format!("unexpected status for wait: {}", status),
+        }),
     }
 }
 
@@ -129,10 +137,20 @@ pub async fn submit_and_orchestrate(
                                 result,
                             });
                         }
-                        _ => return Err(CliError::Server(e.body.clone())),
+                        _ => {
+                            return Err(CliError::Api {
+                                code: "server_error".into(),
+                                message: e.body.clone(),
+                            });
+                        }
                     }
                 }
-                Err(e) => return Err(CliError::Server(e.body.clone())),
+                Err(e) => {
+                    return Err(CliError::Api {
+                        code: "server_error".into(),
+                        message: e.body.clone(),
+                    });
+                }
             }
             let result = wait_and_resolve(sc, &cr.request_id, verbose).await?;
             Ok(Outcome::Completed {
@@ -147,10 +165,10 @@ pub async fn submit_and_orchestrate(
             request_id: cr.request_id,
             approvers: cr.approvers,
         }),
-        _ => Err(CliError::Server(format!(
-            "unexpected status: {}",
-            cr.status
-        ))),
+        _ => Err(CliError::Api {
+            code: "server_error".into(),
+            message: format!("unexpected status: {}", cr.status),
+        }),
     }
 }
 
@@ -269,9 +287,12 @@ async fn poll_until_terminal(
 
     loop {
         if std::time::Instant::now() > deadline {
-            return Err(CliError::Server(format!(
-                "Timed out waiting for execution (5m). Check status: dbward request show {request_id}"
-            )));
+            return Err(CliError::Api {
+                code: "server_error".into(),
+                message: format!(
+                    "Timed out waiting for execution (5m). Check status: dbward request show {request_id}"
+                ),
+            });
         }
         let remaining_secs = deadline
             .saturating_duration_since(std::time::Instant::now())
@@ -304,30 +325,42 @@ async fn poll_until_terminal(
                                 return resolve_from_request(sc, request_id, &req).await.map(Some);
                             }
                             _ => {
-                                return Err(CliError::Server(format!(
-                                    "request {request_id} is '{}' and resume was rejected: {}. Run: dbward request show {request_id}",
-                                    actual, e.body
-                                )));
+                                return Err(CliError::Api {
+                                    code: "server_error".into(),
+                                    message: format!(
+                                        "request {request_id} is '{}' and resume was rejected: {}. Run: dbward request show {request_id}",
+                                        actual, e.body
+                                    ),
+                                });
                             }
                         }
                     }
                     Err(e) => {
-                        return Err(CliError::Server(format!(
-                            "request {request_id} is approved but resume failed: {}. Run: dbward request resume {request_id}",
-                            e.body
-                        )));
+                        return Err(CliError::Api {
+                            code: "server_error".into(),
+                            message: format!(
+                                "request {request_id} is approved but resume failed: {}. Run: dbward request resume {request_id}",
+                                e.body
+                            ),
+                        });
                     }
                 }
             }
             RequestStatus::Pending => {
-                return Err(CliError::Server(format!(
-                    "Request {request_id} requires approval. Check status: dbward request show {request_id}"
-                )));
+                return Err(CliError::Api {
+                    code: "server_error".into(),
+                    message: format!(
+                        "Request {request_id} requires approval. Check status: dbward request show {request_id}"
+                    ),
+                });
             }
             _ => {
-                return Err(CliError::Server(format!(
-                    "unexpected status: {status}. Try: dbward request resume {request_id}"
-                )));
+                return Err(CliError::Api {
+                    code: "server_error".into(),
+                    message: format!(
+                        "unexpected status: {status}. Try: dbward request resume {request_id}"
+                    ),
+                });
             }
         }
     }
@@ -355,9 +388,12 @@ async fn resolve_from_request(
                 Err(err) => Err(err),
             }
         }
-        _ => Err(CliError::Server(format!(
-            "unexpected status: {status}. Try: dbward request resume {request_id}"
-        ))),
+        _ => Err(CliError::Api {
+            code: "server_error".into(),
+            message: format!(
+                "unexpected status: {status}. Try: dbward request resume {request_id}"
+            ),
+        }),
     }
 }
 
@@ -380,7 +416,7 @@ fn terminal_payload_from_request(req: &Value) -> Option<Value> {
 
 fn is_missing_result_content_error(err: &CliError) -> bool {
     match err {
-        CliError::Server(msg) => msg.contains("result not stored for this request"),
+        CliError::Api { message, .. } => message.contains("result not stored for this request"),
         _ => false,
     }
 }
