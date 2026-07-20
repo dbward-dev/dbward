@@ -932,12 +932,10 @@ async fn run_resume(
     // Save result (maintains backward compatibility)
     let save = save_result(id, &resp, output, config_results_dir)?;
 
-    // For human mode: use the existing formatted display via Raw
-    let human_display = format_execution_result_as_string(&resp, result_format);
+    // For human mode: use result_format to determine display
+    let stdout = build_result_render(&resp, result_format);
     let render = RenderPlan {
-        stdout: StdoutRender::Raw {
-            value: human_display,
-        },
+        stdout,
         stderr: vec![],
     };
 
@@ -961,12 +959,10 @@ async fn run_result(
     // Save result (maintains backward compatibility)
     let save = save_result(id, &resp, output, config_results_dir)?;
 
-    // For human mode: use the existing formatted display via Raw
-    let human_display = format_execution_result_as_string(&resp, result_format);
+    // For human mode: use result_format to determine display
+    let stdout = build_result_render(&resp, result_format);
     let render = RenderPlan {
-        stdout: StdoutRender::Raw {
-            value: human_display,
-        },
+        stdout,
         stderr: vec![],
     };
 
@@ -1094,15 +1090,15 @@ async fn run_results(
 // Helpers
 // ---------------------------------------------------------------------------
 
-/// Format execution result as a string for human display.
-fn format_execution_result_as_string(resp: &Value, _format: ResultFormat) -> String {
+/// Build StdoutRender for execution result in human display.
+fn build_result_render(resp: &Value, format: ResultFormat) -> StdoutRender {
     use crate::output::views::QueryResultView;
 
     let view = QueryResultView::from_server_response(resp);
 
-    // Query results with actual rows or rows_affected -> structured view
+    // Query results with actual rows or rows_affected -> use result_format
     if view.rows.as_ref().is_some_and(|r| !r.is_empty()) || view.rows_affected.is_some() {
-        return serde_json::to_string_pretty(&view).unwrap_or_default();
+        return view.to_stdout_render(format);
     }
 
     // Non-tabular results (migrate, etc.) -> pretty-print raw data
@@ -1111,13 +1107,19 @@ fn format_execution_result_as_string(resp: &Value, _format: ResultFormat) -> Str
     } else if !resp["result_data"].is_null() {
         &resp["result_data"]
     } else {
-        return "Executed successfully.".to_string();
+        return StdoutRender::Raw {
+            value: "Executed successfully.".to_string(),
+        };
     };
 
     if let Some(text) = result.as_str() {
-        text.to_string()
+        StdoutRender::Raw {
+            value: text.to_string(),
+        }
     } else {
-        serde_json::to_string_pretty(result).unwrap_or_default()
+        StdoutRender::Raw {
+            value: serde_json::to_string_pretty(result).unwrap_or_default(),
+        }
     }
 }
 
