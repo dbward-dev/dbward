@@ -177,9 +177,9 @@ pub enum Command {
         /// Verify hash chain integrity
         #[arg(long)]
         verify: bool,
-        /// Output format: table (default), json, csv
+        /// Result format: table (default), json, csv
         #[arg(long, value_name = "FORMAT", default_value = "table")]
-        output: String,
+        result_format: String,
     },
     /// Start MCP stdio server
     Mcp,
@@ -337,7 +337,10 @@ async fn try_authenticate(config: &ClientConfig) -> Result<Option<(String, Strin
 // Whoami implementation
 // ---------------------------------------------------------------------------
 
-async fn run_whoami(cli: &Cli) -> Result<CliResponse<WhoamiOutput>, CliError> {
+async fn run_whoami(
+    cli: &Cli,
+    progress: &ProgressSink,
+) -> Result<CliResponse<WhoamiOutput>, CliError> {
     let cfg_result = dbward_config::load_merged(cli.config.as_deref(), cli.merge_global);
     let cfg = match cfg_result {
         Ok(m) => Some(m.config),
@@ -356,7 +359,7 @@ async fn run_whoami(cli: &Cli) -> Result<CliResponse<WhoamiOutput>, CliError> {
         ) {
             match &e {
                 dbward_config::transport::TransportError::InsecureHttp { .. } => {
-                    eprintln!("warning: {e}");
+                    progress.warn(&format!("{e}"));
                 }
                 _ => return Err(CliError::Config(e.to_string())),
             }
@@ -380,7 +383,7 @@ async fn run_whoami(cli: &Cli) -> Result<CliResponse<WhoamiOutput>, CliError> {
             }
             Err(e) => {
                 // Auth failure (expired token etc) → warn then fall through to local
-                eprintln!("warning: {e}");
+                progress.warn(&format!("{e}"));
             }
         }
     }
@@ -532,7 +535,7 @@ pub async fn run(
 
     // --- Whoami ---
     if let Command::Whoami = cli.command {
-        let outcome: crate::output::CliOutcome = run_whoami(&cli).await?.into();
+        let outcome: crate::output::CliOutcome = run_whoami(&cli, progress).await?.into();
         return Ok(Some(outcome));
     }
 
@@ -736,7 +739,9 @@ pub async fn run(
     } = cli.command
     {
         let cfg = config::load_resolved(cli.config.as_deref(), cli.merge_global)?.config;
-        check_transport(&cfg, cli.allow_insecure)?;
+        if let Some(w) = check_transport(&cfg, cli.allow_insecure)? {
+            progress.warn(&w);
+        }
         let (server_url, api_token) = authenticate(&cfg).await?;
         let sc = ServerClient::new(&server_url, &api_token);
         let db_name = cfg.resolve_database_name(cli.database.as_deref())?;
@@ -779,7 +784,9 @@ pub async fn run(
     } = cli.command
     {
         let cfg = config::load_resolved(cli.config.as_deref(), cli.merge_global)?.config;
-        check_transport(&cfg, cli.allow_insecure)?;
+        if let Some(w) = check_transport(&cfg, cli.allow_insecure)? {
+            progress.warn(&w);
+        }
         let (server_url, api_token) = authenticate(&cfg).await?;
         let sc = ServerClient::new(&server_url, &api_token);
         let db_name = cfg.resolve_database_name(cli.database.as_deref())?;
@@ -807,11 +814,13 @@ pub async fn run(
         ref since,
         ref until,
         verify,
-        ref output,
+        ref result_format,
     } = cli.command
     {
         let cfg = config::load_resolved(cli.config.as_deref(), cli.merge_global)?.config;
-        check_transport(&cfg, cli.allow_insecure)?;
+        if let Some(w) = check_transport(&cfg, cli.allow_insecure)? {
+            progress.warn(&w);
+        }
         let (server_url, api_token) = authenticate(&cfg).await?;
         let sc = ServerClient::new(&server_url, &api_token);
         let cli_outcome: crate::output::CliOutcome = audit::run_audit(
@@ -827,7 +836,7 @@ pub async fn run(
             until.as_deref(),
             cli.environment.as_deref(),
             verify,
-            output,
+            result_format,
         )
         .await?
         .into();
@@ -846,7 +855,9 @@ pub async fn run(
             return Ok(Some(outcome));
         }
 
-        check_transport(&cfg, cli.allow_insecure)?;
+        if let Some(w) = check_transport(&cfg, cli.allow_insecure)? {
+            progress.warn(&w);
+        }
         let (server_url, api_token) = authenticate(&cfg).await?;
         let sc = ServerClient::new(&server_url, &api_token);
         let env_str = cli
@@ -906,7 +917,9 @@ pub async fn run(
                 .await
             }
             .map_err(CliError::Auth)?;
-            Ok(None)
+            let render = RenderPlan::status("Login successful.");
+            let outcome: crate::output::CliOutcome = CliResponse::<()>::empty(render).into();
+            Ok(Some(outcome))
         }
         Command::Mcp => {
             let cfg = config::load_resolved(cli.config.as_deref(), cli.merge_global)?.config;
@@ -920,7 +933,11 @@ pub async fn run(
 }
 
 /// TLS transport security check helper.
-fn check_transport(cfg: &ClientConfig, allow_insecure_flag: bool) -> Result<(), CliError> {
+/// Returns a warning message if HTTP is used for a non-local server (soft failure).
+fn check_transport(
+    cfg: &ClientConfig,
+    allow_insecure_flag: bool,
+) -> Result<Option<String>, CliError> {
     let has_oidc = cfg.server.oidc.is_some();
     let allow_insecure = cfg.server.allow_insecure.unwrap_or(false) || allow_insecure_flag;
     if let Err(e) = dbward_config::transport::check_transport_security(
@@ -930,12 +947,12 @@ fn check_transport(cfg: &ClientConfig, allow_insecure_flag: bool) -> Result<(), 
     ) {
         match &e {
             dbward_config::transport::TransportError::InsecureHttp { .. } => {
-                eprintln!("warning: {e}");
+                return Ok(Some(format!("{e}")));
             }
             _ => return Err(CliError::Config(e.to_string())),
         }
     }
-    Ok(())
+    Ok(None)
 }
 
 #[cfg(test)]

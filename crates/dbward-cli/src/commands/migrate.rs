@@ -261,10 +261,7 @@ pub async fn run_migrate(
 
     // migrate_status is read-only — no confirmation needed
     if operation != "migrate_status" {
-        crate::output::confirm_or_reject(mode, yes).map_err(|e| match e {
-            crate::output::CliError::Blocked { reason } => CliError::Internal(reason),
-            other => CliError::Internal(other.to_string()),
-        })?;
+        crate::output::confirm_or_reject(mode, yes)?;
     }
 
     let outcome = tokio::select! {
@@ -355,7 +352,11 @@ pub async fn run_migrate(
                     StderrLine::Hint(format!("Run: dbward request resume {request_id}")),
                 ],
             };
-            Ok(CliResponse::ok(output, render))
+            Ok(CliResponse::ok(output, render).with_issues(
+                2,
+                "approved_pending_resume",
+                format!("request {request_id} is approved but not yet resumed"),
+            ))
         }
     }
 }

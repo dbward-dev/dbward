@@ -91,24 +91,42 @@ pub fn build_request_metadata(
     }
 }
 
+/// Result of a save_result operation.
+#[derive(Debug)]
+#[allow(dead_code)]
+pub struct SaveOutcome {
+    /// Path where the result was saved, if successful.
+    pub path: Option<PathBuf>,
+    /// Warning message if config-dir auto-save failed (non-fatal).
+    pub warning: Option<String>,
+}
+
 pub fn save_result(
     request_id: &str,
     resp: &serde_json::Value,
     output: Option<&Path>,
     config_dir: Option<&Path>,
-) -> Result<Option<PathBuf>, CliError> {
+) -> Result<SaveOutcome, CliError> {
     let (path, explicit) = match output {
         Some(p) => (p.to_path_buf(), true),
         None => {
             let dir = match config_dir {
                 Some(d) => d,
-                None => return Ok(None),
+                None => {
+                    return Ok(SaveOutcome {
+                        path: None,
+                        warning: None,
+                    });
+                }
             };
             if let Err(e) = std::fs::create_dir_all(dir) {
-                return Err(CliError::Internal(format!(
-                    "cannot create results dir {}: {e}",
-                    dir.display()
-                )));
+                return Ok(SaveOutcome {
+                    path: None,
+                    warning: Some(format!(
+                        "failed to create results dir {}: {e}",
+                        dir.display()
+                    )),
+                });
             }
             #[cfg(unix)]
             {
@@ -126,7 +144,10 @@ pub fn save_result(
     }
     let content = serde_json::to_string_pretty(resp).unwrap_or_default();
     match write_secure(&path, content.as_bytes()) {
-        Ok(()) => Ok(Some(path)),
+        Ok(()) => Ok(SaveOutcome {
+            path: Some(path),
+            warning: None,
+        }),
         Err(e) => {
             if explicit {
                 Err(CliError::Internal(format!(
@@ -134,8 +155,14 @@ pub fn save_result(
                     path.display()
                 )))
             } else {
-                // Non-explicit save failure is non-fatal
-                Ok(None)
+                // Non-explicit save failure is non-fatal — return warning
+                Ok(SaveOutcome {
+                    path: None,
+                    warning: Some(format!(
+                        "failed to auto-save result to {}: {e}",
+                        path.display()
+                    )),
+                })
             }
         }
     }
@@ -226,15 +253,17 @@ mod tests {
     #[test]
     fn no_output_no_config_returns_none() {
         let result = save_result("req_123", &sample_result(), None, None).unwrap();
-        assert!(result.is_none());
+        assert!(result.path.is_none());
+        assert!(result.warning.is_none());
     }
 
     #[test]
     fn config_dir_saves_to_dir() {
         let dir = tempfile::tempdir().unwrap();
         let result = save_result("req_456", &sample_result(), None, Some(dir.path())).unwrap();
-        assert!(result.is_some());
-        let path = result.unwrap();
+        assert!(result.path.is_some());
+        assert!(result.warning.is_none());
+        let path = result.path.unwrap();
         assert_eq!(path, dir.path().join("req_456.json"));
         assert!(path.exists());
         let content: serde_json::Value =
@@ -255,8 +284,8 @@ mod tests {
             Some(config_dir.path()),
         )
         .unwrap();
-        assert!(result.is_some());
-        assert_eq!(result.unwrap(), output_path);
+        assert!(result.path.is_some());
+        assert_eq!(result.path.unwrap(), output_path);
         assert!(output_path.exists());
         // config_dir should NOT have a file
         assert!(!config_dir.path().join("req_789.json").exists());
@@ -268,7 +297,7 @@ mod tests {
         let output_path = output_dir.path().join("explicit.json");
 
         let result = save_result("req_abc", &sample_result(), Some(&output_path), None).unwrap();
-        assert!(result.is_some());
+        assert!(result.path.is_some());
         assert!(output_path.exists());
     }
 

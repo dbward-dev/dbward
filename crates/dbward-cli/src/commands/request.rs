@@ -409,9 +409,7 @@ async fn run_cancel(
     {
         progress.warn("Query is currently executing on the database.");
         progress.status("  Cancelling will kill the running query and roll back any changes.");
-        if confirm_or_reject(mode, false).is_err() {
-            return Err(CliError::Internal("aborted by user".into()));
-        }
+        confirm_or_reject(mode, false)?;
     }
 
     match sc.cancel_request(id, reason).await {
@@ -932,7 +930,7 @@ async fn run_resume(
     };
 
     // Save result (maintains backward compatibility)
-    save_result(id, &resp, output, config_results_dir)?;
+    let save = save_result(id, &resp, output, config_results_dir)?;
 
     // For human mode: use the existing formatted display via Raw
     let human_display = format_execution_result_as_string(&resp, result_format);
@@ -943,7 +941,11 @@ async fn run_resume(
         stderr: vec![],
     };
 
-    Ok(CliResponse::ok(RequestResumeOutput(resp), render))
+    let mut cli_resp = CliResponse::ok(RequestResumeOutput(resp), render);
+    if let Some(w) = save.warning {
+        cli_resp = cli_resp.with_warning(w);
+    }
+    Ok(cli_resp)
 }
 
 async fn run_result(
@@ -957,7 +959,7 @@ async fn run_result(
     let resp = sc.get_result_content(id, execution_id).await?;
 
     // Save result (maintains backward compatibility)
-    save_result(id, &resp, output, config_results_dir)?;
+    let save = save_result(id, &resp, output, config_results_dir)?;
 
     // For human mode: use the existing formatted display via Raw
     let human_display = format_execution_result_as_string(&resp, result_format);
@@ -968,7 +970,11 @@ async fn run_result(
         stderr: vec![],
     };
 
-    Ok(CliResponse::ok(RequestResultOutput(resp), render))
+    let mut cli_resp = CliResponse::ok(RequestResultOutput(resp), render);
+    if let Some(w) = save.warning {
+        cli_resp = cli_resp.with_warning(w);
+    }
+    Ok(cli_resp)
 }
 
 async fn run_executions(

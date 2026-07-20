@@ -48,10 +48,7 @@ pub async fn run_execute(
     }
 
     // Confirmation: use confirm_or_reject for non-interactive safety
-    crate::output::confirm_or_reject(mode, yes).map_err(|e| match e {
-        crate::output::CliError::Blocked { reason } => CliError::Blocked { reason },
-        other => CliError::Internal(other.to_string()),
-    })?;
+    crate::output::confirm_or_reject(mode, yes)?;
 
     let metadata = build_request_metadata(ticket, repo);
     let sw = if share_with.is_empty() {
@@ -127,7 +124,10 @@ pub async fn run_execute(
 
     let resp = match outcome {
         Outcome::Completed { request_id, result } => {
-            save_result(&request_id, &result, output, config_results_dir)?;
+            let save = save_result(&request_id, &result, output, config_results_dir)?;
+            if let Some(w) = save.warning {
+                warnings.push(w);
+            }
             let pretty = serde_json::to_string_pretty(&result).unwrap_or_default();
             let render = RenderPlan {
                 stdout: StdoutRender::Raw { value: pretty },
@@ -178,7 +178,11 @@ pub async fn run_execute(
                     StderrLine::Hint(format!("Run: dbward request resume {request_id}")),
                 ],
             };
-            CliResponse::ok(output, render)
+            CliResponse::ok(output, render).with_issues(
+                2,
+                "approved_pending_resume",
+                format!("request {request_id} is approved but not yet resumed"),
+            )
         }
     };
 
