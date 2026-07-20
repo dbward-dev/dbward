@@ -78,3 +78,23 @@ impl RowCollector {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    #[test]
+    fn serde_json_map_preserves_insertion_order() {
+        // Guard: if preserve_order feature is ever removed, this test fails immediately.
+        let mut map = serde_json::Map::new();
+        map.insert("z".into(), json!(1));
+        map.insert("a".into(), json!(2));
+        map.insert("m".into(), json!(3));
+        let keys: Vec<&String> = map.keys().collect();
+        assert_eq!(
+            keys,
+            &["z", "a", "m"],
+            "serde_json preserve_order feature must be enabled"
+        );
+    }
+}
