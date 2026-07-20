@@ -31,7 +31,7 @@ SERVER_URL="${SERVER_URL:-http://localhost:13000}"
 LAST_RESPONSE_BODY=""
 
 # Ensure summary is printed even on set -e failure
-trap 'cleanup_tokens; echo ""; echo "=== Results: $PASS passed, $FAIL failed (interrupted) ==="; [ $FAIL -gt 0 ] && show_server_logs 20' EXIT
+trap 'cleanup_tokens; cleanup_users; echo ""; echo "=== Results: $PASS passed, $FAIL failed (interrupted) ==="; [ $FAIL -gt 0 ] && show_server_logs 20' EXIT
 
 # API call helper — stores response body for failure reporting
 api() {
@@ -122,6 +122,7 @@ show_server_logs() {
 # Usage: create_token <user_id> <roles> [--groups g1,g2] [--agent]
 #   roles: comma-separated, e.g. "admin,operator" or "requester"
 CREATED_TOKENS_FILE=$(mktemp)
+CREATED_USERS_FILE=$(mktemp)
 create_token() {
   local user=$1 roles_str=$2
   shift 2
@@ -165,8 +166,35 @@ create_token() {
       -H "Authorization: Bearer $admin_token" \
       -H "Content-Type: application/json" \
       -d "{\"id\":\"$user\",\"roles\":$roles_json,\"groups\":$groups_json}" 2>/dev/null)
+    if [ "$create_status" = "201" ] || [ "$create_status" = "200" ]; then
+      # Track created user for cleanup (skip bootstrap users)
+      if [ "$user" != "admin" ] && [ "$user" != "agent" ]; then
+        echo "$user" >> "$CREATED_USERS_FILE"
+      fi
+    fi
     if [ "$create_status" = "409" ]; then
-      # User exists — converge to exact desired roles/groups state
+      # Protect bootstrap users: never PATCH admin or agent (they have fixed roles)
+      if [ "$user" = "admin" ] || [ "$user" = "agent" ]; then
+        : # bootstrap users have fixed roles — skip PATCH, proceed to reissue-initial-token
+      else
+      # Check if user is deleted (soft-delete) — if so, use unique suffix
+      local user_status
+      user_status=$(curl -sf -o /dev/null -w "%{http_code}" \
+        "${SERVER_URL}/api/users/${user}" \
+        -H "Authorization: Bearer $admin_token" 2>/dev/null)
+      if [ "$user_status" = "410" ]; then
+        # User is soft-deleted and cannot be reused. Append unique suffix.
+        user="${user}-$(date +%s)-$$"
+        # Re-attempt creation with new ID
+        create_status=$(curl -s -o /dev/null -w "%{http_code}" -X POST "${SERVER_URL}/api/users" \
+          -H "Authorization: Bearer $admin_token" \
+          -H "Content-Type: application/json" \
+          -d "{\"id\":\"$user\",\"roles\":$roles_json,\"groups\":$groups_json}" 2>/dev/null)
+        if [ "$create_status" = "201" ] || [ "$create_status" = "200" ]; then
+          echo "$user" >> "$CREATED_USERS_FILE"
+        fi
+      else
+      # User exists and is active — converge to exact desired roles/groups state
       # Get all defined groups to compute rm_groups = all_groups - requested_groups
       local all_groups_raw
       all_groups_raw=$(curl -sf "${SERVER_URL}/api/groups" \
@@ -190,6 +218,8 @@ create_token() {
         -H "Authorization: Bearer $admin_token" \
         -H "Content-Type: application/json" \
         -d "{\"roles\":$roles_json,\"add_groups\":$groups_json,\"rm_groups\":$rm_json}" >/dev/null 2>&1 || true
+      fi # end deleted-user check
+      fi # end bootstrap protection
     fi
   fi
   local result
@@ -227,6 +257,20 @@ cleanup_tokens() {
   rm -f "$CREATED_TOKENS_FILE"
 }
 
+# Delete all users created during this test run (free plan limit recovery)
+# Only deletes users that were newly created in this run (tracked in CREATED_USERS_FILE).
+# Soft-delete frees active user slots. Re-use of same ID in next run handled by create_token.
+cleanup_users() {
+  if [ -z "${CREATED_USERS_FILE:-}" ] || [ ! -s "$CREATED_USERS_FILE" ]; then return; fi
+  local admin_token
+  admin_token=$(docker compose exec -T dbward-server cat /data/admin-token 2>/dev/null || echo "")
+  while IFS= read -r user_id; do
+    curl -sf -X DELETE "${SERVER_URL}/api/users/$user_id" \
+      -H "Authorization: Bearer $admin_token" 2>/dev/null || true
+  done < "$CREATED_USERS_FILE"
+  rm -f "$CREATED_USERS_FILE"
+}
+
 # Print summary and exit (disables trap to avoid double-print)
 
 # Poll request status until it reaches expected state or timeout.
@@ -250,6 +294,7 @@ wait_for_status() {
 summary() {
   trap - EXIT
   cleanup_tokens
+  cleanup_users
   echo ""
   echo "=== Results: $PASS passed, $FAIL failed ==="
   if [ $FAIL -gt 0 ]; then

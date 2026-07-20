@@ -18,7 +18,7 @@ echo "=== AUDIT-1 Scenario Tests ==="
 echo ""
 
 # Setup tokens
-ADMIN_TOKEN=$(create_token alice admin --groups backend-team --groups dba-team)
+ADMIN_TOKEN=$(create_token alice admin,requester --groups backend-team --groups dba-team)
 DEV_TOKEN=$(create_token bob requester)
 [ -z "$ADMIN_TOKEN" ] && { echo "Failed to create admin token"; exit 1; }
 [ -z "$DEV_TOKEN" ] && { echo "Failed to create dev token"; exit 1; }
@@ -44,7 +44,7 @@ APPROVE1_STATUS=$(echo "$APPROVE1" | json_field status)
 # If still pending (2-step), approve step 2
 if [ "$APPROVE1_STATUS" = "pending" ]; then
   # Need a different actor for step 2
-  ADMIN2_TOKEN=$(create_token carol admin --groups dba-team)
+  ADMIN2_TOKEN=$(create_token carol admin,requester --groups dba-team)
   APPROVE2=$(api POST "/api/requests/$REQ_ID/approve" "$ADMIN2_TOKEN" -d '{"comment":"step 2"}')
   APPROVE2_STATUS=$(echo "$APPROVE2" | json_field status)
   [ "$APPROVE2_STATUS" = "approved" ] && pass "Approve step 2 → approved" || fail "Approve step 2" "got: $APPROVE2_STATUS"

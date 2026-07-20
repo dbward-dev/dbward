@@ -14,7 +14,7 @@ echo ""
 
 wait_for_server
 
-ADMIN_TOKEN=$(create_token migrate-admin admin)
+ADMIN_TOKEN=$(create_token migrate-admin admin,requester)
 [ -z "$ADMIN_TOKEN" ] && { echo "Failed to create token"; exit 1; }
 
 # Write CLI config with migrations_dir

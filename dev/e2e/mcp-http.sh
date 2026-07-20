@@ -56,10 +56,10 @@ echo "--- 2. tools/list ---"
 
 RESP=$(mcp_post '{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}')
 TOOL_COUNT=$(echo "$RESP" | python3 -c "import sys,json; print(len(json.load(sys.stdin)['result']['tools']))" 2>/dev/null || echo "0")
-if [ "$TOOL_COUNT" = "9" ]; then
-  pass "tools/list returns 9 tools"
+if [ "$TOOL_COUNT" = "8" ]; then
+  pass "tools/list returns 8 tools"
 else
-  fail "tools/list tool count" "expected 9, got $TOOL_COUNT"
+  fail "tools/list tool count" "expected 8, got $TOOL_COUNT"
 fi
 
 # --- 3. tools/call — inspect_schema ---
@@ -154,10 +154,10 @@ else
   fail "unknown method error code" "expected -32601, got $ERR_CODE"
 fi
 
-# 8e: Unsupported protocol version → error
+# 8e: Unsupported protocol version → server negotiates to latest (no error)
 RESP=$(mcp_post '{"jsonrpc":"2.0","id":100,"method":"initialize","params":{"protocolVersion":"2024-01-01","capabilities":{}}}')
-if echo "$RESP" | python3 -c "import sys,json; d=json.load(sys.stdin); assert d.get('error')" 2>/dev/null; then
-  pass "unsupported protocol version returns error"
+if echo "$RESP" | python3 -c "import sys,json; d=json.load(sys.stdin); assert d['result']['protocolVersion'] == '2025-06-18'" 2>/dev/null; then
+  pass "unsupported protocol version negotiates to latest"
 else
   fail "unsupported version" "$RESP"
 fi

@@ -13,7 +13,7 @@ echo "=== E2E Fail-Closed Tests ==="
 echo ""
 
 # Create tokens
-ADMIN_TOKEN=$(create_token alice admin)
+ADMIN_TOKEN=$(create_token alice admin,requester)
 DEV_TOKEN=$(create_token bob requester)
 
 [ -z "$ADMIN_TOKEN" ] && { echo "Failed to create admin token"; exit 1; }

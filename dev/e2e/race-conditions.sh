@@ -11,8 +11,8 @@ echo ""
 echo "=== Race Condition Tests ==="
 echo ""
 
-ADMIN1_TOKEN=$(create_token e2e-race-admin1 admin)
-ADMIN2_TOKEN=$(create_token e2e-race-admin2 admin)
+ADMIN1_TOKEN=$(create_token e2e-race-admin1 admin,requester)
+ADMIN2_TOKEN=$(create_token e2e-race-admin2 admin,requester)
 DEV_TOKEN=$(create_token e2e-race-dev requester)
 [ -z "$ADMIN1_TOKEN" ] && { echo "Failed to create tokens"; exit 1; }
 

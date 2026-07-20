@@ -12,7 +12,7 @@ echo ""
 echo "=== E2E Policy Tests (CFG-24: Config-managed) ==="
 echo ""
 
-ADMIN_TOKEN=$(create_token e2e-admin admin)
+ADMIN_TOKEN=$(create_token e2e-admin admin,requester)
 DEV_TOKEN=$(create_token e2e-dev requester)
 [ -z "$ADMIN_TOKEN" ] && { echo "Failed to create admin token"; exit 1; }
 

@@ -15,7 +15,7 @@ echo ""
 
 wait_for_server
 
-ADMIN_TOKEN=$(create_token migrate-imp-admin admin)
+ADMIN_TOKEN=$(create_token migrate-imp-admin admin,requester)
 [ -z "$ADMIN_TOKEN" ] && { echo "Failed to create admin token"; exit 1; }
 
 # --- 1. Migration exclusion: concurrent migration on same db/env rejected ---

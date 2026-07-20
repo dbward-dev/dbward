@@ -11,7 +11,7 @@ echo ""
 echo "=== Data Leakage Tests ==="
 echo ""
 
-ADMIN_TOKEN=$(create_token e2e-leak-admin admin)
+ADMIN_TOKEN=$(create_token e2e-leak-admin admin,requester)
 DEV_TOKEN=$(create_token e2e-leak-dev requester)
 # Operator token to verify request visibility (has request.view:Any)
 OPERATOR_TOKEN=$(create_token e2e-leak-operator operator)

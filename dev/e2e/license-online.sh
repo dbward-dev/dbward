@@ -42,7 +42,7 @@ sleep 5
 wait_for_server
 
 TS=$(date +%s)
-ADMIN_TOKEN=$(create_token "e2e-lov-$TS" admin)
+ADMIN_TOKEN=$(create_token "e2e-lov-$TS" admin,requester)
 
 # --- 1. Initial state: Team plan (mock returns active) ---
 echo ""
@@ -84,7 +84,7 @@ if [ "${FAILURE:-0}" = "0" ]; then
   docker compose restart dbward-server 2>/dev/null
   sleep 5
   wait_for_server
-  ADMIN_TOKEN=$(create_token "e2e-lov-restart-$TS" admin)
+  ADMIN_TOKEN=$(create_token "e2e-lov-restart-$TS" admin,requester)
 fi
 
 # --- 3. Change mock back to active → server should restore Team ---
@@ -136,7 +136,7 @@ DBWARD_LICENSE_OFFLINE=true docker compose up -d dbward-server 2>/dev/null
 sleep 5
 wait_for_server
 
-ADMIN_TOKEN=$(create_token "e2e-lov-offline-$TS" admin)
+ADMIN_TOKEN=$(create_token "e2e-lov-offline-$TS" admin,requester)
 
 # Wait longer than online interval to confirm no validation happens
 sleep 15
