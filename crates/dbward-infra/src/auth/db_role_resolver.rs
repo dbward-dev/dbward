@@ -503,6 +503,7 @@ fn builtin_roles() -> Vec<(String, ResolvedRole)> {
                 name: "requester".to_string(),
                 permissions: HashMap::from([
                     (Permission::RequestDml, OwnershipScope::Own),
+                    (Permission::RequestDdl, OwnershipScope::Own),
                     (Permission::RequestQuery, OwnershipScope::Own),
                     (Permission::RequestView, OwnershipScope::Own),
                     (Permission::RequestCancel, OwnershipScope::Own),
@@ -540,6 +541,9 @@ fn builtin_roles() -> Vec<(String, ResolvedRole)> {
             ResolvedRole {
                 name: "operator".to_string(),
                 permissions: HashMap::from([
+                    (Permission::RequestQuery, OwnershipScope::Own),
+                    (Permission::RequestDml, OwnershipScope::Own),
+                    (Permission::RequestDdl, OwnershipScope::Own),
                     (Permission::RequestView, OwnershipScope::Any),
                     (Permission::RequestCancel, OwnershipScope::Any),
                     (Permission::RequestResume, OwnershipScope::Any),

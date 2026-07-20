@@ -324,6 +324,14 @@ pub fn sql_review_from_config(
                         .map_err(|err| format!("sql_review[{i}].drop_table: {err}"))?,
                     drop_column: parse_action(&e.drop_column)
                         .map_err(|err| format!("sql_review[{i}].drop_column: {err}"))?,
+                    drop_index: parse_action(&e.drop_index)
+                        .map_err(|err| format!("sql_review[{i}].drop_index: {err}"))?,
+                    drop_view: parse_action(&e.drop_view)
+                        .map_err(|err| format!("sql_review[{i}].drop_view: {err}"))?,
+                    drop_sequence: parse_action(&e.drop_sequence)
+                        .map_err(|err| format!("sql_review[{i}].drop_sequence: {err}"))?,
+                    create_sequence: parse_action(&e.create_sequence)
+                        .map_err(|err| format!("sql_review[{i}].create_sequence: {err}"))?,
                     not_null_without_default: parse_action(&e.not_null_without_default).map_err(
                         |err| format!("sql_review[{i}].not_null_without_default: {err}"),
                     )?,

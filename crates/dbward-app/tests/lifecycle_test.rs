@@ -427,6 +427,7 @@ fn make_user(id: &str, roles: &[&str]) -> AuthUser {
                 name: name.to_string(),
                 permissions: [
                     (Permission::RequestDml, OwnershipScope::Own),
+                    (Permission::RequestDdl, OwnershipScope::Own),
                     (Permission::RequestView, OwnershipScope::Own),
                     (Permission::RequestResume, OwnershipScope::Own),
                     (Permission::RequestCancel, OwnershipScope::Own),

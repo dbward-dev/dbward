@@ -62,6 +62,7 @@ pub struct PreflightClassification {
     pub operation: String,
     pub mutating: bool,
     pub ddl: bool,
+    pub requires_ddl_permission: bool,
     pub multi_statement: bool,
     pub statement_count: usize,
 }
@@ -405,6 +406,8 @@ impl PreflightUseCase {
 
         let op_permission = if operation.is_read_only() {
             Permission::RequestQuery
+        } else if classification.is_ddl_only {
+            Permission::RequestDdl
         } else {
             Permission::RequestDml
         };
@@ -417,7 +420,19 @@ impl PreflightUseCase {
                 &input.environment,
                 &ResourceContext::Global,
             )
-            .is_ok();
+            .is_ok()
+            && (!classification.contains_ddl
+                || classification.is_ddl_only
+                || self
+                    .authorizer
+                    .authorize_scoped(
+                        user,
+                        Permission::RequestDdl,
+                        &input.database,
+                        &input.environment,
+                        &ResourceContext::Global,
+                    )
+                    .is_ok());
         let caller_has_break_glass = self
             .authorizer
             .authorize_scoped(
@@ -427,7 +442,18 @@ impl PreflightUseCase {
                 &input.environment,
                 &ResourceContext::Global,
             )
-            .is_ok();
+            .is_ok()
+            && (!classification.contains_ddl
+                || self
+                    .authorizer
+                    .authorize_scoped(
+                        user,
+                        Permission::RequestBreakGlassDdl,
+                        &input.database,
+                        &input.environment,
+                        &ResourceContext::Global,
+                    )
+                    .is_ok());
 
         let policy = PreflightPolicy::from_workflow(
             &workflow,
@@ -507,6 +533,7 @@ impl PreflightUseCase {
             operation: operation.as_str().to_string(),
             mutating: !operation.is_read_only(),
             ddl: classification.is_ddl_only,
+            requires_ddl_permission: classification.contains_ddl,
             multi_statement: classification.statement_count > 1,
             statement_count: classification.statement_count,
         };
@@ -621,6 +648,7 @@ fn blocked_result(reason: &str) -> PreflightResult {
             operation: "unknown".into(),
             mutating: false,
             ddl: false,
+            requires_ddl_permission: false,
             multi_statement: false,
             statement_count: 0,
         },

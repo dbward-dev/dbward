@@ -43,6 +43,19 @@ fn hint_for_rule(rule: RuleId) -> String {
         RuleId::DropColumn => {
             "Verify no application code references this column before dropping".to_string()
         }
+        RuleId::DropIndex => {
+            "Verify no queries depend on this index for performance before dropping".to_string()
+        }
+        RuleId::DropView => {
+            "Verify no application code or other views reference this view before dropping"
+                .to_string()
+        }
+        RuleId::DropSequence => {
+            "Verify no columns use this sequence as a default value before dropping".to_string()
+        }
+        RuleId::CreateSequence => {
+            "Ensure the sequence name follows naming conventions and does not conflict with existing objects".to_string()
+        }
         RuleId::NotNullWithoutDefault => {
             "Add a DEFAULT value or make the column nullable to avoid blocking writes".to_string()
         }
@@ -92,6 +105,10 @@ mod tests {
             RuleId::NoWhereUpdate,
             RuleId::DropTable,
             RuleId::DropColumn,
+            RuleId::DropIndex,
+            RuleId::DropView,
+            RuleId::DropSequence,
+            RuleId::CreateSequence,
             RuleId::NotNullWithoutDefault,
             RuleId::CreateIndexNotConcurrently,
             RuleId::AlterColumnType,

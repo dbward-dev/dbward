@@ -16,6 +16,12 @@ permissions = ["request.dml", "request.query", "request.resume", "request.cancel
 databases = ["*"]
 environments = ["*"]
 
+[[auth.roles]]
+name = "dml-only"
+permissions = ["request.dml", "request.query", "request.view", "request.preflight", "result.view"]
+databases = ["*"]
+environments = ["*"]
+
 # V25: Groups define name + roles. Members managed via API/CLI.
 [[auth.groups]]
 name = "backend-team"
@@ -140,6 +146,9 @@ approval_ttl_secs = 600
 database = "*"
 environment = "*"
 drop_table = "warn"
+drop_index = "warn"
+drop_view = "warn"
+drop_sequence = "warn"
 no_where_delete = "block"
 no_where_update = "block"
 

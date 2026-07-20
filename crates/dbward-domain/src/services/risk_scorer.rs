@@ -141,11 +141,16 @@ pub fn evaluate(input: &RiskInput) -> RiskAssessment {
     }
 
     // DROP/TRUNCATE
-    if input
-        .findings
-        .iter()
-        .any(|f| matches!(f.rule, RuleId::DropTable | RuleId::Truncate))
-    {
+    if input.findings.iter().any(|f| {
+        matches!(
+            f.rule,
+            RuleId::DropTable
+                | RuleId::Truncate
+                | RuleId::DropIndex
+                | RuleId::DropView
+                | RuleId::DropSequence
+        )
+    }) {
         factors.push(RiskFactor::DropOperation);
         level = level.max(RiskLevel::High);
     }

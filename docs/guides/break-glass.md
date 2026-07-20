@@ -18,16 +18,16 @@ Both `--emergency` and `--reason` are required.
 
 ### DDL bypass (schema repair)
 
-To execute DDL statements (DROP TABLE, CREATE SEQUENCE, etc.) in emergencies, add `--allow-ddl`:
+To execute DDL statements that are blocked by sql_review rules in emergencies, add `--allow-ddl`:
 
 ```bash
 dbward execute --emergency --allow-ddl --reason "Rebuild corrupted table" \
   "DROP TABLE broken_cache; CREATE TABLE broken_cache (id INT PRIMARY KEY, data TEXT)"
 ```
 
-`--allow-ddl` requires `--emergency` and the additional `request.break_glass_ddl` permission.
+`--allow-ddl` bypasses sql_review rule blocks (e.g., `drop_table = "block"`) for eligible DDL statements. These statements are no longer rejected by the classifier — they pass through as DestructiveDdl and are controlled by sql_review rules. `--allow-ddl` requires `--emergency` and the additional `request.break_glass_ddl` permission.
 
-**Bypassable:** DROP TABLE/VIEW/INDEX/SEQUENCE, CREATE SEQUENCE, TRUNCATE, plus CREATE TABLE/VIEW/INDEX and ALTER TABLE in mixed repair batches.
+**Bypassable (sql_review blocks):** DROP TABLE/VIEW/INDEX/SEQUENCE, CREATE SEQUENCE, TRUNCATE, plus CREATE TABLE/VIEW/INDEX and ALTER TABLE in mixed repair batches.
 
 **Never bypassable:** GRANT, REVOKE, CREATE ROLE/FUNCTION/DATABASE/SCHEMA, BEGIN/COMMIT, SET ROLE, LOAD DATA.
 
@@ -43,7 +43,7 @@ dbward execute --emergency --allow-ddl --reason "Rebuild corrupted table" \
 ## What happens
 
 1. SQL is classified and reviewed normally
-2. If `--allow-ddl`: classifier rejection is bypassed for eligible DDL; reviewer blocks on DDL rules are bypassed
+2. If `--allow-ddl`: reviewer blocks on DDL sql_review rules are bypassed for eligible DestructiveDdl statements
 3. Workflow lookup is skipped
 4. Request status is set to `BreakGlass` (immediately dispatchable)
 5. Agent picks up and executes the operation
@@ -59,7 +59,7 @@ Break-glass creates enhanced audit records:
 - Prometheus metric: `dbward_break_glass_total` incremented
 
 When `--allow-ddl` is used, an additional `ddl_via_break_glass` audit event is recorded with:
-- Which safety layer was bypassed (classifier, reviewer, or both)
+- Which safety layer was bypassed (sql_review block)
 - Statement count
 - Redacted SQL (literals replaced with `?`)
 
@@ -101,7 +101,7 @@ permissions = ["request.break_glass_dml", "request.break_glass_ddl", "request.dm
 - Privilege DDL (GRANT, REVOKE, CREATE ROLE/FUNCTION/DATABASE) is **always blocked** — even with `--emergency --allow-ddl`
 - Transaction control (BEGIN, COMMIT, ROLLBACK) is always blocked
 - Break-glass does not bypass SQL classification or review for DML safety rules (e.g., DELETE without WHERE)
-- `--allow-ddl` bypasses classifier rejection and reviewer blocking **only for schema-repair DDL**
+- `--allow-ddl` bypasses sql_review blocking **only for DestructiveDdl statements** (DROP TABLE/VIEW/INDEX/SEQUENCE, TRUNCATE, CREATE SEQUENCE)
 - Results are still stored and access-controlled normally
 - MCP channel cannot use break-glass or `--allow-ddl`
 

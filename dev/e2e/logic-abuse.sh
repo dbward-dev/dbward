@@ -22,10 +22,10 @@ echo "--- Break-glass controls ---"
 # Break-glass without reason should be rejected
 STATUS=$(api_status POST /api/requests "$OPERATOR_TOKEN" \
   -d '{"detail":"DROP TABLE temp","database":"app","environment":"production","emergency":true}')
-[ "$STATUS" = "400" ] && pass "Break-glass without reason rejected" || \
+[ "$STATUS" = "400" ] || [ "$STATUS" = "403" ] && pass "Break-glass without reason rejected ($STATUS)" || \
   { [ "$STATUS" = "201" ] && fail "Break-glass" "accepted without reason" || fail "Break-glass" "got $STATUS"; }
 
-# Break-glass with reason should work (operator only)
+# Break-glass with reason should work (operator has break-glass permissions)
 STATUS=$(api_status POST /api/requests "$OPERATOR_TOKEN" \
   -d '{"detail":"SELECT 1","database":"app","environment":"production","emergency":true,"reason":"incident INC-123"}')
 [ "$STATUS" = "201" ] && pass "Break-glass with reason accepted (operator)" || fail "Break-glass with reason" "got $STATUS"

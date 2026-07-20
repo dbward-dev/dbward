@@ -224,10 +224,11 @@ impl CreateRequest {
                                         stmts.iter().map(|s| s.to_string()).collect();
                                     let c = Classification {
                                         operation: Operation::ExecuteDml,
-                                        dml_reason: Some(DmlReason::Ddl),
+                                        dml_reason: Some(DmlReason::DestructiveDdl),
                                         statement_count: stmts.len(),
                                         statements: stmt_strings,
                                         is_ddl_only: true,
+                                        contains_ddl: true,
                                     };
                                     classifier_bypassed = true;
                                     (
@@ -246,10 +247,24 @@ impl CreateRequest {
                                 }
                             }
                         } else if input.emergency && !input.allow_ddl {
-                            return Err(BreakGlassDenial::MissingAllowDdl {
-                                original_reason: reason,
+                            // Defensive: currently unreachable because all break-glass-eligible
+                            // DDL (DROP TABLE/VIEW/INDEX/SEQ, TRUNCATE, CREATE SEQ) now classifies
+                            // as DestructiveDdl rather than Rejected. Kept for future-proofing.
+                            let bypassable =
+                                result.parsed_statements.as_ref().is_some_and(|stmts| {
+                                    !stmts.is_empty()
+                                        && stmts.iter().all(|s| {
+                                            sql_classifier::categorize_statement(s)
+                                                .is_break_glass_eligible()
+                                        })
+                                });
+                            if bypassable {
+                                return Err(BreakGlassDenial::MissingAllowDdl {
+                                    original_reason: reason,
+                                }
+                                .into_app_error());
                             }
-                            .into_app_error());
+                            return Err(AppError::Validation(reason));
                         } else {
                             return Err(AppError::Validation(reason));
                         }
@@ -377,10 +392,19 @@ impl CreateRequest {
                             if let Err(e) = self.audit_logger.record(&audit_event) {
                                 tracing::error!(error = %e, "failed to record request_blocked_by_review audit event");
                             }
-                            return Err(AppError::Validation(format!(
-                                "SQL blocked by review: {}",
-                                reasons.join("; ")
-                            )));
+                            // Add --allow-ddl hint when all blocked rules are bypassable DDL
+                            let all_bypassable = review
+                                .findings
+                                .iter()
+                                .filter(|f| f.action == sql_reviewer::RuleAction::Block)
+                                .all(|f| f.rule.is_break_glass_bypassable());
+                            let base_msg = format!("SQL blocked by review: {}", reasons.join("; "));
+                            if all_bypassable && input.emergency && !input.channel.is_restricted() {
+                                return Err(AppError::Validation(format!(
+                                    "{base_msg}. Hint: add --allow-ddl to bypass in emergency mode"
+                                )));
+                            }
+                            return Err(AppError::Validation(base_msg));
                         }
                     }
                     let tables = table_extractor::extract_tables(stmts);
@@ -588,6 +612,8 @@ impl CreateRequest {
             }
         } else if operation == Operation::ExecuteSelect {
             Permission::RequestQuery
+        } else if classification.as_ref().is_some_and(|c| c.is_ddl_only) {
+            Permission::RequestDdl
         } else {
             Permission::RequestDml
         };
@@ -600,6 +626,22 @@ impl CreateRequest {
                 &ResourceContext::Global,
             )
             .map_err(AppError::Forbidden)?;
+
+        // Mixed DML+DDL batch: also require RequestDdl
+        if classification
+            .as_ref()
+            .is_some_and(|c| !c.is_ddl_only && c.contains_ddl)
+        {
+            self.authorizer
+                .authorize_scoped(
+                    user,
+                    Permission::RequestDdl,
+                    &input.database,
+                    &input.environment,
+                    &ResourceContext::Global,
+                )
+                .map_err(AppError::Forbidden)?;
+        }
 
         // Additional permission gate for DDL bypass
         if input.allow_ddl {

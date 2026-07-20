@@ -19,6 +19,10 @@ pub enum RuleId {
     NoWhereUpdate,
     DropTable,
     DropColumn,
+    DropIndex,
+    DropView,
+    DropSequence,
+    CreateSequence,
     NotNullWithoutDefault,
     CreateIndexNotConcurrently,
     AlterColumnType,
@@ -36,6 +40,10 @@ impl RuleId {
             Self::DropTable => true,
             Self::Truncate => true,
             Self::DropColumn => true,
+            Self::DropIndex => true,
+            Self::DropView => true,
+            Self::DropSequence => true,
+            Self::CreateSequence => true,
             Self::CreateIndexNotConcurrently => true,
             Self::AlterColumnType => true,
             Self::NotNullWithoutDefault => true,
@@ -53,6 +61,10 @@ impl RuleId {
             Self::NoWhereUpdate => "no_where_update",
             Self::DropTable => "drop_table",
             Self::DropColumn => "drop_column",
+            Self::DropIndex => "drop_index",
+            Self::DropView => "drop_view",
+            Self::DropSequence => "drop_sequence",
+            Self::CreateSequence => "create_sequence",
             Self::NotNullWithoutDefault => "not_null_without_default",
             Self::CreateIndexNotConcurrently => "create_index_not_concurrently",
             Self::AlterColumnType => "alter_column_type",
@@ -79,11 +91,16 @@ pub struct ReviewResult {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
 pub struct ReviewRules {
     pub no_where_delete: RuleAction,
     pub no_where_update: RuleAction,
     pub drop_table: RuleAction,
     pub drop_column: RuleAction,
+    pub drop_index: RuleAction,
+    pub drop_view: RuleAction,
+    pub drop_sequence: RuleAction,
+    pub create_sequence: RuleAction,
     pub not_null_without_default: RuleAction,
     pub create_index_not_concurrently: RuleAction,
     pub alter_column_type: RuleAction,
@@ -99,6 +116,10 @@ impl Default for ReviewRules {
             no_where_update: RuleAction::Block,
             drop_table: RuleAction::Block,
             drop_column: RuleAction::Warn,
+            drop_index: RuleAction::Warn,
+            drop_view: RuleAction::Warn,
+            drop_sequence: RuleAction::Warn,
+            create_sequence: RuleAction::Off,
             not_null_without_default: RuleAction::Warn,
             create_index_not_concurrently: RuleAction::Warn,
             alter_column_type: RuleAction::Warn,
@@ -144,6 +165,10 @@ pub fn review_statements(
         check_no_where_update(stmt, idx, rules.no_where_update, &mut findings);
         check_drop_table(stmt, idx, rules.drop_table, &mut findings);
         check_drop_column(stmt, idx, rules.drop_column, &mut findings);
+        check_drop_index(stmt, idx, rules.drop_index, &mut findings);
+        check_drop_view(stmt, idx, rules.drop_view, &mut findings);
+        check_drop_sequence(stmt, idx, rules.drop_sequence, &mut findings);
+        check_create_sequence(stmt, idx, rules.create_sequence, &mut findings);
         check_not_null_without_default(stmt, idx, rules.not_null_without_default, &mut findings);
         if dialect == Some(Dialect::PostgreSql) {
             check_create_index_not_concurrently(
@@ -359,6 +384,78 @@ fn check_truncate(stmt: &Statement, idx: usize, action: RuleAction, findings: &m
     }
 }
 
+fn check_drop_index(stmt: &Statement, idx: usize, action: RuleAction, findings: &mut Vec<Finding>) {
+    if action == RuleAction::Off {
+        return;
+    }
+    if let Statement::Drop { object_type, .. } = stmt
+        && *object_type == ObjectType::Index
+    {
+        findings.push(Finding {
+            rule: RuleId::DropIndex,
+            action,
+            message: "DROP INDEX detected".into(),
+            statement_index: idx,
+        });
+    }
+}
+
+fn check_drop_view(stmt: &Statement, idx: usize, action: RuleAction, findings: &mut Vec<Finding>) {
+    if action == RuleAction::Off {
+        return;
+    }
+    if let Statement::Drop { object_type, .. } = stmt
+        && *object_type == ObjectType::View
+    {
+        findings.push(Finding {
+            rule: RuleId::DropView,
+            action,
+            message: "DROP VIEW detected".into(),
+            statement_index: idx,
+        });
+    }
+}
+
+fn check_drop_sequence(
+    stmt: &Statement,
+    idx: usize,
+    action: RuleAction,
+    findings: &mut Vec<Finding>,
+) {
+    if action == RuleAction::Off {
+        return;
+    }
+    if let Statement::Drop { object_type, .. } = stmt
+        && *object_type == ObjectType::Sequence
+    {
+        findings.push(Finding {
+            rule: RuleId::DropSequence,
+            action,
+            message: "DROP SEQUENCE detected".into(),
+            statement_index: idx,
+        });
+    }
+}
+
+fn check_create_sequence(
+    stmt: &Statement,
+    idx: usize,
+    action: RuleAction,
+    findings: &mut Vec<Finding>,
+) {
+    if action == RuleAction::Off {
+        return;
+    }
+    if matches!(stmt, Statement::CreateSequence { .. }) {
+        findings.push(Finding {
+            rule: RuleId::CreateSequence,
+            action,
+            message: "CREATE SEQUENCE detected".into(),
+            statement_index: idx,
+        });
+    }
+}
+
 fn check_large_in_list(
     stmt: &Statement,
     idx: usize,
@@ -389,9 +486,13 @@ fn is_ddl(stmt: &Statement) -> bool {
         Statement::CreateTable(_)
             | Statement::CreateIndex(_)
             | Statement::AlterTable(_)
-            | Statement::Drop { .. }
             | Statement::Truncate(_)
             | Statement::CreateView { .. }
+            | Statement::CreateSequence { .. }
+    ) || matches!(
+        stmt,
+        Statement::Drop { object_type, .. }
+            if matches!(object_type, ObjectType::Table | ObjectType::View | ObjectType::Index | ObjectType::Sequence)
     )
 }
 
@@ -492,5 +593,52 @@ mod tests {
     fn select_produces_no_findings() {
         let r = review_pg("SELECT * FROM users WHERE id = 1");
         assert!(r.findings.is_empty());
+    }
+
+    #[test]
+    fn drop_index_produces_warning() {
+        let r = review_pg("DROP INDEX my_idx");
+        assert_eq!(r.findings.len(), 1);
+        assert_eq!(r.findings[0].rule, RuleId::DropIndex);
+        assert_eq!(r.findings[0].action, RuleAction::Warn);
+        assert!(!r.blocked);
+    }
+
+    #[test]
+    fn drop_view_produces_warning() {
+        let r = review_pg("DROP VIEW my_view");
+        assert_eq!(r.findings.len(), 1);
+        assert_eq!(r.findings[0].rule, RuleId::DropView);
+        assert_eq!(r.findings[0].action, RuleAction::Warn);
+        assert!(!r.blocked);
+    }
+
+    #[test]
+    fn drop_sequence_produces_warning() {
+        let r = review_pg("DROP SEQUENCE my_seq");
+        assert_eq!(r.findings.len(), 1);
+        assert_eq!(r.findings[0].rule, RuleId::DropSequence);
+        assert_eq!(r.findings[0].action, RuleAction::Warn);
+        assert!(!r.blocked);
+    }
+
+    #[test]
+    fn create_sequence_off_by_default_produces_no_finding() {
+        let r = review_pg("CREATE SEQUENCE my_seq");
+        // Default is Off, so no finding
+        assert!(
+            r.findings.is_empty() || r.findings.iter().all(|f| f.rule != RuleId::CreateSequence)
+        );
+    }
+
+    #[test]
+    fn create_sequence_warn_produces_finding() {
+        let rules = ReviewRules {
+            create_sequence: RuleAction::Warn,
+            ..Default::default()
+        };
+        let r = review("CREATE SEQUENCE my_seq", Some(Dialect::PostgreSql), &rules);
+        assert!(r.findings.iter().any(|f| f.rule == RuleId::CreateSequence));
+        assert!(!r.blocked);
     }
 }

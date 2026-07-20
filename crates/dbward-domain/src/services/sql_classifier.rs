@@ -30,8 +30,15 @@ pub fn classify_statements(statements: &[Statement]) -> Result<Classification, C
     let stmt_strings: Vec<String> = statements.iter().map(|s| s.to_string()).collect();
 
     let mut worst = InternalClass::Select;
+    let mut contains_ddl = false;
     for stmt in statements {
         let c = classify_statement(stmt);
+        if matches!(
+            c,
+            InternalClass::Dml(DmlReason::Ddl | DmlReason::DestructiveDdl)
+        ) {
+            contains_ddl = true;
+        }
         worst = worst.escalate(c);
     }
 
@@ -65,15 +72,17 @@ pub fn classify_statements(statements: &[Statement]) -> Result<Classification, C
             statement_count: stmt_strings.len(),
             statements: stmt_strings,
             is_ddl_only: false,
+            contains_ddl: false,
         }),
         InternalClass::Dml(reason) => {
-            let is_ddl_only = matches!(reason, DmlReason::Ddl);
+            let is_ddl_only = matches!(reason, DmlReason::Ddl | DmlReason::DestructiveDdl);
             Ok(Classification {
                 operation: Operation::ExecuteDml,
                 dml_reason: Some(reason),
                 statement_count: stmt_strings.len(),
                 statements: stmt_strings,
                 is_ddl_only,
+                contains_ddl,
             })
         }
         InternalClass::Rejected(reason) => Err(ClassifyError::Rejected { reason }),
@@ -102,6 +111,7 @@ pub fn classify(sql: &str, dialect: Dialect) -> Result<Classification, ClassifyE
                 statement_count: 1,
                 statements: vec![trimmed.to_string()],
                 is_ddl_only: false,
+                contains_ddl: false,
             })
         }
     }
@@ -142,6 +152,7 @@ pub fn classify_full(sql: &str, dialect: Dialect) -> ClassifyResult {
                 statement_count: 1,
                 statements: vec![sql.trim().to_string()],
                 is_ddl_only: false,
+                contains_ddl: false,
             }),
             parsed_statements: None,
             categories: vec![],
@@ -370,10 +381,21 @@ impl InternalClass {
         match (&self, &other) {
             (InternalClass::Rejected(_), _) => self,
             (_, InternalClass::Rejected(_)) => other,
-            (InternalClass::Dml(_), InternalClass::Dml(DmlReason::Ddl)) => self, // DML wins over DDL
-            (InternalClass::Dml(DmlReason::Ddl), InternalClass::Dml(_)) => other,
-            (InternalClass::Dml(_), _) => self,
-            (_, InternalClass::Dml(_)) => other,
+            // Statement > DangerousFunction/SemanticEscalation/Unknown/ParseFailure > DestructiveDdl > Ddl
+            (InternalClass::Dml(DmlReason::Statement), _) => self,
+            (_, InternalClass::Dml(DmlReason::Statement)) => other,
+            (InternalClass::Dml(DmlReason::DangerousFunction), _) => self,
+            (_, InternalClass::Dml(DmlReason::DangerousFunction)) => other,
+            (InternalClass::Dml(DmlReason::SemanticEscalation), _) => self,
+            (_, InternalClass::Dml(DmlReason::SemanticEscalation)) => other,
+            (InternalClass::Dml(DmlReason::UnknownStatement), _) => self,
+            (_, InternalClass::Dml(DmlReason::UnknownStatement)) => other,
+            (InternalClass::Dml(DmlReason::ParseFailure), _) => self,
+            (_, InternalClass::Dml(DmlReason::ParseFailure)) => other,
+            (InternalClass::Dml(DmlReason::DestructiveDdl), _) => self,
+            (_, InternalClass::Dml(DmlReason::DestructiveDdl)) => other,
+            (InternalClass::Dml(DmlReason::Ddl), _) => self,
+            (_, InternalClass::Dml(DmlReason::Ddl)) => other,
             _ => self,
         }
     }
@@ -404,7 +426,7 @@ fn classify_statement(stmt: &Statement) -> InternalClass {
         Statement::Merge(_) => InternalClass::Dml(DmlReason::Statement),
         Statement::Copy { .. } => InternalClass::Dml(DmlReason::Statement),
         Statement::Call(_) => InternalClass::Dml(DmlReason::Statement),
-        Statement::Truncate(_) => InternalClass::Dml(DmlReason::Statement),
+        Statement::Truncate(_) => InternalClass::Dml(DmlReason::DestructiveDdl),
 
         // EXPLAIN ANALYZE: actually executes the inner statement
         Statement::Explain {
@@ -451,17 +473,30 @@ fn classify_statement(stmt: &Statement) -> InternalClass {
         | Statement::CreateDatabase { .. }
         | Statement::CreateFunction(_)
         | Statement::CreateProcedure { .. }
-        | Statement::CreateSequence { .. }
         | Statement::CreateType { .. }
         | Statement::CreateRole(_)
         | Statement::AlterIndex { .. }
         | Statement::AlterView { .. }
         | Statement::AlterRole { .. }
         | Statement::AlterSchema(_)
-        | Statement::Drop { .. }
         | Statement::Grant(_)
         | Statement::Revoke(_) => InternalClass::Rejected(
-            "DDL statements (DROP, GRANT, REVOKE, CREATE ROLE/FUNCTION/DATABASE) are not allowed. \
+            "DDL statements (GRANT, REVOKE, CREATE ROLE/FUNCTION/DATABASE/SCHEMA) are not allowed. \
+             Use 'dbward migrate create <name>' to generate a migration file, then 'dbward migrate up'."
+                .into(),
+        ),
+
+        // === DestructiveDdl — allowed through workflow with sql_review ===
+        Statement::Drop {
+            object_type:
+                ObjectType::Table | ObjectType::View | ObjectType::Index | ObjectType::Sequence,
+            ..
+        } => InternalClass::Dml(DmlReason::DestructiveDdl),
+        Statement::CreateSequence { .. } => InternalClass::Dml(DmlReason::DestructiveDdl),
+
+        // Other DROP types (SCHEMA, DATABASE, ROLE, etc.) stay rejected
+        Statement::Drop { .. } => InternalClass::Rejected(
+            "DDL statements (DROP SCHEMA/DATABASE/ROLE, GRANT, REVOKE, CREATE ROLE/FUNCTION) are not allowed. \
              Use 'dbward migrate create <name>' to generate a migration file, then 'dbward migrate up'."
                 .into(),
         ),
@@ -756,7 +791,9 @@ mod tests {
     fn classifies_truncate() {
         let c = pg("TRUNCATE TABLE users").unwrap();
         assert_eq!(c.operation, Operation::ExecuteDml);
-        assert_eq!(c.dml_reason, Some(DmlReason::Statement));
+        assert_eq!(c.dml_reason, Some(DmlReason::DestructiveDdl));
+        assert!(c.is_ddl_only);
+        assert!(c.contains_ddl);
     }
 
     #[test]
@@ -818,15 +855,73 @@ mod tests {
     }
 
     #[test]
-    fn rejects_drop() {
-        let r = pg("DROP TABLE t");
-        assert!(matches!(r, Err(ClassifyError::Rejected { .. })));
+    fn classifies_drop_as_destructive_ddl() {
+        let c = pg("DROP TABLE t").unwrap();
+        assert_eq!(c.operation, Operation::ExecuteDml);
+        assert_eq!(c.dml_reason, Some(DmlReason::DestructiveDdl));
+        assert!(c.is_ddl_only);
+        assert!(c.contains_ddl);
     }
 
     #[test]
     fn rejects_grant() {
         let r = pg("GRANT ALL ON t TO public");
         assert!(matches!(r, Err(ClassifyError::Rejected { .. })));
+    }
+
+    #[test]
+    fn rejects_drop_schema() {
+        let r = pg("DROP SCHEMA public CASCADE");
+        assert!(matches!(r, Err(ClassifyError::Rejected { .. })));
+    }
+
+    #[test]
+    fn classifies_drop_view_as_destructive_ddl() {
+        let c = pg("DROP VIEW my_view").unwrap();
+        assert_eq!(c.dml_reason, Some(DmlReason::DestructiveDdl));
+        assert!(c.is_ddl_only);
+        assert!(c.contains_ddl);
+    }
+
+    #[test]
+    fn classifies_drop_index_as_destructive_ddl() {
+        let c = pg("DROP INDEX my_idx").unwrap();
+        assert_eq!(c.dml_reason, Some(DmlReason::DestructiveDdl));
+        assert!(c.is_ddl_only);
+        assert!(c.contains_ddl);
+    }
+
+    #[test]
+    fn classifies_drop_sequence_as_destructive_ddl() {
+        let c = pg("DROP SEQUENCE my_seq").unwrap();
+        assert_eq!(c.dml_reason, Some(DmlReason::DestructiveDdl));
+        assert!(c.is_ddl_only);
+        assert!(c.contains_ddl);
+    }
+
+    #[test]
+    fn classifies_create_sequence_as_destructive_ddl() {
+        let c = pg("CREATE SEQUENCE my_seq").unwrap();
+        assert_eq!(c.dml_reason, Some(DmlReason::DestructiveDdl));
+        assert!(c.is_ddl_only);
+        assert!(c.contains_ddl);
+    }
+
+    #[test]
+    fn dangerous_function_wins_over_ddl() {
+        // DangerousFunction should NOT be overridden by DestructiveDdl
+        let c = pg("SELECT nextval('my_seq'); DROP TABLE t").unwrap();
+        assert_eq!(c.dml_reason, Some(DmlReason::DangerousFunction));
+        assert!(!c.is_ddl_only);
+        assert!(c.contains_ddl);
+    }
+
+    #[test]
+    fn escalate_is_order_independent_for_dml_and_ddl() {
+        let a = pg("INSERT INTO t VALUES(1); DROP TABLE t").unwrap();
+        let b = pg("DROP TABLE t; INSERT INTO t VALUES(1)").unwrap();
+        assert_eq!(a.dml_reason, b.dml_reason);
+        assert_eq!(a.is_ddl_only, b.is_ddl_only);
     }
 
     #[test]
@@ -972,9 +1067,13 @@ mod tests {
     }
 
     #[test]
-    fn multi_statement_with_ddl_rejected() {
-        let r = pg("INSERT INTO t VALUES (1); DROP TABLE t");
-        assert!(matches!(r, Err(ClassifyError::Rejected { .. })));
+    fn multi_statement_dml_with_ddl_is_mixed() {
+        let c = pg("INSERT INTO t VALUES (1); DROP TABLE t").unwrap();
+        assert_eq!(c.operation, Operation::ExecuteDml);
+        // Statement > DestructiveDdl in escalate, so final reason is Statement
+        assert_eq!(c.dml_reason, Some(DmlReason::Statement));
+        assert!(!c.is_ddl_only);
+        assert!(c.contains_ddl);
     }
 
     // === Limits ===

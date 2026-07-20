@@ -496,6 +496,10 @@ impl ServerConfig {
                     ("no_where_update", &sr.no_where_update),
                     ("drop_table", &sr.drop_table),
                     ("drop_column", &sr.drop_column),
+                    ("drop_index", &sr.drop_index),
+                    ("drop_view", &sr.drop_view),
+                    ("drop_sequence", &sr.drop_sequence),
+                    ("create_sequence", &sr.create_sequence),
                     ("not_null_without_default", &sr.not_null_without_default),
                     (
                         "create_index_not_concurrently",
@@ -912,6 +916,14 @@ pub struct SqlReviewEntry {
     pub mixed_ddl_dml: String,
     #[serde(default = "default_warn")]
     pub large_in_list: String,
+    #[serde(default = "default_warn")]
+    pub drop_index: String,
+    #[serde(default = "default_warn")]
+    pub drop_view: String,
+    #[serde(default = "default_warn")]
+    pub drop_sequence: String,
+    #[serde(default = "default_off")]
+    pub create_sequence: String,
 }
 
 /// Legacy trap: catches old [sql_review] table form and gives helpful error.
@@ -949,6 +961,10 @@ fn default_block() -> String {
 
 fn default_warn() -> String {
     "warn".into()
+}
+
+fn default_off() -> String {
+    "off".into()
 }
 
 fn default_allow_read_only() -> bool {
