@@ -749,7 +749,7 @@ pub struct WorkflowDef {
     pub require_reason: bool,
     #[serde(default)]
     pub allow_self_approve: bool,
-    #[serde(default = "default_true")]
+    #[serde(default)]
     pub allow_same_approver_across_steps: bool,
     #[serde(default = "default_true")]
     pub explain: bool,
