@@ -16,6 +16,25 @@ impl QueryResultView {
     pub fn to_stdout_render(&self, format: crate::display::ResultFormat) -> StdoutRender {
         use crate::display::ResultFormat;
 
+        // rows_affected only (DML without result set) — show as plain text regardless of format
+        if self.columns.is_none() && self.rows.is_none() {
+            if let Some(affected) = self.rows_affected {
+                return StdoutRender::Raw {
+                    value: format!("Rows affected: {affected}"),
+                };
+            }
+            return StdoutRender::Raw {
+                value: "Executed successfully.".into(),
+            };
+        }
+
+        // Empty result set (0 rows)
+        if self.rows.as_ref().is_some_and(|r| r.is_empty()) {
+            return StdoutRender::Raw {
+                value: "(0 rows)".into(),
+            };
+        }
+
         match format {
             ResultFormat::Table => self.render_table(),
             ResultFormat::Csv => StdoutRender::Raw {
@@ -32,11 +51,6 @@ impl QueryResultView {
 
     fn render_table(&self) -> StdoutRender {
         let Some(cols) = &self.columns else {
-            if let Some(affected) = self.rows_affected {
-                return StdoutRender::Raw {
-                    value: format!("Rows affected: {affected}"),
-                };
-            }
             return StdoutRender::Raw {
                 value: "Executed successfully.".into(),
             };
@@ -55,7 +69,7 @@ impl QueryResultView {
             .collect();
         let str_rows: Vec<Vec<String>> = rows
             .iter()
-            .map(|row| row.iter().map(|v| format_cell(v)).collect())
+            .map(|row| row.iter().map(format_cell).collect())
             .collect();
 
         StdoutRender::Table {
@@ -69,12 +83,13 @@ impl QueryResultView {
         let rows = self.rows.as_deref().unwrap_or(&[]);
 
         let mut out = String::new();
-        // Header
-        out.push_str(&cols.join(","));
+        // Header (escaped)
+        let header_cells: Vec<String> = cols.iter().map(|c| csv_escape(c)).collect();
+        out.push_str(&header_cells.join(","));
         out.push('\n');
         // Rows
         for row in rows {
-            let cells: Vec<String> = row.iter().map(|v| csv_cell(v)).collect();
+            let cells: Vec<String> = row.iter().map(csv_cell).collect();
             out.push_str(&cells.join(","));
             out.push('\n');
         }
@@ -192,10 +207,14 @@ fn format_cell(val: &serde_json::Value) -> String {
 
 fn csv_cell(val: &serde_json::Value) -> String {
     let s = format_cell(val);
+    csv_escape(&s)
+}
+
+fn csv_escape(s: &str) -> String {
     if s.contains(',') || s.contains('"') || s.contains('\n') {
         format!("\"{}\"", s.replace('"', "\"\""))
     } else {
-        s
+        s.to_string()
     }
 }
 
