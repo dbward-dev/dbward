@@ -595,6 +595,240 @@ pub async fn run(mut cli: Cli) -> Result<Option<crate::output::CliOutcome>, CliE
         return Ok(Some(outcome));
     }
 
+    // --- Init ---
+    if let Command::Init {
+        ref non_interactive,
+        ref force,
+        ref preset,
+        ref output_dir,
+        ref dry_run,
+    } = cli.command
+    {
+        let outcome: crate::output::CliOutcome = auth::run_init(
+            &cli,
+            *non_interactive,
+            *force,
+            preset.as_deref(),
+            output_dir,
+            *dry_run,
+            cli.format,
+        )?.into();
+        return Ok(Some(outcome));
+    }
+
+    // --- Logout ---
+    if let Command::Logout = cli.command {
+        oidc_login::logout().await.map_err(CliError::Auth)?;
+        let render = RenderPlan::status("Logged out.");
+        let outcome: crate::output::CliOutcome = CliResponse::<()>::empty(render).into();
+        return Ok(Some(outcome));
+    }
+
+    // --- Server ---
+    if let Command::Server { ref action } = cli.command {
+        let outcome: crate::output::CliOutcome = server::run_server_command(action).await?.into();
+        return Ok(Some(outcome));
+    }
+
+    // --- Self-update ---
+    if let Command::SelfUpdate = cli.command {
+        let outcome: crate::output::CliOutcome = self_update::run_self_update().await?.into();
+        return Ok(Some(outcome));
+    }
+
+    // --- Doctor ---
+    if let Command::Doctor {
+        ref agent,
+        ref server,
+        ref timeout,
+    } = cli.command
+    {
+        let suppress = matches!(cli.format, crate::output::OutputMode::Json | crate::output::OutputMode::Quiet);
+        let outcome: crate::output::CliOutcome = doctor::run(
+            cli.config.as_deref(),
+            agent.clone(),
+            server.clone(),
+            suppress,
+            *timeout,
+        )
+        .await?.into();
+        return Ok(Some(outcome));
+    }
+
+    // --- Slack ---
+    if let Command::Slack { ref action } = cli.command {
+        let outcome: crate::output::CliOutcome = slack::run(action.clone()).await?.into();
+        return Ok(Some(outcome));
+    }
+
+    // --- Policy ---
+    if let Command::Policy { ref action } = cli.command {
+        let cfg = config::load_resolved(cli.config.as_deref(), cli.merge_global)?.config;
+        let (server_url, api_token) = authenticate(&cfg).await?;
+        let sc = ServerClient::new(&server_url, &api_token);
+
+        let outcome: crate::output::CliOutcome = match action {
+            PolicyAction::Resolve {
+                database,
+                environment,
+                operation,
+            } => {
+                policy::run_resolve(&sc, database, environment, operation.as_deref()).await?.into()
+            }
+        };
+        return Ok(Some(outcome));
+    }
+
+    // --- Execute ---
+    if let Command::Execute {
+        ref sql,
+        emergency,
+        allow_ddl,
+        ref reason,
+        ref output,
+        ref ticket,
+        ref repo,
+        ref idempotency_key,
+        ref share_with,
+        no_result_store,
+        result_format,
+        timeout,
+    } = cli.command
+    {
+        let cfg = config::load_resolved(cli.config.as_deref(), cli.merge_global)?.config;
+        check_transport(&cfg, cli.allow_insecure)?;
+        let (server_url, api_token) = authenticate(&cfg).await?;
+        let sc = ServerClient::new(&server_url, &api_token);
+        let db_name = cfg.resolve_database_name(cli.database.as_deref())?;
+        let env_str = cli
+            .environment
+            .as_deref()
+            .or(cfg.default_environment.as_deref())
+            .unwrap_or("development");
+        let outcome: crate::output::CliOutcome = execute::run_execute(
+            &sc,
+            &db_name,
+            env_str,
+            cli.format,
+            sql,
+            emergency,
+            allow_ddl,
+            reason.as_deref(),
+            output.as_deref(),
+            cfg.results.dir.as_deref(),
+            ticket.as_deref(),
+            repo.as_deref(),
+            idempotency_key.as_deref(),
+            share_with,
+            no_result_store,
+            resolve_result_format(result_format, &cfg),
+            timeout,
+            cli.yes,
+        )
+        .await?.into();
+        return Ok(Some(outcome));
+    }
+
+    // --- Preflight ---
+    if let Command::Preflight {
+        ref sql,
+        no_explain,
+        explain_timeout_ms,
+    } = cli.command
+    {
+        let cfg = config::load_resolved(cli.config.as_deref(), cli.merge_global)?.config;
+        check_transport(&cfg, cli.allow_insecure)?;
+        let (server_url, api_token) = authenticate(&cfg).await?;
+        let sc = ServerClient::new(&server_url, &api_token);
+        let db_name = cfg.resolve_database_name(cli.database.as_deref())?;
+        let env_str = cli
+            .environment
+            .as_deref()
+            .or(cfg.default_environment.as_deref())
+            .unwrap_or("development");
+        let outcome: crate::output::CliOutcome = preflight::run_preflight(
+            &sc,
+            &db_name,
+            env_str,
+            sql,
+            !no_explain,
+            explain_timeout_ms,
+        )
+        .await?.into();
+        return Ok(Some(outcome));
+    }
+
+    // --- Audit ---
+    if let Command::Audit {
+        ref limit,
+        ref user,
+        ref operation,
+        ref status,
+        ref event_type,
+        ref category,
+        ref outcome,
+        ref since,
+        ref until,
+        verify,
+        ref output,
+    } = cli.command
+    {
+        let cfg = config::load_resolved(cli.config.as_deref(), cli.merge_global)?.config;
+        check_transport(&cfg, cli.allow_insecure)?;
+        let (server_url, api_token) = authenticate(&cfg).await?;
+        let sc = ServerClient::new(&server_url, &api_token);
+        let cli_outcome: crate::output::CliOutcome = audit::run_audit(
+            &sc,
+            *limit,
+            user.as_deref(),
+            operation.as_deref(),
+            status.as_deref(),
+            event_type.as_deref(),
+            category.as_deref(),
+            outcome.as_deref(),
+            since.as_deref(),
+            until.as_deref(),
+            cli.environment.as_deref(),
+            verify,
+            output,
+        )
+        .await?.into();
+        return Ok(Some(cli_outcome));
+    }
+
+    // --- Migrate ---
+    if let Command::Migrate { ref action } = cli.command {
+        let cfg = config::load_resolved(cli.config.as_deref(), cli.merge_global)?.config;
+        let db_name = cfg.resolve_database_name(cli.database.as_deref())?;
+
+        // migrate create is local-only
+        if let migrate::MigrateAction::Create { name } = action {
+            let outcome: crate::output::CliOutcome =
+                migrate::run_migrate_create(&cfg, &db_name, name)?.into();
+            return Ok(Some(outcome));
+        }
+
+        check_transport(&cfg, cli.allow_insecure)?;
+        let (server_url, api_token) = authenticate(&cfg).await?;
+        let sc = ServerClient::new(&server_url, &api_token);
+        let env_str = cli
+            .environment
+            .as_deref()
+            .or(cfg.default_environment.as_deref())
+            .unwrap_or("development");
+        let outcome: crate::output::CliOutcome = migrate::run_migrate(
+            &sc,
+            &cfg,
+            &db_name,
+            env_str,
+            cli.format,
+            action,
+            cli.yes,
+        )
+        .await?.into();
+        return Ok(Some(outcome));
+    }
+
     // -----------------------------------------------------------------------
     // Legacy path: commands still using println! directly.
     // Returns None (output already written).
@@ -603,56 +837,33 @@ pub async fn run(mut cli: Cli) -> Result<Option<crate::output::CliOutcome>, CliE
     Ok(None)
 }
 
-async fn run_legacy(cli: Cli) -> Result<(), CliError> {
+/// TLS transport security check helper.
+fn check_transport(cfg: &ClientConfig, allow_insecure_flag: bool) -> Result<(), CliError> {
+    let has_oidc = cfg.server.oidc.is_some();
+    let allow_insecure = cfg.server.allow_insecure.unwrap_or(false) || allow_insecure_flag;
+    if let Err(e) = dbward_config::transport::check_transport_security(
+        &cfg.server.url,
+        allow_insecure,
+        has_oidc,
+    ) {
+        match &e {
+            dbward_config::transport::TransportError::InsecureHttp { .. } => {
+                eprintln!("warning: {e}");
+            }
+            _ => return Err(CliError::Config(e.to_string())),
+        }
+    }
+    Ok(())
+}
 
+async fn run_legacy(cli: Cli) -> Result<(), CliError> {
     // Commands that don't need config/auth
     match &cli.command {
-        Command::Init {
-            non_interactive,
-            force,
-            preset,
-            output_dir,
-            dry_run,
-        } => {
-            return auth::run_init(
-                &cli,
-                *non_interactive,
-                *force,
-                preset.as_deref(),
-                output_dir,
-                *dry_run,
-            );
-        }
-        Command::Logout => {
-            oidc_login::logout().await.map_err(CliError::Auth)?;
-            return Ok(());
-        }
-        Command::Server { action } => return server::run_server_command(action).await,
         Command::Agent {
             config: agent_config_path,
         } => return agent::run_agent(agent_config_path).await,
         Command::Dev { database_url, port } => {
             return dev::run_dev(database_url, *port).await;
-        }
-        Command::SelfUpdate => {
-            return self_update::run_self_update().await;
-        }
-        Command::Doctor {
-            agent,
-            server,
-            timeout,
-        } => {
-            return doctor::run(
-                cli.config.as_deref(),
-                agent.clone(),
-                server.clone(),
-                matches!(cli.format, crate::output::OutputMode::Json | crate::output::OutputMode::Quiet),
-                *timeout,
-            )
-            .await;
-        }
-        Command::Slack { action } => {
-            return slack::run(action.clone(), matches!(cli.format, crate::output::OutputMode::Json | crate::output::OutputMode::Quiet)).await;
         }
         _ => {}
     }
@@ -688,189 +899,13 @@ async fn run_legacy(cli: Cli) -> Result<(), CliError> {
         return Ok(());
     }
 
-    // Migrate create is local-only
-    if let Command::Migrate {
-        action: migrate::MigrateAction::Create { ref name },
-    } = cli.command
-    {
-        let db_name = cfg.resolve_database_name(cli.database.as_deref())?;
-        let migrations_dir = cfg.migrations_dir_for(&db_name);
-        let migrator = dbward_migrate::LocalMigrator::new(migrations_dir);
-        let path = migrator.create(name)?;
-        println!("Created: {}", path.display());
-        return Ok(());
-    }
-
-    // TLS transport security check (OIDC + external HTTP → hard error)
-    let has_oidc = cfg.server.oidc.is_some();
-    let allow_insecure = cfg.server.allow_insecure.unwrap_or(false);
-    if let Err(e) = dbward_config::transport::check_transport_security(
-        &cfg.server.url,
-        allow_insecure,
-        has_oidc,
-    ) {
-        match &e {
-            dbward_config::transport::TransportError::InsecureHttp { .. } => {
-                eprintln!("warning: {e}");
-            }
-            _ => return Err(CliError::Config(e.to_string())),
-        }
-    }
-
     let (server_url, api_token) = authenticate(&cfg).await?;
-
     let sc = ServerClient::new(&server_url, &api_token);
-    let json_output = matches!(cli.format, crate::output::OutputMode::Json | crate::output::OutputMode::Quiet);
 
     match cli.command {
-        Command::Execute {
-            ref sql,
-            emergency,
-            allow_ddl,
-            ref reason,
-            ref output,
-            ref ticket,
-            ref repo,
-            ref idempotency_key,
-            ref share_with,
-            no_result_store,
-            result_format,
-            timeout,
-        } => {
-            let db_name = cfg.resolve_database_name(cli.database.as_deref())?;
-            let env_str = cli
-                .environment
-                .as_deref()
-                .or(cfg.default_environment.as_deref())
-                .unwrap_or("development");
-            execute::run_execute(
-                &sc,
-                &db_name,
-                env_str,
-                json_output,
-                sql,
-                emergency,
-                allow_ddl,
-                reason.as_deref(),
-                output.as_deref(),
-                cfg.results.dir.as_deref(),
-                ticket.as_deref(),
-                repo.as_deref(),
-                idempotency_key.as_deref(),
-                share_with,
-                no_result_store,
-                resolve_result_format(result_format, &cfg),
-                timeout,
-                cli.yes,
-            )
-            .await
-        }
-        Command::Migrate { ref action } => {
-            let db_name = cfg.resolve_database_name(cli.database.as_deref())?;
-            let env_str = cli
-                .environment
-                .as_deref()
-                .or(cfg.default_environment.as_deref())
-                .unwrap_or("development");
-            migrate::run_migrate(
-                &sc,
-                &cfg,
-                &db_name,
-                env_str,
-                json_output,
-                action,
-                cli.database.as_deref(),
-                cli.yes,
-            )
-            .await
-        }
-        Command::Request { .. } => unreachable!("handled by new path"),
-        Command::Preflight {
-            ref sql,
-            no_explain,
-            explain_timeout_ms,
-        } => {
-            let db_name = cfg.resolve_database_name(cli.database.as_deref())?;
-            let env_str = cli
-                .environment
-                .as_deref()
-                .or(cfg.default_environment.as_deref())
-                .unwrap_or("development");
-            preflight::run_preflight(
-                &sc,
-                &db_name,
-                env_str,
-                sql,
-                !no_explain,
-                explain_timeout_ms,
-                json_output,
-            )
-            .await
-        }
         Command::Mcp => crate::mcp::run_stdio(cfg, cli.database.as_deref(), sc).await,
-        Command::Audit {
-            ref limit,
-            ref user,
-            ref operation,
-            ref status,
-            ref event_type,
-            ref category,
-            ref outcome,
-            ref since,
-            ref until,
-            verify,
-            ref output,
-        } => {
-            audit::run_audit(
-                &sc,
-                json_output,
-                *limit,
-                user.as_deref(),
-                operation.as_deref(),
-                status.as_deref(),
-                event_type.as_deref(),
-                category.as_deref(),
-                outcome.as_deref(),
-                since.as_deref(),
-                until.as_deref(),
-                cli.environment.as_deref(),
-                verify,
-                output,
-            )
-            .await
-        }
-        Command::Token { .. } => unreachable!("handled by new path"),
-        Command::User { .. } => unreachable!("handled by new path"),
-        Command::Group { .. } => unreachable!("handled by new path"),
-        Command::Databases => unreachable!("handled by new path"),
-        Command::Agents => unreachable!("handled by new path"),
-        Command::Whoami => unreachable!("handled by new path"),
-        Command::Policy { action } => match action {
-            PolicyAction::Resolve {
-                database,
-                environment,
-                operation,
-            } => {
-                policy::run_resolve(
-                    &sc,
-                    json_output,
-                    &database,
-                    &environment,
-                    operation.as_deref(),
-                )
-                .await
-            }
-        },
-        // Handled above
-        Command::Init { .. }
-        | Command::Login { .. }
-        | Command::Logout
-        | Command::Server { .. }
-        | Command::Agent { .. }
-        | Command::Dev { .. }
-        | Command::SelfUpdate
-        | Command::Doctor { .. }
-        | Command::Slack { .. } => unreachable!(),
+        // All other commands handled by new path
+        _ => unreachable!("all commands should be handled by new path"),
     }
 }
 

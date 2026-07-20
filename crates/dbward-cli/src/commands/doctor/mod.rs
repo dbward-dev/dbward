@@ -5,7 +5,10 @@ mod server_checks;
 use std::path::PathBuf;
 use std::time::Duration;
 
+use serde::Serialize;
+
 use crate::error::CliError;
+use crate::output::{CliResponse, Column, RenderPlan, StderrLine, StdoutRender};
 
 // ---------------------------------------------------------------------------
 // Types
@@ -29,6 +32,7 @@ pub struct CheckResult {
 
 pub(super) struct DoctorContext {
     results: Vec<CheckResult>,
+    /// Suppress progress messages (true in json/quiet mode).
     json_output: bool,
     timeout: Duration,
 }
@@ -47,6 +51,35 @@ impl DoctorContext {
 }
 
 // ---------------------------------------------------------------------------
+// Output type
+// ---------------------------------------------------------------------------
+
+#[derive(Serialize)]
+pub struct DoctorOutput {
+    pub checks: Vec<DoctorCheck>,
+    pub summary: DoctorSummary,
+}
+
+#[derive(Serialize)]
+pub struct DoctorCheck {
+    pub id: String,
+    pub status: String,
+    pub message: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub hint: Option<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub details: Vec<String>,
+}
+
+#[derive(Serialize)]
+pub struct DoctorSummary {
+    pub passed: usize,
+    pub warnings: usize,
+    pub failed: usize,
+    pub skipped: usize,
+}
+
+// ---------------------------------------------------------------------------
 // Public entry point
 // ---------------------------------------------------------------------------
 
@@ -54,17 +87,18 @@ pub async fn run(
     config_path: Option<&std::path::Path>,
     agent_config: Option<PathBuf>,
     server_config: Option<PathBuf>,
-    json_output: bool,
+    suppress_progress: bool,
     timeout_secs: u64,
-) -> Result<(), CliError> {
+) -> Result<CliResponse<DoctorOutput>, CliError> {
     if agent_config.is_some() && server_config.is_some() {
-        eprintln!("error: --agent and --server are mutually exclusive");
-        std::process::exit(2);
+        return Err(CliError::Config(
+            "--agent and --server are mutually exclusive".into(),
+        ));
     }
 
     let mut ctx = DoctorContext {
         results: Vec::new(),
-        json_output,
+        json_output: suppress_progress,
         timeout: Duration::from_secs(timeout_secs),
     };
 
@@ -76,12 +110,103 @@ pub async fn run(
         cli_checks::run_cli_mode(&mut ctx, config_path).await;
     }
 
-    print_results(&ctx);
-    let has_failure = ctx.results.iter().any(|r| r.status == Status::Fail);
-    if has_failure {
-        std::process::exit(1);
+    build_response(&ctx)
+}
+
+fn build_response(ctx: &DoctorContext) -> Result<CliResponse<DoctorOutput>, CliError> {
+    let (pass, warn, fail, skip) = count_results(ctx);
+
+    let checks: Vec<DoctorCheck> = ctx
+        .results
+        .iter()
+        .map(|r| DoctorCheck {
+            id: r.id.to_string(),
+            status: match r.status {
+                Status::Pass => "pass",
+                Status::Warn => "warn",
+                Status::Fail => "fail",
+                Status::Skip => "skip",
+            }
+            .to_string(),
+            message: r.message.clone(),
+            hint: r.hint.clone(),
+            details: r.details.clone(),
+        })
+        .collect();
+
+    let summary = DoctorSummary {
+        passed: pass,
+        warnings: warn,
+        failed: fail,
+        skipped: skip,
+    };
+
+    let output = DoctorOutput { checks, summary };
+
+    // Build table render
+    let columns = vec![
+        Column::new(" ").with_max_width(3),
+        Column::new("CHECK").with_max_width(24),
+        Column::new("MESSAGE"),
+    ];
+
+    let mut rows: Vec<Vec<String>> = ctx
+        .results
+        .iter()
+        .map(|r| {
+            let icon = match r.status {
+                Status::Pass => "✅",
+                Status::Warn => "⚠️",
+                Status::Fail => "❌",
+                Status::Skip => "⏭️",
+            };
+            vec![
+                icon.to_string(),
+                r.id.to_string(),
+                r.message.clone(),
+            ]
+        })
+        .collect();
+
+    // Add summary row
+    rows.push(vec![
+        String::new(),
+        String::new(),
+        String::new(),
+    ]);
+    rows.push(vec![
+        String::new(),
+        "TOTAL".into(),
+        format!("{pass} passed, {warn} warnings, {fail} failed, {skip} skipped"),
+    ]);
+
+    // Collect hints for stderr
+    let mut stderr_lines: Vec<StderrLine> = Vec::new();
+    for r in &ctx.results {
+        if let Some(ref hint) = r.hint {
+            stderr_lines.push(StderrLine::Hint(format!("{}: {hint}", r.id)));
+        }
+        for line in &r.details {
+            stderr_lines.push(StderrLine::Info(r.id.to_string(), line.clone()));
+        }
     }
-    Ok(())
+
+    let render = RenderPlan {
+        stdout: StdoutRender::Table { columns, rows },
+        stderr: stderr_lines,
+    };
+
+    let has_failure = fail > 0;
+    let resp = CliResponse::ok(output, render);
+    if has_failure {
+        Ok(resp.with_issues(
+            2,
+            "doctor_issues_found",
+            format!("{fail} check(s) failed"),
+        ))
+    } else {
+        Ok(resp)
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -180,78 +305,8 @@ pub(super) async fn check_server_health(
 }
 
 // ---------------------------------------------------------------------------
-// Output
+// Internal helpers
 // ---------------------------------------------------------------------------
-
-fn print_results(ctx: &DoctorContext) {
-    if ctx.json_output {
-        print_json(ctx);
-    } else {
-        print_human(ctx);
-    }
-}
-
-fn print_human(ctx: &DoctorContext) {
-    for r in &ctx.results {
-        let icon = match r.status {
-            Status::Pass => "  \x1b[32m✓\x1b[0m",
-            Status::Warn => "  \x1b[33m⚠\x1b[0m",
-            Status::Fail => "  \x1b[31m✗\x1b[0m",
-            Status::Skip => "  \x1b[90m-\x1b[0m",
-        };
-        println!("{} {:<24} {}", icon, r.id, r.message);
-        if let Some(ref hint) = r.hint {
-            println!("    {}", hint);
-        }
-        for line in &r.details {
-            println!("    {line}");
-        }
-    }
-
-    let (pass, warn, fail, skip) = count_results(ctx);
-    println!(
-        "\n  {} passed, {} warnings, {} failed, {} skipped",
-        pass, warn, fail, skip
-    );
-}
-
-fn print_json(ctx: &DoctorContext) {
-    let checks: Vec<serde_json::Value> = ctx
-        .results
-        .iter()
-        .map(|r| {
-            let mut obj = serde_json::json!({
-                "id": r.id,
-                "status": match r.status {
-                    Status::Pass => "pass",
-                    Status::Warn => "warn",
-                    Status::Fail => "fail",
-                    Status::Skip => "skip",
-                },
-                "message": r.message,
-            });
-            if let Some(ref hint) = r.hint {
-                obj["hint"] = serde_json::Value::String(hint.clone());
-            }
-            if !r.details.is_empty() {
-                obj["details"] = serde_json::json!(r.details);
-            }
-            obj
-        })
-        .collect();
-
-    let (pass, warn, fail, skip) = count_results(ctx);
-    let output = serde_json::json!({
-        "checks": checks,
-        "summary": {
-            "passed": pass,
-            "warnings": warn,
-            "failed": fail,
-            "skipped": skip,
-        }
-    });
-    println!("{}", serde_json::to_string_pretty(&output).unwrap());
-}
 
 fn count_results(ctx: &DoctorContext) -> (usize, usize, usize, usize) {
     let pass = ctx

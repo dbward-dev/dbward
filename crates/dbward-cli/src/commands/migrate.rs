@@ -1,11 +1,13 @@
 use clap::Subcommand;
+use serde::Serialize;
+use serde_json::Value;
 
 use crate::config::ClientConfig;
-use crate::display::*;
 use crate::error::CliError;
+use crate::output::{CliResponse, OutputMode, RenderPlan, StderrLine, StdoutRender};
 use crate::server_client::{CreateRequest, ServerClient};
 
-use super::helpers::{self, build_request_metadata};
+use super::helpers::build_request_metadata;
 use super::workflow::{self, Outcome};
 
 #[derive(Subcommand)]
@@ -65,17 +67,49 @@ pub enum MigrateAction {
     },
 }
 
+// ---------------------------------------------------------------------------
+// Output types
+// ---------------------------------------------------------------------------
+
+#[derive(Serialize)]
+pub struct MigrateCreateOutput {
+    pub path: String,
+}
+
+// ---------------------------------------------------------------------------
+// Create subcommand (local-only)
+// ---------------------------------------------------------------------------
+
+pub fn run_migrate_create(
+    config: &ClientConfig,
+    db_name: &str,
+    name: &str,
+) -> Result<CliResponse<MigrateCreateOutput>, CliError> {
+    let migrations_dir = config.migrations_dir_for(db_name);
+    let migrator = dbward_migrate::LocalMigrator::new(migrations_dir);
+    let path = migrator.create(name)?;
+
+    let output = MigrateCreateOutput {
+        path: path.display().to_string(),
+    };
+    let render = RenderPlan::status(format!("Created: {}", path.display()));
+    Ok(CliResponse::ok(output, render))
+}
+
+// ---------------------------------------------------------------------------
+// Main migrate command
+// ---------------------------------------------------------------------------
+
 #[allow(clippy::too_many_arguments)]
 pub async fn run_migrate(
     sc: &ServerClient,
     config: &ClientConfig,
     db_name: &str,
     env_str: &str,
-    json_output: bool,
+    mode: OutputMode,
     action: &MigrateAction,
-    _selected_db: Option<&str>,
     yes: bool,
-) -> Result<(), CliError> {
+) -> Result<CliResponse<Value>, CliError> {
     let (operation, detail, metadata, idempotency_key, share_with) = match action {
         MigrateAction::Up {
             count,
@@ -94,7 +128,6 @@ pub async fn run_migrate(
                         migrations_dir.display()
                     )));
                 }
-                // Check if there are .sql files that weren't parsed
                 let has_sql_files = match std::fs::read_dir(&migrations_dir) {
                     Ok(entries) => entries
                         .filter_map(|e| e.ok())
@@ -115,11 +148,11 @@ pub async fn run_migrate(
                         migrations_dir.display()
                     )));
                 }
-                eprintln!(
+                let render = RenderPlan::status(format!(
                     "No pending migrations found in {}",
                     migrations_dir.display()
-                );
-                return Ok(());
+                ));
+                return Ok(CliResponse::empty(render));
             }
             d.max_count = *count;
             let detail_str = d
@@ -227,16 +260,10 @@ pub async fn run_migrate(
 
     // migrate_status is read-only — no confirmation needed
     if operation != "migrate_status" {
-        helpers::confirm_submission(
-            &helpers::SubmissionSummary {
-                operation,
-                database: db_name,
-                environment: env_str,
-                detail: &detail,
-                emergency,
-            },
-            yes || json_output,
-        )?;
+        crate::output::confirm_or_reject(mode, yes).map_err(|e| match e {
+            crate::output::CliError::Blocked { reason } => CliError::Other(reason),
+            other => CliError::Other(other.to_string()),
+        })?;
     }
 
     let outcome = tokio::select! {
@@ -258,34 +285,68 @@ pub async fn run_migrate(
             true,
         ) => result?,
         _ = tokio::signal::ctrl_c() => {
-            eprintln!("\nInterrupted. If a request was created, check: dbward request list");
-            return Ok(());
+            let output = serde_json::json!({
+                "interrupted": true,
+                "message": "If a request was created, check: dbward request list"
+            });
+            let render = RenderPlan {
+                stdout: StdoutRender::None,
+                stderr: vec![
+                    StderrLine::Warn("Interrupted.".into()),
+                    StderrLine::Hint("If a request was created, check: dbward request list".into()),
+                ],
+            };
+            return Ok(CliResponse::ok(output, render)
+                .with_issues(130, "interrupted", "operation interrupted by user"));
         }
     };
 
     match outcome {
         Outcome::Completed { result, .. } => {
-            if json_output {
-                println!("{}", serde_json::to_string_pretty(&result)?);
-            } else {
-                print_execution_result(&result);
-            }
+            let pretty = serde_json::to_string_pretty(&result).unwrap_or_default();
+            let render = RenderPlan {
+                stdout: StdoutRender::Raw { value: pretty },
+                stderr: vec![],
+            };
+            Ok(CliResponse::ok(result, render))
         }
         Outcome::Pending {
             request_id,
             approvers,
         } => {
-            eprintln!("Request {request_id} requires approval.");
+            let output = serde_json::json!({
+                "request_id": request_id,
+                "status": "pending_approval",
+                "approvers": approvers,
+            });
+            let mut stderr = vec![
+                StderrLine::Status(format!("Request {request_id} requires approval.")),
+            ];
             if !approvers.is_empty() {
-                eprintln!("  Approvers: {}", approvers.join(", "));
+                stderr.push(StderrLine::Info("Approvers".into(), approvers.join(", ")));
             }
-            eprintln!("Run: dbward request resume {request_id}");
-            std::process::exit(2);
+            stderr.push(StderrLine::Hint(format!("Run: dbward request resume {request_id}")));
+
+            let render = RenderPlan {
+                stdout: StdoutRender::None,
+                stderr,
+            };
+            Ok(CliResponse::ok(output, render)
+                .with_issues(2, "pending_approval", format!("request {request_id} requires approval")))
         }
         Outcome::Approved { request_id } => {
-            eprintln!("Request {request_id} is approved but not yet resumed.");
-            eprintln!("Run: dbward request resume {request_id}");
+            let output = serde_json::json!({
+                "request_id": request_id,
+                "status": "approved",
+            });
+            let render = RenderPlan {
+                stdout: StdoutRender::None,
+                stderr: vec![
+                    StderrLine::Status(format!("Request {request_id} is approved but not yet resumed.")),
+                    StderrLine::Hint(format!("Run: dbward request resume {request_id}")),
+                ],
+            };
+            Ok(CliResponse::ok(output, render))
         }
     }
-    Ok(())
 }

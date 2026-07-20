@@ -2,8 +2,10 @@ use std::path::PathBuf;
 use std::process::Command as ProcessCommand;
 
 use clap::Subcommand;
+use serde::Serialize;
 
 use crate::error::CliError;
+use crate::output::{CliResponse, RenderPlan};
 
 #[derive(Subcommand)]
 pub enum ServerAction {
@@ -24,14 +26,28 @@ pub enum ServerAction {
     },
 }
 
-pub async fn run_server_command(action: &ServerAction) -> Result<(), CliError> {
+// ---------------------------------------------------------------------------
+// Output types
+// ---------------------------------------------------------------------------
+
+#[derive(Serialize)]
+pub struct ServerReloadOutput {
+    pub pid: u32,
+    pub signal: String,
+}
+
+// ---------------------------------------------------------------------------
+// Command implementation
+// ---------------------------------------------------------------------------
+
+pub async fn run_server_command(action: &ServerAction) -> Result<CliResponse<ServerReloadOutput>, CliError> {
     match action {
         ServerAction::Start { listen, config } => run_server_start(listen, config).await,
         ServerAction::Reload { pid, server_config } => run_server_reload(*pid, server_config),
     }
 }
 
-async fn run_server_start(listen: &str, config: &str) -> Result<(), CliError> {
+async fn run_server_start(listen: &str, config: &str) -> Result<CliResponse<ServerReloadOutput>, CliError> {
     let binary = find_server_binary()?;
     let status = ProcessCommand::new(&binary)
         .arg("--listen")
@@ -43,7 +59,9 @@ async fn run_server_start(listen: &str, config: &str) -> Result<(), CliError> {
     if !status.success() {
         return Err(CliError::Server(format!("server exited with {status}")));
     }
-    Ok(())
+    // Server start is a long-running process; this only returns if it exits cleanly
+    let render = RenderPlan::status("Server exited.");
+    Ok(CliResponse::empty(render))
 }
 
 fn find_server_binary() -> Result<PathBuf, CliError> {
@@ -56,7 +74,7 @@ fn find_server_binary() -> Result<PathBuf, CliError> {
     which_binary("dbward-server")
 }
 
-fn run_server_reload(pid_arg: Option<u32>, config: &str) -> Result<(), CliError> {
+fn run_server_reload(pid_arg: Option<u32>, config: &str) -> Result<CliResponse<ServerReloadOutput>, CliError> {
     #[cfg(unix)]
     {
         use std::io::Read;
@@ -94,8 +112,12 @@ fn run_server_reload(pid_arg: Option<u32>, config: &str) -> Result<(), CliError>
         // Send SIGHUP
         let ret = unsafe { libc::kill(pid as libc::pid_t, libc::SIGHUP) };
         if ret == 0 {
-            println!("✅ Sent SIGHUP to server (PID {pid})");
-            Ok(())
+            let output = ServerReloadOutput {
+                pid,
+                signal: "SIGHUP".into(),
+            };
+            let render = RenderPlan::status(format!("✅ Sent SIGHUP to server (PID {pid})"));
+            Ok(CliResponse::ok(output, render))
         } else {
             Err(CliError::Server(format!(
                 "failed to send SIGHUP to PID {pid}: {}",

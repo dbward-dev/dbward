@@ -1,6 +1,7 @@
 mod format;
 #[allow(dead_code)]
 mod request;
+#[allow(dead_code)]
 mod result;
 #[allow(unused_imports)]
 pub(crate) use format::{
@@ -17,4 +18,3 @@ pub use result::ResultFormat;
 pub(crate) use result::{
     RESULT_CELL_MAX_WIDTH, format_result_cell_value, print_result_table, render_result_table,
 };
-pub(crate) use result::{print_execution_result, print_execution_result_formatted};

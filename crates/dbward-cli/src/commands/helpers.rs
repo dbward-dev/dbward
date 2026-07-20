@@ -2,6 +2,7 @@ use std::path::{Path, PathBuf};
 
 use crate::error::CliError;
 
+#[allow(dead_code)]
 pub struct SubmissionSummary<'a> {
     pub operation: &'a str,
     pub database: &'a str,
@@ -12,6 +13,7 @@ pub struct SubmissionSummary<'a> {
 
 /// Display submission summary and prompt for confirmation.
 /// Returns Ok(()) if confirmed, Err if rejected or non-interactive without skip.
+#[allow(dead_code)]
 pub fn confirm_submission(summary: &SubmissionSummary, skip: bool) -> Result<(), CliError> {
     if skip {
         if std::env::var_os("DBWARD_YES").is_some() {
