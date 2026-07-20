@@ -1084,9 +1084,30 @@ async fn run_results(
 // ---------------------------------------------------------------------------
 
 /// Format execution result as a string for human display.
-/// Uses serde_json::to_string_pretty transitionally — Step 3 will use QueryResultView.
 fn format_execution_result_as_string(resp: &Value, _format: ResultFormat) -> String {
-    serde_json::to_string_pretty(resp).unwrap_or_default()
+    use crate::output::views::QueryResultView;
+
+    let view = QueryResultView::from_server_response(resp);
+
+    // Query results with actual rows or rows_affected -> structured view
+    if view.rows.as_ref().is_some_and(|r| !r.is_empty()) || view.rows_affected.is_some() {
+        return serde_json::to_string_pretty(&view).unwrap_or_default();
+    }
+
+    // Non-tabular results (migrate, etc.) -> pretty-print raw data
+    let result = if !resp["result"].is_null() {
+        &resp["result"]
+    } else if !resp["result_data"].is_null() {
+        &resp["result_data"]
+    } else {
+        return "Executed successfully.".to_string();
+    };
+
+    if let Some(text) = result.as_str() {
+        text.to_string()
+    } else {
+        serde_json::to_string_pretty(result).unwrap_or_default()
+    }
 }
 
 /// Resolve a potentially shortened request ID to a full UUID via prefix match.
