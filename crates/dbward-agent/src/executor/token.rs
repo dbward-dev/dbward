@@ -5,6 +5,32 @@ use sha2::{Digest, Sha256};
 
 use crate::AgentError;
 
+/// Canonicalize JSON for deterministic hashing regardless of field order.
+/// Must match the server-side implementation in dbward-app.
+fn canonicalize_json(input: &str) -> String {
+    fn sort_value(v: serde_json::Value) -> serde_json::Value {
+        match v {
+            serde_json::Value::Object(map) => {
+                let mut sorted: Vec<(String, serde_json::Value)> = map.into_iter().collect();
+                sorted.sort_by(|(a, _), (b, _)| a.cmp(b));
+                let m: serde_json::Map<String, serde_json::Value> = sorted
+                    .into_iter()
+                    .map(|(k, v)| (k, sort_value(v)))
+                    .collect();
+                serde_json::Value::Object(m)
+            }
+            serde_json::Value::Array(arr) => {
+                serde_json::Value::Array(arr.into_iter().map(sort_value).collect())
+            }
+            other => other,
+        }
+    }
+
+    serde_json::from_str::<serde_json::Value>(input)
+        .map(|v| serde_json::to_string(&sort_value(v)).unwrap_or_else(|_| input.to_string()))
+        .unwrap_or_else(|_| input.to_string())
+}
+
 /// Typed execution token. Fields are private; only `verify()` is the public API.
 /// `issued_at` is intentionally omitted (not used in verification, serde ignores unknown fields).
 #[derive(Debug, Deserialize)]
@@ -62,9 +88,7 @@ impl ExecutionToken {
             || claim.operation == "migrate_down"
             || claim.operation == "migrate_repair"
         {
-            serde_json::from_str::<serde_json::Value>(&claim.detail)
-                .and_then(|v| serde_json::to_string(&v))
-                .unwrap_or_else(|_| claim.detail.clone())
+            canonicalize_json(&claim.detail)
         } else {
             claim.detail.clone()
         };
@@ -413,11 +437,8 @@ mod tests {
         claim.detail = r#"{"version":"001","sql":"CREATE TABLE t (id INT)"}"#.into();
         claim.execution_plan_json = None; // migrations don't have execution_plan
 
-        // Server canonicalizes: keys sorted alphabetically
-        let canonical = serde_json::to_string(
-            &serde_json::from_str::<serde_json::Value>(&claim.detail).unwrap(),
-        )
-        .unwrap();
+        // Server canonicalizes: keys sorted alphabetically via canonicalize_json
+        let canonical = super::canonicalize_json(&claim.detail);
         let detail_hash = hex::encode(Sha256::digest(canonical.as_bytes()));
         let expires_at = (chrono::Utc::now() + chrono::Duration::minutes(5))
             .to_rfc3339_opts(chrono::SecondsFormat::Secs, true);

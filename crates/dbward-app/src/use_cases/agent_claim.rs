@@ -278,11 +278,29 @@ fn sha256_hex(input: &str) -> String {
 }
 
 /// Canonicalize JSON for deterministic hashing regardless of field order.
-/// Relies on serde_json::Value using BTreeMap (alphabetical key sort).
-/// Server and agent must use the same serde_json version to guarantee identical output.
+/// Recursively sorts object keys alphabetically before serializing.
+/// This is necessary because serde_json with preserve_order maintains insertion order.
 fn canonicalize_json(input: &str) -> String {
+    fn sort_value(v: serde_json::Value) -> serde_json::Value {
+        match v {
+            serde_json::Value::Object(map) => {
+                let mut sorted: Vec<(String, serde_json::Value)> = map.into_iter().collect();
+                sorted.sort_by(|(a, _), (b, _)| a.cmp(b));
+                let m: serde_json::Map<String, serde_json::Value> = sorted
+                    .into_iter()
+                    .map(|(k, v)| (k, sort_value(v)))
+                    .collect();
+                serde_json::Value::Object(m)
+            }
+            serde_json::Value::Array(arr) => {
+                serde_json::Value::Array(arr.into_iter().map(sort_value).collect())
+            }
+            other => other,
+        }
+    }
+
     serde_json::from_str::<serde_json::Value>(input)
-        .and_then(|v| serde_json::to_string(&v))
+        .map(|v| serde_json::to_string(&sort_value(v)).unwrap_or_else(|_| input.to_string()))
         .unwrap_or_else(|_| input.to_string())
 }
 

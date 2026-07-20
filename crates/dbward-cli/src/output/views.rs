@@ -446,4 +446,56 @@ mod tests {
         assert_eq!(json["rows"], json!([[1]]));
         assert_eq!(json["truncated"], false);
     }
+
+    // --- Column order preservation (REF-3) ---
+
+    #[test]
+    fn from_server_response_preserves_column_order() {
+        // Keys inserted in non-alphabetical order: name, id, email.
+        // Without preserve_order, BTreeMap would sort to: email, id, name.
+        let resp = json!({
+            "success": true,
+            "result_data": {
+                "rows": [
+                    {"name": "alice", "id": 1, "email": "a@x.com"},
+                    {"name": "bob", "id": 2, "email": "b@x.com"}
+                ],
+                "truncated": false
+            }
+        });
+        let view = QueryResultView::from_server_response(&resp);
+        assert_eq!(
+            view.columns,
+            Some(vec!["name".into(), "id".into(), "email".into()]),
+            "column order must match JSON object insertion order (SELECT clause order)"
+        );
+        // Row values must also follow column order
+        assert_eq!(view.rows.as_ref().unwrap()[0][0], json!("alice"));
+        assert_eq!(view.rows.as_ref().unwrap()[0][1], json!(1));
+        assert_eq!(view.rows.as_ref().unwrap()[0][2], json!("a@x.com"));
+    }
+
+    #[test]
+    fn from_server_response_preserves_many_columns_order() {
+        // Use many columns to catch partial ordering issues
+        let resp = json!({
+            "success": true,
+            "result_data": {
+                "rows": [{"z": 1, "a": 2, "m": 3, "b": 4, "y": 5}],
+                "truncated": false
+            }
+        });
+        let view = QueryResultView::from_server_response(&resp);
+        assert_eq!(
+            view.columns,
+            Some(vec![
+                "z".into(),
+                "a".into(),
+                "m".into(),
+                "b".into(),
+                "y".into()
+            ]),
+            "column order must be preserved regardless of alphabetical sorting"
+        );
+    }
 }
