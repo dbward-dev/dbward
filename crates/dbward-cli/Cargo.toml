@@ -45,3 +45,7 @@ tempfile = "3"
 regex = "1"
 percent-encoding = "2"
 url = "2"
+
+[dev-dependencies]
+assert_cmd = "2"
+predicates = "3"

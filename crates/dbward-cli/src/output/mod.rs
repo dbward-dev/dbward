@@ -2,6 +2,7 @@ mod confirm;
 mod error;
 pub mod render;
 pub mod types;
+pub mod views;
 
 pub use confirm::confirm_or_reject;
 pub use error::CliError;

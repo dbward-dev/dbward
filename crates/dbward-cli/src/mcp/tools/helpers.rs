@@ -19,23 +19,7 @@ pub(super) fn format_result(resp: &Value) -> Result<String, String> {
             .unwrap_or("unknown error");
         return Err(format!("Execution failed: {err}"));
     }
-    let result = &resp["result"];
-    if !result.is_null() {
-        if let Some(text) = result.as_str() {
-            return Ok(text.to_string());
-        }
-        return Ok(serde_json::to_string_pretty(result).unwrap_or_default());
-    }
-    // Stream/stored format: result_data is a JSON value
-    let rd = &resp["result_data"];
-    if !rd.is_null() {
-        if let Some(text) = rd.as_str() {
-            return Ok(text.to_string());
-        }
-        return Ok(serde_json::to_string_pretty(rd).unwrap_or_default());
-    }
-    if let Some(affected) = resp["rows_affected"].as_u64() {
-        return Ok(format!("Rows affected: {affected}"));
-    }
-    Ok("Executed successfully.".to_string())
+
+    let view = crate::output::views::QueryResultView::from_server_response(resp);
+    Ok(serde_json::to_string_pretty(&view).unwrap_or_else(|_| "Executed successfully.".into()))
 }
