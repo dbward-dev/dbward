@@ -657,8 +657,12 @@ pub async fn run(
 
     // --- Logout ---
     if let Command::Logout = cli.command {
-        oidc_login::logout().await.map_err(CliError::Auth)?;
-        let render = RenderPlan::status("Logged out.");
+        let result = oidc_login::logout().await.map_err(CliError::Auth)?;
+        let msg = match result {
+            oidc_login::LogoutResult::Success => "Logged out. Credentials deleted.",
+            oidc_login::LogoutResult::NotLoggedIn => "Not logged in.",
+        };
+        let render = RenderPlan::status(msg);
         let outcome: crate::output::CliOutcome = CliResponse::<()>::empty(render).into();
         return Ok(Some(outcome));
     }

@@ -243,7 +243,15 @@ pub async fn login_device(
     }
 }
 
-pub async fn logout() -> Result<(), String> {
+/// Result of a logout operation.
+pub enum LogoutResult {
+    /// Successfully logged out (credentials deleted).
+    Success,
+    /// Was not logged in (no credentials found).
+    NotLoggedIn,
+}
+
+pub async fn logout() -> Result<LogoutResult, String> {
     // Try to find credentials in any location
     let legacy = legacy_credentials_path();
     let path = if legacy.exists() {
@@ -260,25 +268,21 @@ pub async fn logout() -> Result<(), String> {
                     match first {
                         Some(entry) => entry.path(),
                         None => {
-                            eprintln!("Not logged in.");
-                            return Ok(());
+                            return Ok(LogoutResult::NotLoggedIn);
                         }
                     }
                 }
                 Err(_) => {
-                    eprintln!("Not logged in.");
-                    return Ok(());
+                    return Ok(LogoutResult::NotLoggedIn);
                 }
             }
         } else {
-            eprintln!("Not logged in.");
-            return Ok(());
+            return Ok(LogoutResult::NotLoggedIn);
         }
     };
 
     if !path.exists() {
-        eprintln!("Not logged in.");
-        return Ok(());
+        return Ok(LogoutResult::NotLoggedIn);
     }
 
     let creds: Credentials =
@@ -290,22 +294,21 @@ pub async fn logout() -> Result<(), String> {
         let discovery = discover(&creds.issuer).await.ok();
         if let Some(disc) = discovery
             && let Some(ref revoke_url) = disc.revocation_endpoint
-            && let Err(err) = reqwest::Client::new()
+        {
+            // Best-effort revocation — ignore failures
+            let _ = reqwest::Client::new()
                 .post(revoke_url)
                 .form(&[
                     ("token", refresh.as_str()),
                     ("client_id", creds.client_id.as_str()),
                 ])
                 .send()
-                .await
-        {
-            eprintln!("Warning: token revocation request failed: {err}");
+                .await;
         }
     }
 
     std::fs::remove_file(&path).map_err(|e| e.to_string())?;
-    eprintln!("Logged out. Credentials deleted.");
-    Ok(())
+    Ok(LogoutResult::Success)
 }
 
 /// Local OIDC identity information extracted from saved credentials.
