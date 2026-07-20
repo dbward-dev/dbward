@@ -4,7 +4,7 @@ use serde_json::Value;
 
 use crate::config::ClientConfig;
 use crate::output::CliError;
-use crate::output::{CliResponse, OutputMode, RenderPlan, StderrLine, StdoutRender};
+use crate::output::{CliResponse, OutputMode, ProgressSink, RenderPlan, StderrLine, StdoutRender};
 use crate::server_client::{CreateRequest, ServerClient};
 
 use super::helpers::build_request_metadata;
@@ -109,6 +109,7 @@ pub async fn run_migrate(
     mode: OutputMode,
     action: &MigrateAction,
     yes: bool,
+    progress: &ProgressSink,
 ) -> Result<CliResponse<Value>, CliError> {
     let (operation, detail, metadata, idempotency_key, share_with) = match action {
         MigrateAction::Up {
@@ -283,6 +284,7 @@ pub async fn run_migrate(
                 no_result_store: false,
             },
             true,
+            progress,
         ) => result?,
         _ = tokio::signal::ctrl_c() => {
             let output = serde_json::json!({

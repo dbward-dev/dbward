@@ -16,8 +16,9 @@ pub fn confirm_or_reject(mode: OutputMode, yes_flag: bool) -> Result<(), CliErro
     }
 
     if mode != OutputMode::Human || !std::io::stdin().is_terminal() {
-        return Err(CliError::Blocked {
-            reason: "--yes is required for destructive operations in non-interactive mode".into(),
+        return Err(CliError::Api {
+            code: "confirmation_required".into(),
+            message: "--yes is required for destructive operations in non-interactive mode".into(),
         });
     }
 
@@ -57,26 +58,39 @@ mod tests {
     }
 
     #[test]
-    fn json_mode_without_yes_is_error() {
+    fn json_mode_without_yes_is_confirmation_required() {
         let result = confirm_or_reject(OutputMode::Json, false);
         assert!(result.is_err());
-        let err = result.unwrap_err();
-        assert!(err.to_string().contains("--yes"));
+        match result.unwrap_err() {
+            CliError::Api { code, message } => {
+                assert_eq!(code, "confirmation_required");
+                assert!(message.contains("--yes"));
+            }
+            other => panic!("expected Api error, got: {other:?}"),
+        }
     }
 
     #[test]
-    fn quiet_mode_without_yes_is_error() {
+    fn quiet_mode_without_yes_is_confirmation_required() {
         let result = confirm_or_reject(OutputMode::Quiet, false);
         assert!(result.is_err());
+        match result.unwrap_err() {
+            CliError::Api { code, .. } => assert_eq!(code, "confirmation_required"),
+            other => panic!("expected Api error, got: {other:?}"),
+        }
     }
 
     #[test]
-    fn human_mode_non_tty_without_yes_is_error() {
+    fn human_mode_non_tty_without_yes_is_confirmation_required() {
         // In CI/test environments, stdin is typically not a TTY
         if std::io::stdin().is_terminal() {
             return; // Skip in interactive terminals
         }
         let result = confirm_or_reject(OutputMode::Human, false);
         assert!(result.is_err());
+        match result.unwrap_err() {
+            CliError::Api { code, .. } => assert_eq!(code, "confirmation_required"),
+            other => panic!("expected Api error, got: {other:?}"),
+        }
     }
 }

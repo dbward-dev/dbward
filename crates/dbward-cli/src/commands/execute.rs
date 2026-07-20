@@ -3,7 +3,7 @@ use std::path::Path;
 use serde_json::Value;
 
 use crate::output::CliError;
-use crate::output::{CliResponse, OutputMode, RenderPlan, StderrLine, StdoutRender};
+use crate::output::{CliResponse, OutputMode, ProgressSink, RenderPlan, StderrLine, StdoutRender};
 use crate::server_client::{CreateRequest, ServerClient};
 
 use super::helpers::{build_request_metadata, save_result};
@@ -33,6 +33,7 @@ pub async fn run_execute(
     _result_format: crate::display::ResultFormat,
     timeout: Option<u64>,
     yes: bool,
+    progress: &ProgressSink,
 ) -> Result<CliResponse<Value>, CliError> {
     if emergency && reason.is_none() {
         return Err(CliError::Config("--emergency requires --reason".into()));
@@ -75,7 +76,7 @@ pub async fn run_execute(
 
     let outcome = if let Some(secs) = timeout {
         tokio::select! {
-            result = workflow::submit_and_orchestrate(sc, request, true) => result?,
+            result = workflow::submit_and_orchestrate(sc, request, true, progress) => result?,
             _ = tokio::signal::ctrl_c() => {
                 let output = serde_json::json!({
                     "interrupted": true,
@@ -101,7 +102,7 @@ pub async fn run_execute(
         }
     } else {
         tokio::select! {
-            result = workflow::submit_and_orchestrate(sc, request, true) => result?,
+            result = workflow::submit_and_orchestrate(sc, request, true, progress) => result?,
             _ = tokio::signal::ctrl_c() => {
                 let output = serde_json::json!({
                     "interrupted": true,

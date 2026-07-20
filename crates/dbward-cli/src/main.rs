@@ -29,13 +29,13 @@ fn main() {
     }
 
     let mode = cli.format;
-    let _progress = ProgressSink::new(mode);
+    let progress = ProgressSink::new(mode);
 
     let result = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()
         .expect("BUG: failed to create tokio runtime")
-        .block_on(dbward::commands::run(cli));
+        .block_on(dbward::commands::run(cli, &progress));
 
     match result {
         Ok(Some(mut outcome)) => {

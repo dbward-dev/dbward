@@ -10,6 +10,7 @@ use super::super::defs::{
 use super::super::server::ElicitHandle;
 use super::super::server::ElicitResult;
 use super::helpers::{format_result, rewrite_error};
+use crate::output::{OutputMode, ProgressSink};
 
 #[allow(clippy::too_many_arguments)]
 pub(super) async fn submit_and_wait(
@@ -121,9 +122,10 @@ async fn submit_and_wait_resume(
     }
 
     // 3. Wait with timeout (request_id preserved on timeout)
+    let mcp_progress = ProgressSink::new(OutputMode::Quiet);
     match tokio::time::timeout(
         TIMEOUT,
-        workflow::wait_for_completion(client, &cr.request_id, cr.status, false),
+        workflow::wait_for_completion(client, &cr.request_id, cr.status, false, &mcp_progress),
     )
     .await
     {
@@ -337,9 +339,15 @@ pub(super) async fn handle_wait_request(
                     e.error_message.as_deref().unwrap_or(&e.body)
                 ));
             }
+            let mcp_progress = ProgressSink::new(OutputMode::Quiet);
             match tokio::time::timeout(
                 Duration::from_secs(timeout),
-                crate::commands::workflow::wait_and_resolve(client, request_id, false),
+                crate::commands::workflow::wait_and_resolve(
+                    client,
+                    request_id,
+                    false,
+                    &mcp_progress,
+                ),
             )
             .await
             {

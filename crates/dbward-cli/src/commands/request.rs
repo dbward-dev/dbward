@@ -8,7 +8,8 @@ use crate::display::ResultFormat;
 use crate::display::{format_created_time, short_request_id, truncate_table_cell};
 use crate::output::CliError;
 use crate::output::{
-    CliResponse, Column, OutputMode, RenderPlan, StderrLine, StdoutRender, confirm_or_reject,
+    CliResponse, Column, OutputMode, ProgressSink, RenderPlan, StderrLine, StdoutRender,
+    confirm_or_reject,
 };
 use crate::server_client::ServerClient;
 
@@ -177,6 +178,7 @@ pub async fn run_request_cmd(
     default_format: ResultFormat,
     yes: bool,
     mode: OutputMode,
+    progress: &ProgressSink,
 ) -> Result<crate::output::CliOutcome, CliError> {
     match action {
         RequestAction::Approve {
@@ -195,7 +197,7 @@ pub async fn run_request_cmd(
         }
         RequestAction::Cancel { id, reason } => {
             let resolved = resolve_request_id(sc, id).await?;
-            let resp = run_cancel(sc, &resolved, reason.as_deref(), yes, mode).await?;
+            let resp = run_cancel(sc, &resolved, reason.as_deref(), yes, mode, progress).await?;
             Ok(resp.into())
         }
         RequestAction::List {
@@ -237,6 +239,7 @@ pub async fn run_request_cmd(
                 yes,
                 reason.as_deref(),
                 mode,
+                progress,
             )
             .await?;
             Ok(resp.into())
@@ -395,6 +398,7 @@ async fn run_cancel(
     reason: Option<&str>,
     yes: bool,
     mode: OutputMode,
+    progress: &ProgressSink,
 ) -> Result<CliResponse<RequestCancelOutput>, CliError> {
     // Check if query is running and needs confirmation
     let req_info = sc.get_json(&format!("/api/requests/{id}")).await;
@@ -403,8 +407,8 @@ async fn run_cancel(
         && dbward_api_types::requests::RequestStatus::from_json(&info["status"])
             == dbward_api_types::requests::RequestStatus::Running
     {
-        eprintln!("⚠ Query is currently executing on the database.");
-        eprintln!("  Cancelling will kill the running query and roll back any changes.");
+        progress.warn("Query is currently executing on the database.");
+        progress.status("  Cancelling will kill the running query and roll back any changes.");
         if confirm_or_reject(mode, false).is_err() {
             return Err(CliError::Internal("aborted by user".into()));
         }
@@ -842,6 +846,7 @@ async fn run_resume(
     yes: bool,
     reason: Option<&str>,
     mode: OutputMode,
+    progress: &ProgressSink,
 ) -> Result<CliResponse<RequestResumeOutput>, CliError> {
     // DML re-resume warning
     let req = sc.get_request(id).await?;
@@ -859,17 +864,17 @@ async fn run_resume(
             ));
         }
         let detail = req["detail"].as_str().unwrap_or("");
-        eprintln!("⚠️  WARNING: This request previously failed with execution_lost.");
-        eprintln!("   The previous execution may have partially completed.");
+        progress.warn("WARNING: This request previously failed with execution_lost.");
+        progress.status("   The previous execution may have partially completed.");
         let sql_preview: String = detail.chars().take(80).collect();
-        eprintln!("   SQL: {sql_preview}");
-        eprintln!("   Re-resuming may cause DUPLICATE execution.");
+        progress.status(&format!("   SQL: {sql_preview}"));
+        progress.warn("Re-resuming may cause DUPLICATE execution.");
         eprint!("   Continue? [y/N] ");
         std::io::Write::flush(&mut std::io::stderr()).ok();
         let mut input = String::new();
         std::io::stdin().read_line(&mut input).ok();
         if !input.trim().eq_ignore_ascii_case("y") {
-            eprintln!("Aborted.");
+            progress.status("Aborted.");
             let render = RenderPlan::status("Aborted.");
             return Ok(CliResponse::empty(render));
         }
@@ -912,7 +917,7 @@ async fn run_resume(
     }
 
     let resp = tokio::select! {
-        r = workflow::wait_and_resolve(sc, id, true) => r?,
+        r = workflow::wait_and_resolve(sc, id, true, progress) => r?,
         _ = tokio::signal::ctrl_c() => {
             let stderr = vec![
                 StderrLine::Status("Request is still running.".into()),

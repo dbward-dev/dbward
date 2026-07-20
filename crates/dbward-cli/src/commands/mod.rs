@@ -25,7 +25,7 @@ use serde::Serialize;
 use crate::config::{self, ClientConfig};
 use crate::oidc_login;
 use crate::output::CliError;
-use crate::output::{CliResponse, RenderPlan, StderrLine, StdoutRender};
+use crate::output::{CliResponse, ProgressSink, RenderPlan, StderrLine, StdoutRender};
 use crate::self_update;
 use crate::server_client::ServerClient;
 
@@ -471,7 +471,10 @@ fn build_whoami_response(resp: &serde_json::Value) -> CliResponse<WhoamiOutput> 
 // Main dispatch
 // ---------------------------------------------------------------------------
 
-pub async fn run(mut cli: Cli) -> Result<Option<crate::output::CliOutcome>, CliError> {
+pub async fn run(
+    mut cli: Cli,
+    progress: &ProgressSink,
+) -> Result<Option<crate::output::CliOutcome>, CliError> {
     // Merge DBWARD_YES env var (accepts 1/true/yes)
     if let (false, Ok(val)) = (cli.yes, std::env::var("DBWARD_YES")) {
         cli.yes = matches!(val.to_lowercase().as_str(), "1" | "true" | "yes");
@@ -603,6 +606,7 @@ pub async fn run(mut cli: Cli) -> Result<Option<crate::output::CliOutcome>, CliE
             default_fmt,
             cli.yes,
             cli.format,
+            progress,
         )
         .await?;
         return Ok(Some(outcome));
@@ -760,6 +764,7 @@ pub async fn run(mut cli: Cli) -> Result<Option<crate::output::CliOutcome>, CliE
             resolve_result_format(result_format, &cfg),
             timeout,
             cli.yes,
+            progress,
         )
         .await?
         .into();
@@ -849,10 +854,11 @@ pub async fn run(mut cli: Cli) -> Result<Option<crate::output::CliOutcome>, CliE
             .as_deref()
             .or(cfg.default_environment.as_deref())
             .unwrap_or("development");
-        let outcome: crate::output::CliOutcome =
-            migrate::run_migrate(&sc, &cfg, &db_name, env_str, cli.format, action, cli.yes)
-                .await?
-                .into();
+        let outcome: crate::output::CliOutcome = migrate::run_migrate(
+            &sc, &cfg, &db_name, env_str, cli.format, action, cli.yes, progress,
+        )
+        .await?
+        .into();
         return Ok(Some(outcome));
     }
 
