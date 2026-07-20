@@ -11,7 +11,7 @@ echo ""
 echo "=== Injection Tests ==="
 echo ""
 
-ADMIN_TOKEN=$(create_token e2e-inject-admin admin)
+ADMIN_TOKEN=$(create_token e2e-inject-admin admin,requester)
 [ -z "$ADMIN_TOKEN" ] && { echo "Failed to create token"; exit 1; }
 
 # --- SQL Injection via detail field ---

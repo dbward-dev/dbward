@@ -16,7 +16,7 @@ echo ""
 # alice: admin + operator (system management + break-glass + audit)
 ADMIN_BACKEND=$(create_token alice admin,operator --groups backend-team)
 # carol: admin (system management, approves via dba-team group selector)
-ADMIN_DBA=$(create_token carol admin --groups dba-team)
+ADMIN_DBA=$(create_token carol admin,requester --groups dba-team)
 # bob: requester (creates requests)
 DEV_TOKEN=$(create_token bob requester)
 

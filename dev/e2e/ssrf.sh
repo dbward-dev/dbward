@@ -13,7 +13,7 @@ echo ""
 echo "=== SSRF Prevention Tests (CFG-24) ==="
 echo ""
 
-ADMIN_TOKEN=$(create_token e2e-ssrf-admin admin)
+ADMIN_TOKEN=$(create_token e2e-ssrf-admin admin,requester)
 [ -z "$ADMIN_TOKEN" ] && { echo "Failed to create token"; exit 1; }
 
 # --- POST /api/webhooks is 405 (regardless of URL content) ---

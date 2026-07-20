@@ -11,7 +11,7 @@ echo ""
 echo "=== E2E SAFE-1/3/6 Tests ==="
 echo ""
 
-TOKEN=$(create_token safe-tester admin)
+TOKEN=$(create_token safe-tester admin,requester)
 [ -z "$TOKEN" ] && { echo "Failed to create token"; exit 1; }
 
 # --- SAFE-1: Read-only transaction ---

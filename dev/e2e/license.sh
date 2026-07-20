@@ -18,7 +18,7 @@ echo "--- Free plan: server starts with valid config ---"
 
 wait_for_server
 TS=$(date +%s)
-ADMIN_TOKEN=$(create_token "e2e-license-admin-$TS" admin)
+ADMIN_TOKEN=$(create_token "e2e-license-admin-$TS" admin,requester)
 
 STATUS=$(api_status GET /health "$ADMIN_TOKEN")
 [ "$STATUS" = "200" ] && pass "Server healthy (Free plan, config within limits)" || fail "Health" "got $STATUS"
@@ -60,7 +60,7 @@ if [ -f "$LICENSE_DIR/expired.key" ]; then
   sleep 3
   wait_for_server
 
-  ADMIN_TOKEN=$(create_token "e2e-license-exp-$TS" admin)
+  ADMIN_TOKEN=$(create_token "e2e-license-exp-$TS" admin,requester)
   STATUS=$(api_status GET /health "$ADMIN_TOKEN")
   [ "$STATUS" = "200" ] && pass "Expired license: server starts (Free fallback)" || fail "Expired startup" "got $STATUS"
 

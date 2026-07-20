@@ -13,7 +13,7 @@ echo ""
 wait_for_server
 
 TS=$(date +%s)
-ADMIN_TOKEN=$(create_token "e2e-wh-admin-$TS" admin)
+ADMIN_TOKEN=$(create_token "e2e-wh-admin-$TS" admin,requester)
 
 # --- 1. Write API returns 405 ---
 echo "--- Write API → 405 ---"

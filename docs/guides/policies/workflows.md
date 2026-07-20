@@ -266,7 +266,7 @@ environment = "production"
 operations = ["execute_select", "execute_dml"]  # Filter by operation (omitted = all)
 require_reason = true                # Force users to provide --reason (default: false)
 allow_self_approve = false           # Requester cannot approve own request (default: false)
-allow_same_approver_across_steps = false  # Same person can't approve in multiple steps (default: true)
+allow_same_approver_across_steps = false  # Same person can't approve in multiple steps (default: false)
 pending_ttl_secs = 3600             # Pending request expires after this duration (default: none)
 approval_ttl_secs = 600             # Approved request must execute within this duration (default: none)
 explain = true                      # Run EXPLAIN before approval for preview context (default: false)

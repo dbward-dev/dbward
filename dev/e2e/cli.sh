@@ -17,7 +17,7 @@ wait_for_server
 # Create tokens for CLI usage
 CLI_TOKEN=$(create_token cli-user requester)
 [ -z "$CLI_TOKEN" ] && { echo "Failed to create token"; exit 1; }
-ADMIN_TOKEN=$(create_token cli-admin admin)
+ADMIN_TOKEN=$(create_token cli-admin admin,requester)
 
 # CLI helper: run dbward command inside the server container with proper config
 write_cli_config() {

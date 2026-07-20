@@ -24,7 +24,7 @@ docker compose exec -T mysql mysqladmin ping -h localhost -uroot -pdbward 2>/dev
 echo "MySQL ready"
 
 # Create agent token pointing to MySQL
-ADMIN_TOKEN=$(create_token admin1 admin)
+ADMIN_TOKEN=$(create_token admin1 admin,requester)
 DEV_TOKEN=$(create_token dev1 requester)
 
 [ -z "$ADMIN_TOKEN" ] && { echo "Failed to create admin token"; exit 1; }

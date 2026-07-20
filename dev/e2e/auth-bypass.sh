@@ -11,7 +11,7 @@ echo ""
 echo "=== Auth Bypass Tests ==="
 echo ""
 
-ADMIN_TOKEN=$(create_token e2e-bypass-admin admin)
+ADMIN_TOKEN=$(create_token e2e-bypass-admin admin,requester)
 [ -z "$ADMIN_TOKEN" ] && { echo "Failed to create token"; exit 1; }
 
 # --- Revoked token ---
