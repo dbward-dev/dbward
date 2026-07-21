@@ -30,18 +30,18 @@ chrono = { workspace = true }
 
 # Crypto
 subtle = "2"
-sha2 = "0.10"
+sha2 = "0.11"
 hex = "0.4"
-hmac = "0.12"
-ed25519-dalek = { version = "2", features = ["rand_core"] }
-rand = "0.8"
+hmac = "0.13"
+ed25519-dalek = { version = "3", features = ["rand_core"] }
+rand = "0.10"
 base64 = "0.22"
 
 # HTTP (webhook, OIDC)
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
 
 # Object storage
-object_store = { version = "0.11", features = ["aws"] }
+object_store = { version = "0.14", features = ["aws"] }
 futures-util = "0.3"
 
 # JWT / OIDC
@@ -51,7 +51,7 @@ uuid = { workspace = true }
 thiserror = { workspace = true }
 tracing = { workspace = true }
 url = "2"
-sqlparser = { version = "0.61", features = ["visitor"] }
+sqlparser = { version = "0.62", features = ["visitor"] }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
