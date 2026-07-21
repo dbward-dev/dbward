@@ -1,10 +1,47 @@
 # Changelog
 
-## [Unreleased]
+## [0.2.0] — 2026-07-21
 
 ### Breaking Changes
 
-- **`auth.mode` removed**: The `auth.mode` configuration field is no longer supported. OIDC is now enabled automatically when `[auth.oidc]` section is present and a Team license is active. API tokens are always accepted. Existing configs with `mode` field will have it silently ignored.
+- **Authorization model redesign (SLACK-10)**: 2-layer authorization (Layer 1: permission gate + DB×Env scope → Layer 2: ResourceContext ownership/relationship/selector). Built-in roles changed: `requester`, `approver`, `operator`, `admin`, `agent-default`. Non-owner cancel/resume now requires reason. Break-glass restricted to operator role. Approve/reject enforced via selector matching.
+- **Token permission redesign (SEC-9)**: `token.write` split into `token.create_own` / `token.manage`. Creating tokens for other users is now hard-403. Bootstrap token isolation. Sprawl guard limits.
+- **DDL permission unification (SQL-1)**: All DDL statements now require `request.ddl` permission (previously some were hard-rejected). DML-only tokens can no longer execute DDL. New sql_review rules: `drop_index`, `drop_view`, `drop_sequence`, `create_sequence`.
+- **`auth.mode` removed**: OIDC enabled automatically when `[auth.oidc]` is present with Team license. API tokens always accepted.
+- **`[slack.channels]` per-env override removed**: Simplified to single `[slack] channel` configuration.
+- **`DeliveryMode::StoreOnly` removed**: Was causing 300s CLI hangs. Simplified to `Both` / `Stream` modes.
+- **CLI output layer unified (REF-2)**: `--format human|json|quiet` replaces previous ad-hoc formatting. All 38 commands migrated to structured output pipeline.
+
+### Features
+
+- **Remote MCP (Streamable HTTP transport)**: MCP over HTTP with SSE streaming support.
+- **SQL Safety Oracle (PRE-1)**: `POST /api/preflight` endpoint for pre-submission SQL analysis — risk assessment, EXPLAIN plan, sql_review findings, and fix hints.
+- **V25 User Management**: Full user lifecycle (create, suspend, activate, delete) with OIDC auto-creation and group membership.
+- **Scoped `[[sql_review]]` policies**: Database×environment scoped SQL review rules with specificity-based matching.
+- **CASCADE reverse-lookup detection (SLACK-9)**: `DELETE FROM parent` warns about child table cascades by scanning schema snapshot.
+- **Slack Review Modal improvements**: EXPLAIN tree display (depth=3), rich schema snapshot with estimated_rows/CASCADE info, fetch-once optimization.
+- **`dbward slack init`**: Interactive Slack app setup wizard + doctor Slack health checks.
+- **Workflow `operations` filter**: Workflows can target specific operations (execute_select, execute_dml, migrate_up, etc.).
+- **CLI confirmation prompt**: `--yes` / `DBWARD_YES` for non-interactive destructive operations.
+- **`dbward whoami` groups display**: Shows resolved groups and role mappings.
+- **Workflow coverage doctor check**: `dbward doctor` shows DB×env → workflow mapping table.
+- **Agent poll scoping**: Explicit `(database, environment)` scopes replace self-reported capabilities.
+- **Query result column order preservation (REF-3)**: SELECT clause column order is now preserved in results (previously alphabetized by BTreeMap).
+
+### Fixed
+
+- **Notify race condition (BUG-1)**: `InMemoryResultChannel::subscribe()` Notify ordering fixed.
+- **Fail-open error handling**: 3 critical paths closed (driver, preflight, workflow evaluation).
+- **Auth error JSON Content-Type**: All 401/403 responses now return proper JSON.
+- **Audit consistency**: `request_id`/`resource_id` fields unified, webhook redaction, `blocked_by_review` enrichment.
+- **OIDC callback hardening**: URL encoding, CORS `expose_headers`, localhost detection.
+- **Slack group-based approval**: `resolve_slack_auth_user` uses `groups_for_subject()` for selector matching.
+
+### Internal
+
+- **MCP protocol 2025-06-18**: Spec compliance upgrade.
+- **Free plan max_users**: Increased from 10 to 20.
+- **E2E test suite**: 249 tests across 38 scripts covering security, auth, lifecycle, MCP, migrations, policies.
 
 ## [0.1.6] — 2026-06-18
 

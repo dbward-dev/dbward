@@ -10,7 +10,7 @@ keywords = ["database", "migration", "postgresql", "mysql"]
 categories = ["database"]
 
 [dependencies]
-dbward-driver = { path = "../dbward-driver", version = "0.1.1" }
+dbward-driver = { path = "../dbward-driver" }
 tokio.workspace = true
 chrono.workspace = true
 serde.workspace = true

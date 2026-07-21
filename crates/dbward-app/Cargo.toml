@@ -1,6 +1,6 @@
 [package]
 name = "dbward-app"
-version = "0.1.1"
+version = "0.2.0"
 license.workspace = true
 edition.workspace = true
 description = "Application layer for dbward — use cases and port traits"
