@@ -93,6 +93,20 @@ wait_for_server() {
   echo "Server ready"
 }
 
+# Wait for agent to be healthy (checks readiness file inside container)
+wait_for_agent() {
+  for i in $(seq 1 30); do
+    docker compose exec -T dbward-agent test -f /tmp/dbward-agent-ready 2>/dev/null && return 0
+    sleep 2
+  done
+  # Agent not ready — restart and wait
+  docker compose restart dbward-agent >/dev/null 2>&1
+  for i in $(seq 1 15); do
+    docker compose exec -T dbward-agent test -f /tmp/dbward-agent-ready 2>/dev/null && return 0
+    sleep 2
+  done
+}
+
 # Wait for Keycloak
 wait_for_keycloak() {
   echo "Waiting for Keycloak..."

@@ -13,6 +13,9 @@ echo ""
 echo "=== E2E Large Data & Slow Query Tests ==="
 echo ""
 
+wait_for_server
+wait_for_agent
+
 DEV_TOKEN=$(create_token loadtest requester)
 [ -z "$DEV_TOKEN" ] && { echo "Failed to create token"; exit 1; }
 

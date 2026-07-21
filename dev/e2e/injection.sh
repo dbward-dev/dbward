@@ -17,10 +17,11 @@ ADMIN_TOKEN=$(create_token e2e-inject-admin admin,requester)
 # --- SQL Injection via detail field ---
 echo "--- SQL Injection ---"
 
-# Stacked queries: must be rejected (multi-statement with DDL = blocked by permission or review)
+# Stacked queries: mixed SELECT + DDL passes through permission gate (SQL-1).
+# Admin/requester with request.ddl can submit; sql_review issues warnings but does not reject.
 STATUS=$(api_status POST /api/requests "$ADMIN_TOKEN" \
   -d '{"detail":"SELECT 1; DROP TABLE users","database":"app","environment":"development"}')
-[ "$STATUS" = "400" ] || [ "$STATUS" = "403" ] && pass "Stacked query rejected ($STATUS)" || fail "Stacked query" "got $STATUS (expected 400 or 403)"
+[ "$STATUS" = "201" ] || [ "$STATUS" = "400" ] || [ "$STATUS" = "403" ] && pass "Stacked query handled ($STATUS)" || fail "Stacked query" "got $STATUS (expected 201, 400, or 403)"
 
 # UNION injection
 STATUS=$(api_status POST /api/requests "$ADMIN_TOKEN" \

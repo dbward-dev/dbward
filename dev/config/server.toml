@@ -41,8 +41,8 @@ name = "default"
 environments = ["development", "staging", "production"]
 
 [[databases]]
-name = "billing"
-environments = ["development", "production"]
+name = "mysql_dev"
+environments = ["development"]
 
 # Workflow definitions (synced to SQLite on startup)
 

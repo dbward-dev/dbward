@@ -29,6 +29,8 @@ import sys,json
 data = json.load(sys.stdin)
 tokens = data if isinstance(data, list) else data.get('tokens',[])
 for t in tokens:
+    if t.get('status') != 'active':
+        continue
     if 'victim' in t.get('name','') or 'victim' in t.get('user','') or 'victim' in t.get('subject_id',''):
         print(t['id']); break
 " 2>/dev/null)

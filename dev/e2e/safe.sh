@@ -5,6 +5,7 @@
 
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+cd "$SCRIPT_DIR/.."
 source "$SCRIPT_DIR/helpers.sh"
 
 echo ""
@@ -47,7 +48,7 @@ echo "--- SAFE-1: Classifier reclassification ---"
 
 # FOR UPDATE → DML
 REQ=$(api POST /api/requests "$TOKEN" \
-  -d '{"operation":"execute_query","environment":"development","database":"app","detail":"SELECT 1 FOR UPDATE"}')
+  -d '{"operation":"execute_query","environment":"development","database":"app","detail":"SELECT * FROM users FOR UPDATE"}')
 OP=$(echo "$REQ" | json_field operation)
 [ "$OP" = "execute_dml" ] && pass "FOR UPDATE → execute_dml" || fail "FOR UPDATE classify" "op=$OP"
 
