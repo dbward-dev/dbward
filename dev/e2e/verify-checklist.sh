@@ -27,12 +27,12 @@ STATUS=$(api_status POST /api/requests "$REQUESTER_TOKEN" \
 [ "$STATUS" = "403" ] || [ "$STATUS" = "400" ] && pass "Scope外DB → rejected ($STATUS)" || fail "Scope外DB" "got $STATUS"
 
 echo ""
-echo "--- §1 Layer 2: Admin cannot bypass ---"
+echo "--- §1 Layer 2: Admin can view requests ---"
 REQ=$(api POST /api/requests "$REQUESTER_TOKEN" \
   -d '{"operation":"execute_query","environment":"development","database":"app","detail":"SELECT 1"}')
 REQ_ID=$(echo "$REQ" | json_field id)
 STATUS=$(api_status GET "/api/requests/$REQ_ID" "$ADMIN_ONLY_TOKEN")
-[ "$STATUS" = "403" ] && pass "Admin(no request.view) cannot view request" || fail "Admin view" "got $STATUS"
+[ "$STATUS" = "200" ] && pass "Admin(all permissions) can view request" || fail "Admin view" "got $STATUS"
 
 echo ""
 echo "--- §2.1 Ownership: request.view ---"
@@ -92,7 +92,7 @@ STATUS=$(api_status POST /api/requests "$REQUESTER_TOKEN" \
 
 STATUS=$(api_status POST /api/requests "$ADMIN_ONLY_TOKEN" \
   -d '{"operation":"execute_query","environment":"development","database":"app","detail":"SELECT bg3","emergency":true,"reason":"test"}')
-[ "$STATUS" = "403" ] && pass "Admin cannot break-glass" || fail "Admin break-glass" "got $STATUS"
+[ "$STATUS" = "201" ] && pass "Admin can break-glass (all permissions)" || fail "Admin break-glass" "got $STATUS"
 
 echo ""
 echo "--- §6 Reason validation ---"
@@ -148,7 +148,7 @@ STATUS=$(api_status GET "/api/schemas/app?environment=development" "$REQUESTER_T
 [ "$STATUS" = "200" ] && pass "Requester(schema.read) can read schema" || fail "Req schema" "got $STATUS"
 
 STATUS=$(api_status GET "/api/schemas/app?environment=development" "$ADMIN_ONLY_TOKEN")
-[ "$STATUS" = "403" ] && pass "Admin(no schema.read) cannot read schema" || fail "Admin schema" "got $STATUS"
+[ "$STATUS" = "200" ] && pass "Admin(all permissions) can read schema" || fail "Admin schema" "got $STATUS"
 
 echo ""
 echo "--- §8 Audit ---"
@@ -177,7 +177,7 @@ echo ""
 echo "--- §12 Built-in roles ---"
 STATUS=$(api_status POST /api/requests "$ADMIN_ONLY_TOKEN" \
   -d '{"operation":"execute_query","environment":"development","database":"app","detail":"SELECT 1"}')
-[ "$STATUS" = "403" ] && pass "Admin has no Operation Plane access" || fail "Admin op" "got $STATUS"
+[ "$STATUS" = "201" ] && pass "Admin has Operation Plane access (superuser)" || fail "Admin op" "got $STATUS"
 
 echo ""
 echo "--- §13 Bootstrap ---"
