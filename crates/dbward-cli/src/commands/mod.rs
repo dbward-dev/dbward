@@ -223,8 +223,12 @@ pub enum Command {
         #[command(subcommand)]
         action: token::TokenAction,
     },
-    /// Update dbward to the latest version
-    SelfUpdate,
+    /// Update dbward CLI binary
+    SelfUpdate {
+        /// Update to the latest GitHub release instead of matching server version
+        #[arg(long)]
+        latest: bool,
+    },
     /// Show agent status (admin only)
     Agents,
     /// Diagnose configuration and connectivity issues
@@ -674,8 +678,16 @@ pub async fn run(
     }
 
     // --- Self-update ---
-    if let Command::SelfUpdate = cli.command {
-        let outcome: crate::output::CliOutcome = self_update::run_self_update().await?.into();
+    if let Command::SelfUpdate { latest } = cli.command {
+        let outcome: crate::output::CliOutcome = self_update::run_self_update(
+            cli.format,
+            cli.yes,
+            latest,
+            cli.config.as_deref(),
+            cli.merge_global,
+        )
+        .await?
+        .into();
         return Ok(Some(outcome));
     }
 
