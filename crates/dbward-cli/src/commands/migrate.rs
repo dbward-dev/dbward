@@ -8,7 +8,7 @@ use crate::output::{CliResponse, OutputMode, ProgressSink, RenderPlan, StderrLin
 use crate::server_client::{CreateRequest, ServerClient};
 
 use super::helpers::build_request_metadata;
-use super::workflow::{self, Outcome};
+use super::workflow;
 
 #[derive(Subcommand)]
 pub enum MigrateAction {
@@ -264,8 +264,16 @@ pub async fn run_migrate(
         crate::output::confirm_or_reject(mode, yes)?;
     }
 
-    let outcome = tokio::select! {
-        result = workflow::submit_and_orchestrate(
+    let cancellable = operation != "migrate_status";
+
+    // WHY: ctrl_c() future resolves only once. Pin and share via &mut across
+    // two sequential select! blocks so Ctrl-C during either create or wait is caught.
+    let ctrl_c = tokio::signal::ctrl_c();
+    tokio::pin!(ctrl_c);
+
+    // Step 1: Create request (with Ctrl-C escape)
+    let cr = tokio::select! {
+        result = workflow::create_request(
             sc,
             CreateRequest {
                 operation,
@@ -280,10 +288,8 @@ pub async fn run_migrate(
                 share_with: sw,
                 no_result_store: false,
             },
-            true,
-            progress,
         ) => result?,
-        _ = tokio::signal::ctrl_c() => {
+        _ = &mut ctrl_c => {
             let output = serde_json::json!({
                 "interrupted": true,
                 "message": "If a request was created, check: dbward request list"
@@ -299,46 +305,60 @@ pub async fn run_migrate(
                 .with_issues(130, "interrupted", "operation interrupted by user"));
         }
     };
+    let request_id = &cr.request_id;
 
-    match outcome {
-        Outcome::Completed { result, .. } => {
+    // Step 2: Exhaustive status branch
+    match cr.status {
+        // States that require waiting → proceed to Step 3
+        dbward_api_types::requests::RequestStatus::Dispatched
+        | dbward_api_types::requests::RequestStatus::Running
+        | dbward_api_types::requests::RequestStatus::AutoApproved
+        | dbward_api_types::requests::RequestStatus::BreakGlass => {}
+
+        // Already terminal → resolve immediately
+        dbward_api_types::requests::RequestStatus::Executed
+        | dbward_api_types::requests::RequestStatus::Failed => {
+            let result = workflow::resolve_terminal_result(sc, request_id).await?;
             let pretty = serde_json::to_string_pretty(&result).unwrap_or_default();
             let render = RenderPlan {
                 stdout: StdoutRender::Raw { value: pretty },
                 stderr: vec![],
             };
-            Ok(CliResponse::ok(result, render))
+            return Ok(CliResponse::ok(result, render));
         }
-        Outcome::Pending {
-            request_id,
-            approvers,
-        } => {
+
+        // Pending approval
+        dbward_api_types::requests::RequestStatus::Pending => {
             let output = serde_json::json!({
                 "request_id": request_id,
                 "status": "pending_approval",
-                "approvers": approvers,
+                "approvers": cr.approvers,
             });
             let mut stderr = vec![StderrLine::Status(format!(
                 "Request {request_id} requires approval."
             ))];
-            if !approvers.is_empty() {
-                stderr.push(StderrLine::Info("Approvers".into(), approvers.join(", ")));
+            if !cr.approvers.is_empty() {
+                stderr.push(StderrLine::Info(
+                    "Approvers".into(),
+                    cr.approvers.join(", "),
+                ));
             }
             stderr.push(StderrLine::Hint(format!(
                 "Run: dbward request resume {request_id}"
             )));
-
             let render = RenderPlan {
                 stdout: StdoutRender::None,
                 stderr,
             };
-            Ok(CliResponse::ok(output, render).with_issues(
+            return Ok(CliResponse::ok(output, render).with_issues(
                 2,
                 "pending_approval",
                 format!("request {request_id} requires approval"),
-            ))
+            ));
         }
-        Outcome::Approved { request_id } => {
+
+        // Approved but not yet resumed
+        dbward_api_types::requests::RequestStatus::Approved => {
             let output = serde_json::json!({
                 "request_id": request_id,
                 "status": "approved",
@@ -352,11 +372,94 @@ pub async fn run_migrate(
                     StderrLine::Hint(format!("Run: dbward request resume {request_id}")),
                 ],
             };
-            Ok(CliResponse::ok(output, render).with_issues(
+            return Ok(CliResponse::ok(output, render).with_issues(
                 2,
                 "approved_pending_resume",
                 format!("request {request_id} is approved but not yet resumed"),
-            ))
+            ));
+        }
+
+        // Terminal failure states (idempotency may return these)
+        dbward_api_types::requests::RequestStatus::Rejected => {
+            let output = serde_json::json!({ "request_id": request_id, "status": "rejected" });
+            let render = RenderPlan {
+                stdout: StdoutRender::None,
+                stderr: vec![StderrLine::Warn(format!(
+                    "Request {request_id} was rejected."
+                ))],
+            };
+            return Ok(CliResponse::ok(output, render).with_issues(
+                1,
+                "rejected",
+                "request was rejected",
+            ));
+        }
+        dbward_api_types::requests::RequestStatus::Cancelled => {
+            let output = serde_json::json!({ "request_id": request_id, "status": "cancelled" });
+            let render = RenderPlan {
+                stdout: StdoutRender::None,
+                stderr: vec![StderrLine::Warn(format!(
+                    "Request {request_id} was already cancelled."
+                ))],
+            };
+            return Ok(CliResponse::ok(output, render).with_issues(
+                1,
+                "cancelled",
+                "request was cancelled",
+            ));
+        }
+        dbward_api_types::requests::RequestStatus::Expired => {
+            let output = serde_json::json!({ "request_id": request_id, "status": "expired" });
+            let render = RenderPlan {
+                stdout: StdoutRender::None,
+                stderr: vec![StderrLine::Warn(format!(
+                    "Request {request_id} has expired."
+                ))],
+            };
+            return Ok(CliResponse::ok(output, render).with_issues(
+                1,
+                "expired",
+                "request has expired",
+            ));
+        }
+        dbward_api_types::requests::RequestStatus::ExecutionLost => {
+            let output =
+                serde_json::json!({ "request_id": request_id, "status": "execution_lost" });
+            let render = RenderPlan {
+                stdout: StdoutRender::None,
+                stderr: vec![
+                    StderrLine::Warn(format!("Request {request_id} execution was lost.")),
+                    StderrLine::Hint(format!("Re-resume: dbward request resume {request_id}")),
+                ],
+            };
+            return Ok(CliResponse::ok(output, render).with_issues(
+                1,
+                "execution_lost",
+                "execution was lost",
+            ));
+        }
+
+        // Unknown status from newer server
+        _ => {
+            return Err(CliError::Api {
+                code: "server_error".into(),
+                message: format!("unexpected status from create_request: {}", cr.status),
+            });
         }
     }
+
+    // Step 3: Wait for completion with Ctrl-C
+    let result = tokio::select! {
+        result = workflow::wait_for_completion(sc, request_id, cr.status, true, progress) => result?,
+        _ = &mut ctrl_c => {
+            return Ok(workflow::handle_interrupt(sc, request_id, mode, &[], cancellable).await);
+        }
+    };
+
+    let pretty = serde_json::to_string_pretty(&result).unwrap_or_default();
+    let render = RenderPlan {
+        stdout: StdoutRender::Raw { value: pretty },
+        stderr: vec![],
+    };
+    Ok(CliResponse::ok(result, render))
 }

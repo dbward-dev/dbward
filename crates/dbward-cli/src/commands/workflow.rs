@@ -1,11 +1,16 @@
+use std::io::IsTerminal;
+
 use serde_json::Value;
 
-use crate::output::{CliError, OutputMode, ProgressSink};
+use crate::output::{
+    CliError, CliResponse, OutputMode, ProgressSink, RenderPlan, StderrLine, StdoutRender,
+};
 use crate::server_client::{CreateRequest, ServerClient};
 
 const REQUEST_STATUS_WAIT_SECS: u64 = 30;
 
 /// Outcome of a request lifecycle orchestration.
+#[allow(dead_code)]
 pub enum Outcome {
     /// Request completed (executed or failed). Contains the terminal payload.
     Completed { request_id: String, result: Value },
@@ -100,6 +105,7 @@ pub async fn wait_for_completion(
 ///
 /// This handles the common pattern: create → status branch → resume → wait → resolve.
 /// ctrl+c handling, save_result, and process::exit are the caller's responsibility.
+#[allow(dead_code)]
 pub async fn submit_and_orchestrate(
     sc: &ServerClient,
     params: CreateRequest<'_>,
@@ -446,6 +452,221 @@ fn synthesized_terminal_payload(status: &str, request_id: &str) -> Value {
             "result": Value::Null
         }),
     }
+}
+
+// ---------------------------------------------------------------------------
+// Ctrl-C interrupt handling
+// ---------------------------------------------------------------------------
+
+/// Handle Ctrl-C after a request has been created.
+///
+/// Fetches current request status to determine cancel behavior:
+/// - If `cancellable=false` (read-only ops): skip prompt, show hints only
+/// - Dispatched/other: confirm prompt, then cancel
+/// - Running: warn about kill + rollback, confirm prompt, then cancel
+/// - Executed/Failed/Cancelled: inform via CliResponse, no action needed
+///
+/// All output goes through CliResponse/RenderPlan except Human+TTY interactive prompts.
+/// Exit code is always 130 (signal interrupt).
+pub async fn handle_interrupt(
+    sc: &ServerClient,
+    request_id: &str,
+    mode: OutputMode,
+    warnings: &[String],
+    cancellable: bool,
+) -> CliResponse<Value> {
+    // Non-cancellable operations (e.g. migrate_status): just show ID and exit
+    if !cancellable {
+        let output = serde_json::json!({
+            "request_id": request_id,
+            "interrupted": true,
+        });
+        let render = RenderPlan {
+            stdout: StdoutRender::None,
+            stderr: vec![
+                StderrLine::Warn(format!("Interrupted. Request: {request_id}")),
+                StderrLine::Hint(format!("Check: dbward request show {request_id}")),
+            ],
+        };
+        return build_interrupt_response(
+            output,
+            render,
+            warnings,
+            130,
+            "interrupted",
+            "operation interrupted by user",
+        );
+    }
+
+    // Fetch current status to determine cancel behavior
+    // WHY: short timeout so Ctrl-C response is immediate even if server is degraded.
+    let current_status = tokio::time::timeout(
+        std::time::Duration::from_secs(3),
+        sc.get_request(request_id),
+    )
+    .await
+    .ok()
+    .and_then(|r| r.ok())
+    .map(|r| RequestStatus::from_json(&r["status"]));
+
+    // Already terminal: no cancel needed
+    if matches!(
+        current_status,
+        Some(
+            RequestStatus::Executed
+                | RequestStatus::Failed
+                | RequestStatus::Cancelled
+                | RequestStatus::Rejected
+                | RequestStatus::Expired
+                | RequestStatus::ExecutionLost
+        )
+    ) {
+        let output = serde_json::json!({
+            "request_id": request_id,
+            "interrupted": true,
+            "already_finished": true,
+        });
+        let mut stderr = vec![StderrLine::Status(format!(
+            "Request {request_id} already finished."
+        ))];
+        if matches!(current_status, Some(RequestStatus::ExecutionLost)) {
+            stderr.push(StderrLine::Hint(format!(
+                "Re-resume: dbward request resume {request_id}"
+            )));
+        } else {
+            stderr.push(StderrLine::Hint(format!(
+                "Check: dbward request show {request_id}"
+            )));
+        }
+        let render = RenderPlan {
+            stdout: StdoutRender::None,
+            stderr,
+        };
+        return build_interrupt_response(
+            output,
+            render,
+            warnings,
+            130,
+            "interrupted",
+            "request already finished",
+        );
+    }
+
+    // Human + TTY: interactive cancel prompt
+    let mut cancel_attempted = false;
+    if mode == OutputMode::Human && std::io::stdin().is_terminal() {
+        let is_running = matches!(current_status, Some(RequestStatus::Running));
+
+        eprintln!();
+        if is_running {
+            eprintln!("⚠ Request {request_id} is EXECUTING on the database.");
+            eprintln!("  Cancelling will kill the running query and roll back changes.");
+        } else {
+            eprintln!("Request {request_id} is in progress.");
+        }
+        eprint!("Cancel? [y/N] ");
+
+        // WHY: spawn_blocking + ctrl_c to handle SA_RESTART platforms where
+        // read_line does not return EINTR on signal delivery.
+        let line = tokio::select! {
+            result = tokio::task::spawn_blocking(|| {
+                let mut buf = String::new();
+                std::io::stdin().read_line(&mut buf).map(|_| buf)
+            }) => result.unwrap_or(Ok(String::new())).unwrap_or_default(),
+            _ = tokio::signal::ctrl_c() => {
+                // WHY: 2nd Ctrl-C means user insists on immediate exit.
+                // CLI is short-lived, no persistent resources to clean up.
+                std::process::exit(130);
+            }
+        };
+
+        if matches!(line.trim().to_lowercase().as_str(), "y" | "yes") {
+            cancel_attempted = true;
+            let cancel_result = tokio::time::timeout(
+                std::time::Duration::from_secs(5),
+                sc.cancel_request(request_id, Some("cancelled by user (Ctrl-C)")),
+            )
+            .await;
+
+            match cancel_result {
+                Ok(Ok(_)) => {
+                    let output = serde_json::json!({
+                        "request_id": request_id,
+                        "cancelled": true,
+                        "was_executing": is_running,
+                    });
+                    let render = RenderPlan {
+                        stdout: StdoutRender::None,
+                        stderr: vec![StderrLine::Status(format!("Cancelled: {request_id}"))],
+                    };
+                    return build_interrupt_response(
+                        output,
+                        render,
+                        warnings,
+                        130,
+                        "cancelled",
+                        "request cancelled by user",
+                    );
+                }
+                Ok(Err(e)) if e.status == 409 => {
+                    eprintln!("Request already completed (cancel not needed).");
+                }
+                Ok(Err(e)) => {
+                    eprintln!("Cancel failed: {}", e.body);
+                }
+                Err(_) => {
+                    eprintln!("Cancel timed out. Request {request_id} may still be running.");
+                }
+            }
+            // Cancel failed — fall through to hints
+        }
+        // User said N or cancel failed — fall through
+    }
+
+    // Fall-through: show request_id + hints via CliResponse
+    let output = serde_json::json!({
+        "request_id": request_id,
+        "interrupted": true,
+    });
+    let mut stderr = vec![StderrLine::Warn(format!(
+        "Interrupted. Request: {request_id}"
+    ))];
+    stderr.push(StderrLine::Hint(format!(
+        "Check: dbward request show {request_id}"
+    )));
+    if !cancel_attempted {
+        stderr.push(StderrLine::Hint(format!(
+            "Cancel: dbward request cancel {request_id}"
+        )));
+    }
+    let render = RenderPlan {
+        stdout: StdoutRender::None,
+        stderr,
+    };
+    build_interrupt_response(
+        output,
+        render,
+        warnings,
+        130,
+        "interrupted",
+        "operation interrupted by user",
+    )
+}
+
+/// Build a CliResponse for interrupt scenarios with consistent structure.
+fn build_interrupt_response(
+    output: Value,
+    render: RenderPlan,
+    warnings: &[String],
+    exit_code: i32,
+    code: &str,
+    message: &str,
+) -> CliResponse<Value> {
+    let mut resp = CliResponse::ok(output, render).with_issues(exit_code, code, message);
+    for w in warnings {
+        resp = resp.with_warning(w.clone());
+    }
+    resp
 }
 
 struct AbortOnDrop(tokio::task::JoinHandle<()>);
