@@ -16,4 +16,4 @@ serde = { version = "1", features = ["derive"] }
 serde_json.workspace = true
 tokio = { version = "1", features = ["time"] }
 tokio-util = { version = "0.7", features = ["rt"] }
-rand = "0.8"
+rand = "0.10"
