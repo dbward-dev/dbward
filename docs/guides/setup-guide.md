@@ -94,7 +94,10 @@ See [Configuration Reference](../reference/configuration.md) for all options.
 
 > **Run on:** server host (VM, container, or local machine)
 
+Copy `server.toml` to your server host and start the server:
+
 ```bash
+dbward doctor --server server.toml   # validate config before starting
 dbward-server --config server.toml --listen 0.0.0.0:3000
 ```
 
@@ -121,19 +124,11 @@ On first start, the server:
 
 > **Run on:** your laptop
 
-Read the admin token and set it in your CLI config:
-
-```bash
-# If running locally:
-cat /data/admin-token
-# → dbw_a1b2c3...
-
-# Edit dbward.toml — uncomment and set the token:
-```
+Retrieve the admin token from the server host (it was written to `{state_dir}/admin-token` in Step 3). Then set it in `dbward.toml`:
 
 ```toml
 [server]
-url = "http://localhost:3000"
+url = "http://your-server:3000"
 token = "dbw_a1b2c3..."   # paste your admin token here
 ```
 
@@ -143,24 +138,33 @@ Alternatively, use an environment variable:
 export DBWARD_TOKEN="dbw_a1b2c3..."
 ```
 
+Verify the connection:
+
+```bash
+dbward whoami
+# → Subject: admin (user)
+#   Roles:   admin, requester
+```
+
 ---
 
 ## Step 5: Start the agent
 
 > **Run on:** a host with database network access
 
-The agent needs:
+Copy `agent.toml` and the agent token to this host. The agent needs:
 
 - The server URL (to poll for work)
-- An agent token (from Step 3)
+- An agent token (from `{state_dir}/agent-token` on the server host)
 - Database connection URL(s)
 
 Set the required environment variables and start:
 
 ```bash
-export DBWARD_AGENT_TOKEN="$(cat /data/agent-token)"
+export DBWARD_AGENT_TOKEN="dbw_..."  # agent token from server host
 export DATABASE_URL_PRODUCTION="postgres://user:pass@db-host:5432/mydb"
 
+dbward doctor --agent agent.toml     # validate config before starting
 dbward-agent --config agent.toml
 ```
 
@@ -176,26 +180,7 @@ The agent will connect to the server and register its capabilities:
 
 ---
 
-## Step 6: Verify with doctor
-
-> **Run on:** your laptop
-
-```bash
-dbward doctor
-```
-
-This checks:
-
-- ✓ Server connectivity
-- ✓ Token validity and permissions
-- ✓ Agent online and healthy
-- ✓ Workflow coverage (all database×environment pairs have a workflow)
-
-Fix any issues before proceeding.
-
----
-
-## Step 7: Run your first query
+## Step 6: Run your first query
 
 > **Run on:** your laptop
 
@@ -229,7 +214,7 @@ dbward request resume a1b2c3d4
 
 ---
 
-## Step 8: Create tokens for your team
+## Step 7: Create tokens for your team
 
 > **Run on:** your laptop (admin user)
 
