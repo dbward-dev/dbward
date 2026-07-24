@@ -534,17 +534,66 @@ async fn run_list(
 
 async fn run_show(sc: &ServerClient, id: &str) -> Result<CliResponse<RequestShowOutput>, CliError> {
     let body = sc.get_request(id).await?;
-
-    // Build key-value pairs for human display
-    let pairs = build_show_pairs(&body);
-
-    let output = RequestShowOutput(body);
-    let render = RenderPlan::key_value(pairs);
-    Ok(CliResponse::ok(output, render))
+    let formatted = format_request_detail(&body);
+    let render = RenderPlan {
+        stdout: StdoutRender::Raw { value: formatted },
+        stderr: vec![],
+    };
+    Ok(CliResponse::ok(RequestShowOutput(body), render))
 }
 
-fn build_show_pairs(body: &Value) -> Vec<(String, String)> {
+// ---------------------------------------------------------------------------
+// request show: dedicated formatter (StdoutRender::Raw)
+// ---------------------------------------------------------------------------
+
+use std::fmt::Write as _;
+
+const LABEL_WIDTH: usize = 11; // "Environment" = longest label
+
+fn format_request_detail(body: &Value) -> String {
+    let mut buf = String::new();
+    write_header(&mut buf, body);
+    write_basic_fields(&mut buf, body);
+    write_context_section(&mut buf, body);
+    write_approval_section(&mut buf, body);
+    write_decision_section(&mut buf, body);
+    // Strip trailing newline to avoid double-newline from println! in render_human
+    let trimmed_len = buf.trim_end().len();
+    buf.truncate(trimmed_len);
+    buf
+}
+
+fn write_field(buf: &mut String, label: &str, value: &str) {
+    writeln!(
+        buf,
+        "  {:<width$} {value}",
+        format!("{label}:"),
+        width = LABEL_WIDTH + 1
+    )
+    .unwrap();
+}
+
+fn write_continuation(buf: &mut String, value: &str) {
+    let pad = 2 + LABEL_WIDTH + 2; // "  " + label + ":" + " "
+    writeln!(buf, "{:pad$}{value}", "").unwrap();
+}
+
+fn write_section_field(buf: &mut String, label: &str, value: &str) {
+    writeln!(
+        buf,
+        "    {:<width$} {value}",
+        format!("{label}:"),
+        width = LABEL_WIDTH + 1
+    )
+    .unwrap();
+}
+
+fn write_header(buf: &mut String, body: &Value) {
     let id = body["id"].as_str().unwrap_or("?");
+    writeln!(buf, "Request {id}").unwrap();
+}
+
+fn write_basic_fields(buf: &mut String, body: &Value) {
     let status = body["status"].as_str().unwrap_or("?");
     let op = body["operation"].as_str().unwrap_or("?");
     let detail = body["detail"].as_str().unwrap_or("");
@@ -553,174 +602,183 @@ fn build_show_pairs(body: &Value) -> Vec<(String, String)> {
     let user = body["requester"].as_str().unwrap_or("?");
     let created = body["created_at"].as_str().unwrap_or("?");
     let updated = body["updated_at"].as_str().unwrap_or("?");
+    let id = body["id"].as_str().unwrap_or("?");
 
-    let mut pairs = vec![
-        ("Request".into(), id.to_string()),
-        ("Status".into(), status.to_string()),
-        ("Operation".into(), op.to_string()),
-        ("Detail".into(), detail.to_string()),
-        ("Environment".into(), env.to_string()),
-        ("Database".into(), db.to_string()),
-    ];
-
+    write_field(buf, "Status", status);
+    write_field(buf, "Operation", op);
+    write_field(buf, "Detail", detail);
+    write_field(buf, "Environment", env);
+    write_field(buf, "Database", db);
     if let Some(r) = body["reason"].as_str() {
-        pairs.push(("Reason".into(), r.to_string()));
+        write_field(buf, "Reason", r);
     }
     if let Some(key) = body["idempotency_key"].as_str() {
-        pairs.push(("Idempotency".into(), key.to_string()));
+        write_field(buf, "Idempotency", key);
     }
     if !body["metadata"].is_null() {
-        pairs.push((
-            "Metadata".into(),
-            serde_json::to_string(&body["metadata"]).unwrap_or_else(|_| "{}".to_string()),
-        ));
+        let json_str =
+            serde_json::to_string(&body["metadata"]).unwrap_or_else(|_| "{}".to_string());
+        write_field(buf, "Metadata", &json_str);
     }
-    pairs.push(("Created by".into(), user.to_string()));
-    pairs.push(("Created at".into(), created.to_string()));
-    pairs.push(("Updated at".into(), updated.to_string()));
+    write_field(buf, "Created by", user);
+    write_field(buf, "Created at", created);
+    write_field(buf, "Updated at", updated);
     if let Some(resolved) = body["resolved_at"].as_str() {
-        pairs.push(("Resolved at".into(), resolved.to_string()));
+        write_field(buf, "Resolved at", resolved);
     }
     if body.get("execution_token").is_some() {
-        pairs.push((
-            "Ready".into(),
-            format!("dbward request resume {}", short_request_id(id)),
-        ));
+        write_field(
+            buf,
+            "Ready",
+            &format!("dbward request resume {}", short_request_id(id)),
+        );
+    }
+}
+
+fn write_context_section(buf: &mut String, body: &Value) {
+    let ctx = match body.get("context").filter(|v| !v.is_null()) {
+        Some(c) => c,
+        None => return,
+    };
+    let ctx_status = ctx["status"].as_str().unwrap_or("");
+    if ctx_status == "collecting" {
+        writeln!(buf).unwrap();
+        write_field(buf, "Context", "(collecting...)");
+        return;
     }
 
-    // Context (risk, sql_review, explain)
-    if let Some(ctx) = body.get("context").filter(|v| !v.is_null()) {
-        let ctx_status = ctx["status"].as_str().unwrap_or("");
-        if ctx_status == "collecting" {
-            pairs.push(("Context".into(), "(collecting...)".to_string()));
+    writeln!(buf).unwrap();
+
+    // Risk
+    if let Some(risk) = ctx.get("risk").filter(|v| !v.is_null()) {
+        let level = risk["level"].as_str().unwrap_or("?");
+        let factors: Vec<String> = risk["factors"]
+            .as_array()
+            .map(|arr| dbward_app::services::risk_display::format_risk_factors(arr))
+            .unwrap_or_default();
+        if factors.is_empty() {
+            write_field(buf, "Risk", level);
+        } else if factors.len() == 1 {
+            write_field(buf, "Risk", &format!("{level} ({})", factors[0]));
         } else {
-            // Risk
-            if let Some(risk) = ctx.get("risk").filter(|v| !v.is_null()) {
-                let level = risk["level"].as_str().unwrap_or("?");
-                let factors: Vec<String> = risk["factors"]
-                    .as_array()
-                    .map(|arr| dbward_app::services::risk_display::format_risk_factors(arr))
-                    .unwrap_or_default();
-                let risk_str = if factors.is_empty() {
-                    level.to_string()
-                } else {
-                    format!("{level} ({})", factors.join(", "))
-                };
-                pairs.push(("Risk".into(), risk_str));
+            write_field(buf, "Risk", level);
+            for f in &factors {
+                write_continuation(buf, &format!("- {f}"));
             }
-            // SQL Review
-            if let Some(review) = ctx.get("sql_review").filter(|v| !v.is_null()) {
-                let findings = review["findings"].as_array().map(|a| a.len()).unwrap_or(0);
-                let review_str = if findings == 0 {
-                    "passed".to_string()
-                } else {
-                    format!("{findings} warning{}", if findings > 1 { "s" } else { "" })
-                };
-                pairs.push(("SQL Review".into(), review_str));
-            }
-            // Tables
-            if let Some(tables_val) = ctx.get("tables").filter(|v| !v.is_null()) {
-                let json_str = serde_json::to_string(tables_val).unwrap_or_default();
-                let entries =
-                    dbward_app::services::tables_display::parse_tables_json(Some(&json_str));
-                if !entries.is_empty() {
-                    let display: Vec<String> = entries
-                        .iter()
-                        .map(|e| {
-                            let name = match &e.schema_name {
-                                Some(s) if s != "public" => format!("{}.{}", s, e.name),
-                                _ => e.name.clone(),
-                            };
-                            match e.estimated_rows {
-                                Some(r) if r > 0 => format!("{name} (~{r} rows)"),
-                                _ => name,
-                            }
-                        })
-                        .collect();
-                    pairs.push(("Tables".into(), display.join(", ")));
-                }
-            }
-            // Schema snapshot
-            if let Some(ts) = ctx["schema_snapshot_collected_at"].as_str() {
-                let short_ts = if ts.len() >= 19 { &ts[..19] } else { ts };
-                pairs.push(("Schema".into(), format!("synced at {short_ts}")));
-            }
-            // Explain
-            if let Some(explain) = ctx.get("explain").filter(|v| !v.is_null()) {
-                if let Some(arr) = explain.as_array() {
-                    if arr.is_empty() {
-                        pairs.push(("Explain".into(), "(no plan available)".to_string()));
-                    } else {
-                        let lines = format_explain_entries(arr);
-                        pairs.push(("Explain".into(), lines.join("\n")));
+        }
+    }
+    // SQL Review
+    if let Some(review) = ctx.get("sql_review").filter(|v| !v.is_null()) {
+        let findings = review["findings"].as_array().map(|a| a.len()).unwrap_or(0);
+        if findings == 0 {
+            write_field(buf, "SQL Review", "passed");
+        } else {
+            write_field(
+                buf,
+                "SQL Review",
+                &format!("{findings} warning{}", if findings > 1 { "s" } else { "" }),
+            );
+        }
+    }
+    // Tables
+    if let Some(tables_val) = ctx.get("tables").filter(|v| !v.is_null()) {
+        let json_str = serde_json::to_string(tables_val).unwrap_or_default();
+        let entries = dbward_app::services::tables_display::parse_tables_json(Some(&json_str));
+        if !entries.is_empty() {
+            let display: Vec<String> = entries
+                .iter()
+                .map(|e| {
+                    let name = match &e.schema_name {
+                        Some(s) if s != "public" => format!("{}.{}", s, e.name),
+                        _ => e.name.clone(),
+                    };
+                    match e.estimated_rows {
+                        Some(r) if r > 0 => format!("{name} (~{r} rows)"),
+                        _ => name,
+                    }
+                })
+                .collect();
+            write_field(buf, "Tables", &display.join(", "));
+        }
+    }
+    // Schema snapshot
+    if let Some(ts) = ctx["schema_snapshot_collected_at"].as_str() {
+        let short_ts = if ts.len() >= 19 { &ts[..19] } else { ts };
+        write_field(buf, "Schema", &format!("synced at {short_ts}"));
+    }
+    // Explain
+    if let Some(explain) = ctx.get("explain").filter(|v| !v.is_null()) {
+        if let Some(arr) = explain.as_array() {
+            if arr.is_empty() {
+                write_field(buf, "Explain", "(no plan available)");
+            } else {
+                let multi = arr.len() > 1;
+                let mut first_line = true;
+                for (i, entry) in arr.iter().enumerate() {
+                    if let Some(err) = entry["error"].as_str() {
+                        let prefix = if multi {
+                            format!("[{}] ", i + 1)
+                        } else {
+                            String::new()
+                        };
+                        let hint = entry["hint"]
+                            .as_str()
+                            .map(|h| format!(" ({h})"))
+                            .unwrap_or_default();
+                        let text = format!("{prefix}(error: {err}{hint})");
+                        if first_line {
+                            write_field(buf, "Explain", &text);
+                            first_line = false;
+                        } else {
+                            write_continuation(buf, &text);
+                        }
+                        continue;
+                    }
+                    let tree_lines = dbward_app::services::explain_formatter::format_explain_tree(
+                        entry,
+                        &dbward_app::services::explain_formatter::FormatOptions::cli(),
+                    );
+                    for (li, line) in tree_lines.iter().enumerate() {
+                        let prefix = if multi && li == 0 {
+                            format!("[{}] ", i + 1)
+                        } else if multi {
+                            "    ".to_string()
+                        } else {
+                            String::new()
+                        };
+                        let text = format!("{prefix}{line}");
+                        if first_line {
+                            write_field(buf, "Explain", &text);
+                            first_line = false;
+                        } else {
+                            write_continuation(buf, &text);
+                        }
                     }
                 }
-            } else if ctx_status == "ready" {
-                pairs.push(("Explain".into(), "(no plan available)".to_string()));
             }
         }
+    } else if ctx_status == "ready" {
+        write_field(buf, "Explain", "(no plan available)");
     }
-
-    // Approval progress
-    if let Some(progress) = body.get("approval_progress").filter(|v| !v.is_null()) {
-        let current = progress["current_step"].as_u64().unwrap_or(0);
-        let total = progress["total_steps"].as_u64().unwrap_or(0);
-        let progress_str = format_approval_progress(progress, current, total);
-        pairs.push(("Approval".into(), progress_str));
-    }
-
-    // Decision trace
-    if let Some(trace) = body.get("decision_trace").filter(|v| !v.is_null()) {
-        let decision_str = format_decision_trace(trace);
-        pairs.push(("Decision".into(), decision_str));
-    }
-
-    pairs
 }
 
-fn format_explain_entries(arr: &[Value]) -> Vec<String> {
-    let mut lines = Vec::new();
-    let multi = arr.len() > 1;
-    for (i, entry) in arr.iter().enumerate() {
-        if let Some(err) = entry["error"].as_str() {
-            let prefix = if multi {
-                format!("[{}] ", i + 1)
-            } else {
-                String::new()
-            };
-            let hint = entry["hint"]
-                .as_str()
-                .map(|h| format!(" ({h})"))
-                .unwrap_or_default();
-            lines.push(format!("{prefix}(error: {err}{hint})"));
-            continue;
-        }
-        let tree_lines = dbward_app::services::explain_formatter::format_explain_tree(
-            entry,
-            &dbward_app::services::explain_formatter::FormatOptions::cli(),
-        );
-        for (li, line) in tree_lines.iter().enumerate() {
-            let prefix = if multi && li == 0 {
-                format!("[{}] ", i + 1)
-            } else if multi {
-                "    ".to_string()
-            } else {
-                String::new()
-            };
-            lines.push(format!("{prefix}{line}"));
-        }
-    }
-    lines
-}
+fn write_approval_section(buf: &mut String, body: &Value) {
+    let progress = match body.get("approval_progress").filter(|v| !v.is_null()) {
+        Some(p) => p,
+        None => return,
+    };
+    let current = progress["current_step"].as_u64().unwrap_or(0);
+    let total = progress["total_steps"].as_u64().unwrap_or(0);
 
-fn format_approval_progress(progress: &Value, current: u64, total: u64) -> String {
-    let mut lines = vec![format!("{current}/{total} complete")];
+    writeln!(buf).unwrap();
+    writeln!(buf, "  Approval ({current}/{total} complete):").unwrap();
+
     if let Some(steps) = progress["steps"].as_array() {
         for step in steps {
             let idx = step["index"].as_u64().unwrap_or(0);
-            let mode_str = step["mode"].as_str().unwrap_or("all");
+            let mode = step["mode"].as_str().unwrap_or("all");
             let satisfied = step["satisfied"].as_bool().unwrap_or(false);
-            let marker = if satisfied { "[ok]" } else { "[wait]" };
+            let marker = if satisfied { "[ok]  " } else { "[wait]" };
             let approvers_desc: Vec<String> = step["approvers_required"]
                 .as_array()
                 .map(|arr| {
@@ -735,13 +793,13 @@ fn format_approval_progress(progress: &Value, current: u64, total: u64) -> Strin
                         .collect()
                 })
                 .unwrap_or_default();
-            let joiner = if mode_str == "any" { " | " } else { " + " };
+            let joiner = if mode == "any" { " | " } else { " + " };
             let desc = if approvers_desc.is_empty() {
                 "(no approvers configured)".to_string()
             } else {
                 approvers_desc.join(joiner)
             };
-            lines.push(format!("  {marker} Step {} [{mode_str}]: {desc}", idx + 1));
+            writeln!(buf, "    {marker} Step {} [{mode}]: {desc}", idx + 1).unwrap();
             if let Some(approvals) = step["approvals"].as_array() {
                 for a in approvals {
                     let who = a["user"].as_str().unwrap_or("?");
@@ -753,27 +811,29 @@ fn format_approval_progress(progress: &Value, current: u64, total: u64) -> Strin
                         "approved by"
                     };
                     let short_time = if at.len() >= 16 { &at[11..16] } else { at };
-                    let comment_part =
-                        if let Some(c) = a["comment"].as_str().filter(|c| !c.is_empty()) {
-                            format!(" - {c}")
-                        } else {
-                            String::new()
-                        };
-                    lines.push(format!(
-                        "         {verb} {who} ({short_time}){comment_part}"
-                    ));
+                    if let Some(comment) = a["comment"].as_str().filter(|c| !c.is_empty()) {
+                        writeln!(buf, "             {verb} {who} ({short_time}) - {comment}")
+                            .unwrap();
+                    } else {
+                        writeln!(buf, "             {verb} {who} ({short_time})").unwrap();
+                    }
                 }
             }
         }
     }
-    lines.join("\n")
 }
 
-fn format_decision_trace(trace: &Value) -> String {
-    let mut lines = Vec::new();
+fn write_decision_section(buf: &mut String, body: &Value) {
+    let trace = match body.get("decision_trace").filter(|v| !v.is_null()) {
+        Some(t) => t,
+        None => return,
+    };
+
+    writeln!(buf).unwrap();
+    writeln!(buf, "  Decision:").unwrap();
 
     if let Some(op) = trace["classification"]["resolved_operation"].as_str() {
-        lines.push(format!("Operation: {op}"));
+        write_section_field(buf, "Operation", op);
     }
     // SQL Review
     let parse_failed = trace["sql_review"]["parse_failed"]
@@ -781,14 +841,15 @@ fn format_decision_trace(trace: &Value) -> String {
         .unwrap_or(false);
     let findings = trace["sql_review"]["findings_count"].as_u64().unwrap_or(0);
     if parse_failed {
-        lines.push("SQL Review: skipped (parse failed)".to_string());
+        write_section_field(buf, "SQL Review", "skipped (parse failed)");
     } else if findings == 0 {
-        lines.push("SQL Review: passed".to_string());
+        write_section_field(buf, "SQL Review", "passed");
     } else {
-        lines.push(format!(
-            "SQL Review: {findings} warning{}",
-            if findings > 1 { "s" } else { "" }
-        ));
+        write_section_field(
+            buf,
+            "SQL Review",
+            &format!("{findings} warning{}", if findings > 1 { "s" } else { "" }),
+        );
     }
     // Risk
     let level = trace["risk"]["level"].as_str().unwrap_or("?");
@@ -809,7 +870,7 @@ fn format_decision_trace(trace: &Value) -> String {
             None => format!("{level} ({factors_str})"),
         }
     };
-    lines.push(format!("Risk: {risk_str}"));
+    write_section_field(buf, "Risk", &risk_str);
     // Workflow
     if let Some(wf) = trace["workflow"]["matched"].as_object() {
         let wf_id = wf.get("id").and_then(|v| v.as_str()).unwrap_or("?");
@@ -819,12 +880,16 @@ fn format_decision_trace(trace: &Value) -> String {
             .and_then(|v| v.as_str())
             .unwrap_or("*");
         let steps = wf.get("step_count").and_then(|v| v.as_u64()).unwrap_or(0);
-        lines.push(format!(
-            "Workflow: {wf_id} ({db}:{env}, {steps} step{})",
-            if steps != 1 { "s" } else { "" }
-        ));
+        write_section_field(
+            buf,
+            "Workflow",
+            &format!(
+                "{wf_id} ({db}:{env}, {steps} step{})",
+                if steps != 1 { "s" } else { "" }
+            ),
+        );
     } else {
-        lines.push("Workflow: none".to_string());
+        write_section_field(buf, "Workflow", "none");
     }
     // Outcome
     let outcome = trace["decision"]["outcome"].as_str().unwrap_or("?");
@@ -833,12 +898,14 @@ fn format_decision_trace(trace: &Value) -> String {
         .map(|a| a.iter().filter_map(|v| v.as_str()).collect())
         .unwrap_or_default();
     if reasons.is_empty() {
-        lines.push(format!("Outcome: {outcome}"));
+        write_section_field(buf, "Outcome", outcome);
     } else {
-        lines.push(format!("Outcome: {outcome} [{}]", reasons.join(", ")));
+        write_section_field(
+            buf,
+            "Outcome",
+            &format!("{outcome} [{}]", reasons.join(", ")),
+        );
     }
-
-    lines.join("\n")
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1212,7 +1279,7 @@ mod tests {
     }
 
     #[test]
-    fn build_show_pairs_basic() {
+    fn format_request_detail_basic() {
         let body = serde_json::json!({
             "id": "550e8400-e29b-41d4-a716-446655440000",
             "status": "pending",
@@ -1224,33 +1291,96 @@ mod tests {
             "created_at": "2026-01-01T00:00:00Z",
             "updated_at": "2026-01-01T00:01:00Z",
         });
-        let pairs = build_show_pairs(&body);
-        assert!(
-            pairs
-                .iter()
-                .any(|(k, v)| k == "Request" && v.contains("550e8400"))
-        );
-        assert!(pairs.iter().any(|(k, v)| k == "Status" && v == "pending"));
-        assert!(
-            pairs
-                .iter()
-                .any(|(k, v)| k == "Operation" && v == "execute_query")
-        );
+        let output = format_request_detail(&body);
+        assert!(output.starts_with("Request 550e8400"));
+        assert!(output.contains("  Status:      pending"));
+        assert!(output.contains("  Operation:   execute_query"));
+        assert!(output.contains("  Environment: production"));
+        assert!(output.contains("  Created by:  alice"));
+        // No trailing newline
+        assert!(!output.ends_with('\n'));
     }
 
     #[test]
-    fn format_decision_trace_basic() {
-        let trace = serde_json::json!({
-            "classification": {"resolved_operation": "execute_select"},
-            "sql_review": {"parse_failed": false, "findings_count": 0},
-            "risk": {"level": "low", "factors": []},
-            "workflow": {"matched": {"id": "wf1", "database": "*", "environment": "production", "step_count": 1}},
-            "decision": {"outcome": "auto_approved", "reasons": ["risk_below_threshold"]}
+    fn write_context_section_collecting() {
+        let body = serde_json::json!({"context": {"status": "collecting"}});
+        let mut buf = String::new();
+        write_context_section(&mut buf, &body);
+        assert!(buf.contains("Context:     (collecting...)"));
+        assert!(buf.starts_with('\n'));
+    }
+
+    #[test]
+    fn write_approval_section_steps() {
+        let body = serde_json::json!({
+            "approval_progress": {
+                "current_step": 1,
+                "total_steps": 2,
+                "steps": [
+                    {
+                        "index": 0,
+                        "mode": "all",
+                        "satisfied": true,
+                        "approvers_required": [{"selector": "role:dba", "min": 1, "current": 1}],
+                        "approvals": [{"user": "bob", "action": "approve", "at": "2026-01-01T10:30:00Z"}]
+                    },
+                    {
+                        "index": 1,
+                        "mode": "any",
+                        "satisfied": false,
+                        "approvers_required": [{"selector": "role:cto", "min": 1, "current": 0}],
+                        "approvals": []
+                    }
+                ]
+            }
         });
-        let output = format_decision_trace(&trace);
-        assert!(output.contains("Operation: execute_select"));
-        assert!(output.contains("SQL Review: passed"));
-        assert!(output.contains("Risk: low"));
-        assert!(output.contains("Outcome: auto_approved"));
+        let mut buf = String::new();
+        write_approval_section(&mut buf, &body);
+        assert!(buf.contains("Approval (1/2 complete):"));
+        assert!(buf.contains("[ok]   Step 1 [all]: role:dba ✓ 1/1"));
+        assert!(buf.contains("[wait] Step 2 [any]: role:cto ⏳ 0/1"));
+        assert!(buf.contains("approved by bob (10:30)"));
+    }
+
+    #[test]
+    fn write_decision_section_basic() {
+        let body = serde_json::json!({
+            "decision_trace": {
+                "classification": {"resolved_operation": "execute_select"},
+                "sql_review": {"parse_failed": false, "findings_count": 0},
+                "risk": {"level": "low", "factors": []},
+                "workflow": {"matched": {"id": "wf1", "database": "*", "environment": "production", "step_count": 1}},
+                "decision": {"outcome": "auto_approved", "reasons": ["risk_below_threshold"]}
+            }
+        });
+        let mut buf = String::new();
+        write_decision_section(&mut buf, &body);
+        assert!(buf.contains("Decision:"));
+        assert!(buf.contains("    Operation:   execute_select"));
+        assert!(buf.contains("    SQL Review:  passed"));
+        assert!(buf.contains("    Risk:        low"));
+        assert!(buf.contains("    Workflow:    wf1 (*:production, 1 step)"));
+        assert!(buf.contains("    Outcome:     auto_approved [risk_below_threshold]"));
+    }
+
+    #[test]
+    fn format_request_detail_no_optional_sections() {
+        let body = serde_json::json!({
+            "id": "test-id",
+            "status": "pending",
+            "operation": "execute_query",
+            "detail": "SELECT 1",
+            "environment": "dev",
+            "database": "app",
+            "requester": "user1",
+            "created_at": "2026-01-01T00:00:00Z",
+            "updated_at": "2026-01-01T00:00:00Z",
+        });
+        let output = format_request_detail(&body);
+        // Should not contain section separators
+        assert!(!output.contains("\n\n"));
+        assert!(!output.contains("Approval"));
+        assert!(!output.contains("Decision"));
+        assert!(!output.contains("Context"));
     }
 }
