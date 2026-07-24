@@ -127,7 +127,7 @@ pub async fn run_stdio(
                     }
                     Err(err) => {
                         workers.abort_all();
-                        return Err(crate::output::CliError::Api { code: "server_error".into(), message: format!("MCP worker task failed: {err}") });
+                        return Err(crate::output::CliError::Api { code: "server_error".into(), message: format!("MCP worker task failed: {err}"), hints: vec![] });
                     }
                 }
             }

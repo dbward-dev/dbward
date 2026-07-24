@@ -221,6 +221,7 @@ pub struct CliOutcome {
 pub struct EnvelopeError {
     pub code: String,
     pub message: String,
+    pub hints: Vec<String>,
 }
 
 impl<T: Serialize> From<CliResponse<T>> for CliOutcome {
@@ -241,6 +242,7 @@ impl<T: Serialize> From<CliResponse<T>> for CliOutcome {
             .map(|info| EnvelopeError {
                 code: info.code,
                 message: info.message,
+                hints: vec![],
             })
         } else {
             None

@@ -270,6 +270,7 @@ pub async fn run_execute(
             return Err(CliError::Api {
                 code: "server_error".into(),
                 message: format!("unexpected status from create_request: {}", cr.status),
+                hints: vec![],
             });
         }
     }
@@ -281,7 +282,7 @@ pub async fn run_execute(
         tokio::select! {
             result = workflow::wait_for_completion(sc, request_id, cr.status, true, progress) => result?,
             _ = &mut ctrl_c => {
-                return Ok(workflow::handle_interrupt(sc, request_id, mode, &warnings, true).await);
+                return Ok(workflow::handle_interrupt(request_id, mode, &warnings).await);
             }
             _ = tokio::time::sleep(Duration::from_secs(secs)) => {
                 let output = serde_json::json!({
@@ -308,7 +309,7 @@ pub async fn run_execute(
         tokio::select! {
             result = workflow::wait_for_completion(sc, request_id, cr.status, true, progress) => result?,
             _ = &mut ctrl_c => {
-                return Ok(workflow::handle_interrupt(sc, request_id, mode, &warnings, true).await);
+                return Ok(workflow::handle_interrupt(request_id, mode, &warnings).await);
             }
         }
     };

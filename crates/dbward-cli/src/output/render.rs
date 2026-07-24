@@ -44,13 +44,14 @@ fn render_json(outcome: &CliOutcome, suppress_stderr: bool) {
     }
 
     if let Some(ref err) = outcome.error {
-        envelope.insert(
-            "error".into(),
-            serde_json::json!({
-                "code": err.code,
-                "message": err.message,
-            }),
-        );
+        let mut error_obj = serde_json::json!({
+            "code": err.code,
+            "message": err.message,
+        });
+        if !err.hints.is_empty() {
+            error_obj["hints"] = serde_json::json!(err.hints);
+        }
+        envelope.insert("error".into(), error_obj);
     }
 
     // stdout: always a single JSON line
@@ -108,6 +109,9 @@ fn render_human(outcome: &CliOutcome) {
         && outcome.render.stderr.is_empty()
     {
         eprintln!("Error: {}", err.message);
+        for hint in &err.hints {
+            eprintln!("💡 {hint}");
+        }
     }
 }
 
@@ -226,6 +230,7 @@ mod tests {
             error: Some(EnvelopeError {
                 code: "auth_error".into(),
                 message: "token expired".into(),
+                hints: vec![],
             }),
             render: RenderPlan::none(),
             exit_code: 1,
@@ -279,6 +284,7 @@ mod tests {
             error: Some(EnvelopeError {
                 code: "doctor_issues_found".into(),
                 message: "1 check(s) failed".into(),
+                hints: vec![],
             }),
             render: RenderPlan::none(),
             exit_code: 2,

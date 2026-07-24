@@ -78,6 +78,7 @@ pub async fn wait_for_completion(
                             return Err(CliError::Api {
                                 code: "server_error".into(),
                                 message: e.body.clone(),
+                                hints: vec![],
                             });
                         }
                     }
@@ -86,6 +87,7 @@ pub async fn wait_for_completion(
                     return Err(CliError::Api {
                         code: "server_error".into(),
                         message: e.body.clone(),
+                        hints: vec![],
                     });
                 }
             }
@@ -97,6 +99,7 @@ pub async fn wait_for_completion(
         _ => Err(CliError::Api {
             code: "server_error".into(),
             message: format!("unexpected status for wait: {}", status),
+            hints: vec![],
         }),
     }
 }
@@ -149,6 +152,7 @@ pub async fn submit_and_orchestrate(
                             return Err(CliError::Api {
                                 code: "server_error".into(),
                                 message: e.body.clone(),
+                                hints: vec![],
                             });
                         }
                     }
@@ -157,6 +161,7 @@ pub async fn submit_and_orchestrate(
                     return Err(CliError::Api {
                         code: "server_error".into(),
                         message: e.body.clone(),
+                        hints: vec![],
                     });
                 }
             }
@@ -176,6 +181,7 @@ pub async fn submit_and_orchestrate(
         _ => Err(CliError::Api {
             code: "server_error".into(),
             message: format!("unexpected status: {}", cr.status),
+            hints: vec![],
         }),
     }
 }
@@ -192,6 +198,14 @@ pub async fn wait_and_resolve(
 ) -> Result<Value, CliError> {
     if verbose {
         progress.status("Waiting for agent to execute...");
+    }
+
+    // Pre-check queue_hint before entering stream loop.
+    // WHY: stream_result may block for seconds before failing when no agent will claim.
+    let initial_req = sc.get_request(request_id).await?;
+    let initial_status = RequestStatus::from_json(&initial_req["status"]);
+    if initial_status == RequestStatus::Dispatched {
+        check_queue_hint_or_exit(&initial_req, request_id)?;
     }
 
     let _progress_guard = if verbose {
@@ -307,6 +321,7 @@ async fn poll_until_terminal(
                 message: format!(
                     "Timed out waiting for execution (5m). Check status: dbward request show {request_id}"
                 ),
+                hints: vec![],
             });
         }
         let remaining_secs = deadline
@@ -318,6 +333,9 @@ async fn poll_until_terminal(
                 return resolve_from_request(sc, request_id, &req).await.map(Some);
             }
             RequestStatus::Dispatched | RequestStatus::Running => {
+                if status == RequestStatus::Dispatched {
+                    check_queue_hint_or_exit(&req, request_id)?;
+                }
                 let wait = remaining_secs.min(REQUEST_STATUS_WAIT_SECS);
                 req = sc.get_request_with_wait(request_id, wait).await?;
             }
@@ -346,6 +364,7 @@ async fn poll_until_terminal(
                                         "request {request_id} is '{}' and resume was rejected: {}. Run: dbward request show {request_id}",
                                         actual, e.body
                                     ),
+                                    hints: vec![],
                                 });
                             }
                         }
@@ -357,6 +376,7 @@ async fn poll_until_terminal(
                                 "request {request_id} is approved but resume failed: {}. Run: dbward request resume {request_id}",
                                 e.body
                             ),
+                            hints: vec![],
                         });
                     }
                 }
@@ -367,6 +387,7 @@ async fn poll_until_terminal(
                     message: format!(
                         "Request {request_id} requires approval. Check status: dbward request show {request_id}"
                     ),
+                    hints: vec![],
                 });
             }
             _ => {
@@ -375,6 +396,7 @@ async fn poll_until_terminal(
                     message: format!(
                         "unexpected status: {status}. Try: dbward request resume {request_id}"
                     ),
+                    hints: vec![],
                 });
             }
         }
@@ -408,6 +430,7 @@ async fn resolve_from_request(
             message: format!(
                 "unexpected status: {status}. Try: dbward request resume {request_id}"
             ),
+            hints: vec![],
         }),
     }
 }
@@ -458,199 +481,71 @@ fn synthesized_terminal_payload(status: &str, request_id: &str) -> Value {
 // Ctrl-C interrupt handling
 // ---------------------------------------------------------------------------
 
-/// Handle Ctrl-C after a request has been created.
+/// Handle Ctrl-C: detach from the request without cancelling.
 ///
-/// Fetches current request status to determine cancel behavior:
-/// - If `cancellable=false` (read-only ops): skip prompt, show hints only
-/// - Dispatched/other: confirm prompt, then cancel
-/// - Running: warn about kill + rollback, confirm prompt, then cancel
-/// - Executed/Failed/Cancelled: inform via CliResponse, no action needed
-///
-/// All output goes through CliResponse/RenderPlan except Human+TTY interactive prompts.
-/// Exit code is always 130 (signal interrupt).
+/// The request continues server-side. CLI exits immediately with code 130.
+/// No status fetch, no prompts, no cancel API calls.
 pub async fn handle_interrupt(
-    sc: &ServerClient,
     request_id: &str,
     mode: OutputMode,
     warnings: &[String],
-    cancellable: bool,
 ) -> CliResponse<Value> {
-    // Non-cancellable operations (e.g. migrate_status): just show ID and exit
-    if !cancellable {
-        let output = serde_json::json!({
-            "request_id": request_id,
-            "interrupted": true,
-        });
-        let render = RenderPlan {
-            stdout: StdoutRender::None,
-            stderr: vec![
-                StderrLine::Warn(format!("Interrupted. Request: {request_id}")),
-                StderrLine::Hint(format!("Check: dbward request show {request_id}")),
-            ],
-        };
-        return build_interrupt_response(
-            output,
-            render,
-            warnings,
-            130,
-            "interrupted",
-            "operation interrupted by user",
-        );
-    }
-
-    // Fetch current status to determine cancel behavior
-    // WHY: short timeout so Ctrl-C response is immediate even if server is degraded.
-    let current_status = tokio::time::timeout(
-        std::time::Duration::from_secs(3),
-        sc.get_request(request_id),
-    )
-    .await
-    .ok()
-    .and_then(|r| r.ok())
-    .map(|r| RequestStatus::from_json(&r["status"]));
-
-    // Already terminal: no cancel needed
-    if matches!(
-        current_status,
-        Some(
-            RequestStatus::Executed
-                | RequestStatus::Failed
-                | RequestStatus::Cancelled
-                | RequestStatus::Rejected
-                | RequestStatus::Expired
-                | RequestStatus::ExecutionLost
-        )
-    ) {
-        let output = serde_json::json!({
-            "request_id": request_id,
-            "interrupted": true,
-            "already_finished": true,
-        });
-        let mut stderr = vec![StderrLine::Status(format!(
-            "Request {request_id} already finished."
-        ))];
-        if matches!(current_status, Some(RequestStatus::ExecutionLost)) {
-            stderr.push(StderrLine::Hint(format!(
-                "Re-resume: dbward request resume {request_id}"
-            )));
-        } else {
-            stderr.push(StderrLine::Hint(format!(
-                "Check: dbward request show {request_id}"
-            )));
-        }
-        let render = RenderPlan {
-            stdout: StdoutRender::None,
-            stderr,
-        };
-        return build_interrupt_response(
-            output,
-            render,
-            warnings,
-            130,
-            "interrupted",
-            "request already finished",
-        );
-    }
-
-    // Human + TTY: interactive cancel prompt
-    let mut cancel_attempted = false;
     if mode == OutputMode::Human && std::io::stdin().is_terminal() {
-        let is_running = matches!(current_status, Some(RequestStatus::Running));
-
         eprintln!();
-        if is_running {
-            eprintln!("⚠ Request {request_id} is EXECUTING on the database.");
-            eprintln!("  Cancelling will kill the running query and roll back changes.");
-        } else {
-            eprintln!("Request {request_id} is in progress.");
-        }
-        eprint!("Cancel? [y/N] ");
-
-        // WHY: spawn_blocking + ctrl_c to handle SA_RESTART platforms where
-        // read_line does not return EINTR on signal delivery.
-        let line = tokio::select! {
-            result = tokio::task::spawn_blocking(|| {
-                let mut buf = String::new();
-                std::io::stdin().read_line(&mut buf).map(|_| buf)
-            }) => result.unwrap_or(Ok(String::new())).unwrap_or_default(),
-            _ = tokio::signal::ctrl_c() => {
-                // WHY: 2nd Ctrl-C means user insists on immediate exit.
-                // CLI is short-lived, no persistent resources to clean up.
-                std::process::exit(130);
-            }
-        };
-
-        if matches!(line.trim().to_lowercase().as_str(), "y" | "yes") {
-            cancel_attempted = true;
-            let cancel_result = tokio::time::timeout(
-                std::time::Duration::from_secs(5),
-                sc.cancel_request(request_id, Some("cancelled by user (Ctrl-C)")),
-            )
-            .await;
-
-            match cancel_result {
-                Ok(Ok(_)) => {
-                    let output = serde_json::json!({
-                        "request_id": request_id,
-                        "cancelled": true,
-                        "was_executing": is_running,
-                    });
-                    let render = RenderPlan {
-                        stdout: StdoutRender::None,
-                        stderr: vec![StderrLine::Status(format!("Cancelled: {request_id}"))],
-                    };
-                    return build_interrupt_response(
-                        output,
-                        render,
-                        warnings,
-                        130,
-                        "cancelled",
-                        "request cancelled by user",
-                    );
-                }
-                Ok(Err(e)) if e.status == 409 => {
-                    eprintln!("Request already completed (cancel not needed).");
-                }
-                Ok(Err(e)) => {
-                    eprintln!("Cancel failed: {}", e.body);
-                }
-                Err(_) => {
-                    eprintln!("Cancel timed out. Request {request_id} may still be running.");
-                }
-            }
-            // Cancel failed — fall through to hints
-        }
-        // User said N or cancel failed — fall through
     }
 
-    // Fall-through: show request_id + hints via CliResponse
     let output = serde_json::json!({
         "request_id": request_id,
-        "interrupted": true,
+        "detached": true,
     });
-    let mut stderr = vec![StderrLine::Warn(format!(
-        "Interrupted. Request: {request_id}"
-    ))];
-    stderr.push(StderrLine::Hint(format!(
-        "Check: dbward request show {request_id}"
-    )));
-    if !cancel_attempted {
-        stderr.push(StderrLine::Hint(format!(
-            "Cancel: dbward request cancel {request_id}"
-        )));
-    }
     let render = RenderPlan {
         stdout: StdoutRender::None,
-        stderr,
+        stderr: vec![
+            StderrLine::Status(format!("Detached from request {request_id}.")),
+            StderrLine::Hint(format!("Show: dbward request show {request_id}")),
+            StderrLine::Hint(format!("Result: dbward request result {request_id}")),
+            StderrLine::Hint(format!("Cancel: dbward request cancel {request_id}")),
+        ],
     };
     build_interrupt_response(
         output,
         render,
         warnings,
         130,
-        "interrupted",
-        "operation interrupted by user",
+        "detached",
+        "detached from request",
     )
+}
+
+/// Check queue_hint and return early error if no agents can execute the request.
+fn check_queue_hint_or_exit(req: &Value, request_id: &str) -> Result<(), CliError> {
+    let hint = req["queue_hint"].as_str().unwrap_or("");
+    match hint {
+        "no_agents" => Err(CliError::Api {
+            code: "no_agents".into(),
+            message: "No agents available. Request is queued but no agents can execute it.\n\
+                      It can be retried later when agents are available."
+                .into(),
+            hints: vec![
+                format!("Show: dbward request show {request_id}"),
+                format!("Retry: dbward request resume {request_id}"),
+                "Check agents: dbward agents".into(),
+            ],
+        }),
+        "agents_draining" => Err(CliError::Api {
+            code: "agents_draining".into(),
+            message:
+                "All agents are draining (shutting down). Request is queued but no agents can execute it.\n\
+                 It can be retried later when agents are available."
+                    .into(),
+            hints: vec![
+                format!("Show: dbward request show {request_id}"),
+                format!("Retry: dbward request resume {request_id}"),
+                "Check agents: dbward agents".into(),
+            ],
+        }),
+        _ => Ok(()),
+    }
 }
 
 /// Build a CliResponse for interrupt scenarios with consistent structure.
@@ -862,5 +757,61 @@ mod tests {
             call_count.load(Ordering::SeqCst) >= 3,
             "should have made multiple calls including dispatch"
         );
+    }
+
+    #[test]
+    fn check_queue_hint_no_agents_returns_error() {
+        let req = serde_json::json!({
+            "status": "dispatched",
+            "queue_hint": "no_agents",
+        });
+        let result = check_queue_hint_or_exit(&req, "req_123");
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(err.to_string().contains("no_agents"));
+        assert!(err.to_string().contains("No agents available"));
+    }
+
+    #[test]
+    fn check_queue_hint_agents_draining_returns_error() {
+        let req = serde_json::json!({
+            "status": "dispatched",
+            "queue_hint": "agents_draining",
+        });
+        let result = check_queue_hint_or_exit(&req, "req_456");
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(err.to_string().contains("agents_draining"));
+        assert!(err.to_string().contains("draining"));
+    }
+
+    #[test]
+    fn check_queue_hint_saturated_passes() {
+        let req = serde_json::json!({
+            "status": "dispatched",
+            "queue_hint": "agents_saturated",
+        });
+        assert!(check_queue_hint_or_exit(&req, "req_789").is_ok());
+    }
+
+    #[test]
+    fn check_queue_hint_none_passes() {
+        let req = serde_json::json!({
+            "status": "dispatched",
+        });
+        assert!(check_queue_hint_or_exit(&req, "req_000").is_ok());
+    }
+
+    #[tokio::test]
+    async fn handle_interrupt_returns_detached() {
+        let resp = handle_interrupt("req_abc", OutputMode::Json, &[]).await;
+        let outcome: crate::output::CliOutcome = resp.into();
+        assert_eq!(outcome.exit_code, 130);
+        assert!(!outcome.ok);
+        let data = outcome.data.unwrap();
+        assert_eq!(data["request_id"], "req_abc");
+        assert_eq!(data["detached"], true);
+        let err = outcome.error.unwrap();
+        assert_eq!(err.code, "detached");
     }
 }

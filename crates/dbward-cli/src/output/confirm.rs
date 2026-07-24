@@ -19,6 +19,7 @@ pub fn confirm_or_reject(mode: OutputMode, yes_flag: bool) -> Result<(), CliErro
         return Err(CliError::Api {
             code: "confirmation_required".into(),
             message: "--yes is required for destructive operations in non-interactive mode".into(),
+            hints: vec![],
         });
     }
 
@@ -62,7 +63,7 @@ mod tests {
         let result = confirm_or_reject(OutputMode::Json, false);
         assert!(result.is_err());
         match result.unwrap_err() {
-            CliError::Api { code, message } => {
+            CliError::Api { code, message, .. } => {
                 assert_eq!(code, "confirmation_required");
                 assert!(message.contains("--yes"));
             }

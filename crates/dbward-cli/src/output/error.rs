@@ -26,7 +26,11 @@ pub enum CliError {
 
     /// Server API error (non-2xx response with structured error).
     #[error("api: [{code}] {message}")]
-    Api { code: String, message: String },
+    Api {
+        code: String,
+        message: String,
+        hints: Vec<String>,
+    },
 
     /// Request timed out.
     #[error("timed out after {seconds}s")]
@@ -42,17 +46,25 @@ pub enum CliError {
 }
 
 impl CliError {
-    /// Convert to JSON envelope error fields (code, message).
-    pub fn to_envelope(&self) -> (String, String) {
+    /// Convert to JSON envelope error fields (code, message, hints).
+    pub fn to_envelope(&self) -> (String, String, Vec<String>) {
         match self {
-            Self::Usage(msg) => ("usage".into(), msg.clone()),
-            Self::Auth(msg) => ("auth_error".into(), msg.clone()),
-            Self::Config(msg) => ("config_error".into(), msg.clone()),
-            Self::Network(msg) => ("network_error".into(), msg.clone()),
-            Self::Api { code, message } => (code.clone(), message.clone()),
-            Self::Timeout { seconds } => ("timeout".into(), format!("timed out after {seconds}s")),
-            Self::Blocked { reason } => ("blocked".into(), reason.clone()),
-            Self::Internal(msg) => ("internal_error".into(), msg.clone()),
+            Self::Usage(msg) => ("usage".into(), msg.clone(), vec![]),
+            Self::Auth(msg) => ("auth_error".into(), msg.clone(), vec![]),
+            Self::Config(msg) => ("config_error".into(), msg.clone(), vec![]),
+            Self::Network(msg) => ("network_error".into(), msg.clone(), vec![]),
+            Self::Api {
+                code,
+                message,
+                hints,
+            } => (code.clone(), message.clone(), hints.clone()),
+            Self::Timeout { seconds } => (
+                "timeout".into(),
+                format!("timed out after {seconds}s"),
+                vec![],
+            ),
+            Self::Blocked { reason } => ("blocked".into(), reason.clone(), vec![]),
+            Self::Internal(msg) => ("internal_error".into(), msg.clone(), vec![]),
         }
     }
 
@@ -74,12 +86,16 @@ impl CliError {
 
 impl From<CliError> for CliOutcome {
     fn from(err: CliError) -> Self {
-        let (code, message) = err.to_envelope();
+        let (code, message, hints) = err.to_envelope();
         Self {
             ok: false,
             data: err.payload(),
             warnings: vec![],
-            error: Some(EnvelopeError { code, message }),
+            error: Some(EnvelopeError {
+                code,
+                message,
+                hints,
+            }),
             render: RenderPlan::none(),
             exit_code: err.exit_code(),
         }
@@ -142,7 +158,8 @@ mod tests {
         assert_eq!(
             CliError::Api {
                 code: "not_found".into(),
-                message: "x".into()
+                message: "x".into(),
+                hints: vec![]
             }
             .exit_code(),
             1
@@ -153,13 +170,13 @@ mod tests {
 
     #[test]
     fn to_envelope_produces_expected_codes() {
-        let (code, _) = CliError::Auth("x".into()).to_envelope();
+        let (code, _, _) = CliError::Auth("x".into()).to_envelope();
         assert_eq!(code, "auth_error");
 
-        let (code, _) = CliError::Config("x".into()).to_envelope();
+        let (code, _, _) = CliError::Config("x".into()).to_envelope();
         assert_eq!(code, "config_error");
 
-        let (code, msg) = CliError::Timeout { seconds: 5 }.to_envelope();
+        let (code, msg, _) = CliError::Timeout { seconds: 5 }.to_envelope();
         assert_eq!(code, "timeout");
         assert!(msg.contains("5s"));
     }
