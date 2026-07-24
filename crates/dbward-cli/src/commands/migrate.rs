@@ -264,8 +264,6 @@ pub async fn run_migrate(
         crate::output::confirm_or_reject(mode, yes)?;
     }
 
-    let cancellable = operation != "migrate_status";
-
     // WHY: ctrl_c() future resolves only once. Pin and share via &mut across
     // two sequential select! blocks so Ctrl-C during either create or wait is caught.
     let ctrl_c = tokio::signal::ctrl_c();
@@ -444,6 +442,7 @@ pub async fn run_migrate(
             return Err(CliError::Api {
                 code: "server_error".into(),
                 message: format!("unexpected status from create_request: {}", cr.status),
+                hints: vec![],
             });
         }
     }
@@ -452,7 +451,7 @@ pub async fn run_migrate(
     let result = tokio::select! {
         result = workflow::wait_for_completion(sc, request_id, cr.status, true, progress) => result?,
         _ = &mut ctrl_c => {
-            return Ok(workflow::handle_interrupt(sc, request_id, mode, &[], cancellable).await);
+            return Ok(workflow::handle_interrupt(request_id, mode, &[]).await);
         }
     };
 

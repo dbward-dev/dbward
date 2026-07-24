@@ -338,6 +338,7 @@ async fn run_approve(
                 return Err(CliError::Api {
                     code: "not_found".into(),
                     message: format!("Request {id} not found"),
+                    hints: vec![],
                 });
             }
             let body_lower = e.body.to_lowercase();
@@ -350,12 +351,14 @@ async fn run_approve(
                     message: format!(
                         "Request is already approved. The requester can resume with: dbward request resume {id}"
                     ),
+                    hints: vec![],
                 });
             }
             if e.status == 403 {
                 return Err(CliError::Api {
                     code: "forbidden".into(),
                     message: e.body,
+                    hints: vec![],
                 });
             }
             Err(e.into_cli_error("approve"))
@@ -379,12 +382,14 @@ async fn run_reject(
                 return Err(CliError::Api {
                     code: "not_found".into(),
                     message: format!("Request {id} not found"),
+                    hints: vec![],
                 });
             }
             if e.status == 403 {
                 return Err(CliError::Api {
                     code: "forbidden".into(),
                     message: e.body,
+                    hints: vec![],
                 });
             }
             Err(e.into_cli_error("reject"))
@@ -423,12 +428,14 @@ async fn run_cancel(
                 return Err(CliError::Api {
                     code: "not_found".into(),
                     message: format!("Request {id} not found"),
+                    hints: vec![],
                 });
             }
             if e.status == 403 {
                 return Err(CliError::Api {
                     code: "forbidden".into(),
                     message: e.body,
+                    hints: vec![],
                 });
             }
             Err(e.into_cli_error("cancel"))
@@ -909,6 +916,7 @@ async fn run_resume(
             return Err(CliError::Api {
                 code: "not_ready".into(),
                 message: format!("{hint}\n  Check status: dbward request show {id}"),
+                hints: vec![],
             });
         }
         return Err(e.into_cli_error("resume"));
@@ -917,15 +925,19 @@ async fn run_resume(
     let resp = tokio::select! {
         r = workflow::wait_and_resolve(sc, id, true, progress) => r?,
         _ = tokio::signal::ctrl_c() => {
+            let output = serde_json::json!({
+                "request_id": id,
+                "detached": true,
+            });
             let stderr = vec![
-                StderrLine::Status("Request is still running.".into()),
-                StderrLine::Hint(format!("Check later: dbward request show {id}")),
-                StderrLine::Hint(format!("Resume: dbward request resume {id}")),
+                StderrLine::Status(format!("Detached from request {id}.")),
+                StderrLine::Hint(format!("Show: dbward request show {id}")),
+                StderrLine::Hint(format!("Result: dbward request result {id}")),
                 StderrLine::Hint(format!("Cancel: dbward request cancel {id}")),
             ];
             let render = RenderPlan { stdout: StdoutRender::None, stderr };
-            return Ok(CliResponse::<RequestResumeOutput>::empty(render)
-                .with_issues(130, "interrupted", "interrupted by user"));
+            return Ok(CliResponse::ok(RequestResumeOutput(output), render)
+                .with_issues(130, "detached", "detached from request"));
         }
     };
 
@@ -1133,6 +1145,7 @@ async fn resolve_request_id(sc: &ServerClient, id: &str) -> Result<String, CliEr
     let requests = resp["requests"].as_array().ok_or_else(|| CliError::Api {
         code: "server_error".into(),
         message: "unexpected response from list_requests".into(),
+        hints: vec![],
     })?;
     let matches: Vec<&str> = requests
         .iter()
@@ -1149,6 +1162,7 @@ async fn resolve_request_id(sc: &ServerClient, id: &str) -> Result<String, CliEr
             Err(CliError::Api {
                 code: "not_found".into(),
                 message: format!("no request found matching prefix '{id}'{hint}"),
+                hints: vec![],
             })
         }
         1 => Ok(matches[0].to_string()),
@@ -1158,6 +1172,7 @@ async fn resolve_request_id(sc: &ServerClient, id: &str) -> Result<String, CliEr
                 "ambiguous prefix '{id}': matches {} requests. Use a longer prefix.",
                 matches.len()
             ),
+            hints: vec![],
         }),
     }
 }

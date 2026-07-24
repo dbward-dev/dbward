@@ -77,6 +77,7 @@ impl ServerError {
         CliError::Api {
             code: self.code.unwrap_or_else(|| "server_error".into()),
             message: out,
+            hints: vec![],
         }
     }
 }
@@ -184,6 +185,7 @@ impl ServerClient {
             .map_err(|e| CliError::Api {
                 code: "server_error".into(),
                 message: format!("create request: invalid response: {e}"),
+                hints: vec![],
             })?;
         Ok((cr.id, cr.status, cr.approvers))
     }
@@ -423,6 +425,7 @@ impl ServerClient {
         let body: Value = serde_json::from_str(&text).map_err(|_| CliError::Api {
             code: "server_error".into(),
             message: format!("get {path}: server returned non-JSON response (HTTP {status})"),
+            hints: vec![],
         })?;
         Ok((status, body))
     }
@@ -506,6 +509,7 @@ impl ServerClient {
             serde_json::from_str(&text).map_err(|e| CliError::Api {
                 code: "server_error".into(),
                 message: format!("invalid response: {e}"),
+                hints: vec![],
             })
         } else {
             Err(ServerError::from_response(status, text).into_cli_error("token create"))
@@ -527,6 +531,7 @@ impl ServerClient {
             serde_json::from_str(&text).map_err(|e| CliError::Api {
                 code: "server_error".into(),
                 message: format!("invalid response: {e}"),
+                hints: vec![],
             })
         } else {
             Err(ServerError::from_response(status, text).into_cli_error("token revoke"))
@@ -544,6 +549,7 @@ impl ServerClient {
             serde_json::from_str(&text).map_err(|e| CliError::Api {
                 code: "server_error".into(),
                 message: format!("invalid response: {e}"),
+                hints: vec![],
             })
         } else {
             Err(ServerError::from_response(status, text).into_cli_error("token inspect"))
@@ -560,6 +566,7 @@ fn api_to_cli(e: ApiError, context: &str) -> CliError {
         ApiError::Deserialize(msg) => CliError::Api {
             code: "server_error".into(),
             message: format!("{context}: invalid JSON: {msg}"),
+            hints: vec![],
         },
     }
 }
@@ -588,7 +595,7 @@ mod tests {
         let err = ServerError::from_response(502, "<html>bad gateway</html>".into());
 
         match err.into_cli_error("resume") {
-            CliError::Api { code, message } => {
+            CliError::Api { code, message, .. } => {
                 assert_eq!(code, "server_error");
                 assert_eq!(message, "resume: <html>bad gateway</html>");
             }

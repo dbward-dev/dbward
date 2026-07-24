@@ -623,16 +623,18 @@ fn compute_queue_hint(
         return Some("no_agents");
     }
 
-    let all_offline = eligible
-        .iter()
-        .all(|a| a.derived_status(now) == AgentDerivedStatus::Offline);
-    if all_offline {
+    // Check if ALL eligible agents are unable to accept new jobs (offline OR draining).
+    // WHY: Mixed offline+draining should still be detected as "no one can execute".
+    let all_unavailable = eligible.iter().all(|a| {
+        let derived = a.derived_status(now);
+        derived == AgentDerivedStatus::Offline || a.status == AgentStatus::Draining
+    });
+    if all_unavailable {
+        let any_draining = eligible.iter().any(|a| a.status == AgentStatus::Draining);
+        if any_draining {
+            return Some("agents_draining");
+        }
         return Some("no_agents");
-    }
-
-    let all_draining = eligible.iter().all(|a| a.status == AgentStatus::Draining);
-    if all_draining {
-        return Some("agents_draining");
     }
 
     let all_saturated = eligible
