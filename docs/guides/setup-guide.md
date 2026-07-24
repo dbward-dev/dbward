@@ -21,6 +21,8 @@ This guide walks you through deploying dbward from scratch: generate config file
 
 ## Step 1: Generate configuration files
 
+> **Run on:** your laptop
+
 ```bash
 mkdir my-dbward && cd my-dbward
 dbward init --preset small-team
@@ -46,6 +48,8 @@ This creates three files:
 ---
 
 ## Step 2: Review server.toml
+
+> **Run on:** your laptop
 
 The generated `server.toml` includes sensible defaults for a small team:
 
@@ -88,6 +92,8 @@ See [Configuration Reference](../reference/configuration.md) for all options.
 
 ## Step 3: Start the server
 
+> **Run on:** server host (VM, container, or local machine)
+
 ```bash
 dbward-server --config server.toml --listen 0.0.0.0:3000
 ```
@@ -112,6 +118,8 @@ On first start, the server:
 ---
 
 ## Step 4: Configure CLI token
+
+> **Run on:** your laptop
 
 Read the admin token and set it in your CLI config:
 
@@ -138,6 +146,8 @@ export DBWARD_TOKEN="dbw_a1b2c3..."
 ---
 
 ## Step 5: Start the agent
+
+> **Run on:** a host with database network access
 
 The agent needs:
 
@@ -168,6 +178,8 @@ The agent will connect to the server and register its capabilities:
 
 ## Step 6: Verify with doctor
 
+> **Run on:** your laptop
+
 ```bash
 dbward doctor
 ```
@@ -184,6 +196,8 @@ Fix any issues before proceeding.
 ---
 
 ## Step 7: Run your first query
+
+> **Run on:** your laptop
 
 ```bash
 # Development (auto-approved):
@@ -216,6 +230,8 @@ dbward request resume a1b2c3d4
 ---
 
 ## Step 8: Create tokens for your team
+
+> **Run on:** your laptop (admin user)
 
 Don't share the admin token. Create scoped tokens for team members:
 
