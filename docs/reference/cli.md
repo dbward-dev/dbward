@@ -561,18 +561,24 @@ dbward dev --database-url "postgres://localhost/myapp"
 
 ---
 
-## dbward server start
+## dbward server reload
 
-Start the dbward HTTP server (production).
+Send SIGHUP to a running server to reload configuration without restarting.
 
 ```bash
-dbward server start --config server.toml --listen 0.0.0.0:3000
+dbward server reload --server-config server.toml
+dbward server reload --pid 12345
 ```
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `--config <PATH>` | `dbward-server.toml` | Server config file |
-| `--listen <ADDR>` | `127.0.0.1:3000` | Listen address |
+| `--server-config <PATH>` | `dbward-server.toml` | Server config (to locate PID file) |
+| `--pid <PID>` | | PID of the server process (overrides PID file lookup) |
+
+> **Starting the server:** Use the `dbward-server` binary directly.
+> ```bash
+> dbward-server --config server.toml --listen 0.0.0.0:3000
+> ```
 
 ---
 

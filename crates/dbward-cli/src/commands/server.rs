@@ -1,6 +1,3 @@
-use std::path::PathBuf;
-use std::process::Command as ProcessCommand;
-
 use clap::Subcommand;
 use serde::Serialize;
 
@@ -9,12 +6,6 @@ use crate::output::{CliResponse, RenderPlan};
 
 #[derive(Subcommand)]
 pub enum ServerAction {
-    Start {
-        #[arg(long, default_value = "127.0.0.1:3000")]
-        listen: String,
-        #[arg(long, default_value = "dbward-server.toml")]
-        config: String,
-    },
     /// Send SIGHUP to a running server to reload config
     Reload {
         /// PID of the server process (reads from state_dir/server.pid if omitted)
@@ -44,39 +35,8 @@ pub async fn run_server_command(
     action: &ServerAction,
 ) -> Result<CliResponse<ServerReloadOutput>, CliError> {
     match action {
-        ServerAction::Start { listen, config } => run_server_start(listen, config).await,
         ServerAction::Reload { pid, server_config } => run_server_reload(*pid, server_config),
     }
-}
-
-async fn run_server_start(
-    listen: &str,
-    config: &str,
-) -> Result<CliResponse<ServerReloadOutput>, CliError> {
-    let binary = find_server_binary()?;
-    let status = ProcessCommand::new(&binary)
-        .arg("--listen")
-        .arg(listen)
-        .arg("--config")
-        .arg(config)
-        .status()
-        .map_err(|e| CliError::Internal(format!("failed to start server: {e}")))?;
-    if !status.success() {
-        return Err(CliError::Internal(format!("server exited with {status}")));
-    }
-    // Server start is a long-running process; this only returns if it exits cleanly
-    let render = RenderPlan::status("Server exited.");
-    Ok(CliResponse::empty(render))
-}
-
-fn find_server_binary() -> Result<PathBuf, CliError> {
-    if let Ok(exe) = std::env::current_exe() {
-        let sibling = exe.with_file_name("dbward-server");
-        if sibling.exists() {
-            return Ok(sibling);
-        }
-    }
-    which_binary("dbward-server")
 }
 
 fn run_server_reload(
@@ -140,17 +100,4 @@ fn run_server_reload(
             "server reload via SIGHUP is only supported on Unix".into(),
         ))
     }
-}
-
-fn which_binary(name: &str) -> Result<PathBuf, CliError> {
-    let path_var = std::env::var("PATH").unwrap_or_default();
-    for dir in path_var.split(':') {
-        let candidate = PathBuf::from(dir).join(name);
-        if candidate.exists() {
-            return Ok(candidate);
-        }
-    }
-    Err(CliError::Internal(format!(
-        "'{name}' not found. Install it or place it next to the dbward binary."
-    )))
 }
