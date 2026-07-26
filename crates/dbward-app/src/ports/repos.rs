@@ -158,6 +158,30 @@ pub trait AgentRepo: Send + Sync {
         execution_id: &str,
         new_expiry: chrono::DateTime<chrono::Utc>,
     ) -> Result<bool, AppError>;
+    /// Atomically transitions execution to `Completing` state (CAS).
+    /// Returns true if this caller won the race (is the exclusive completer).
+    ///
+    /// - Normal path (`is_late_completion=false`): CAS from Claimed/Running → Completing
+    /// - Late-completion path (`is_late_completion=true`): CAS from Failed → Completing,
+    ///   resetting `lease_expires_at` to prevent immediate reclaim.
+    fn acquire_completing(
+        &self,
+        execution_id: &str,
+        is_late_completion: bool,
+        new_lease_expires_at: Option<chrono::DateTime<chrono::Utc>>,
+    ) -> Result<bool, AppError>;
+    /// Reverts a `Completing` execution back to its prior state (CAS: Completing → target).
+    /// Used when storage write or DB commit fails after CAS, allowing the agent to retry.
+    /// Restores `finished_at`, `error_message`, and `lease_expires_at` to pre-acquire values.
+    /// Returns false if execution is no longer in Completing (e.g., lease reclaim already ran).
+    fn revert_completing(
+        &self,
+        execution_id: &str,
+        target_status: ExecutionStatus,
+        original_finished_at: Option<chrono::DateTime<chrono::Utc>>,
+        original_lease_expires_at: chrono::DateTime<chrono::Utc>,
+        original_error_message: Option<&str>,
+    ) -> Result<bool, AppError>;
     fn find_dispatched_jobs(
         &self,
         databases: &[(DatabaseName, Environment)],

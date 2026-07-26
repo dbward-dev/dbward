@@ -54,10 +54,9 @@ impl AgentHeartbeat {
 
         // 4. Verify execution is still active (Claimed = in progress)
         if execution.status != ExecutionStatus::Claimed {
-            return Err(AppError::Conflict(format!(
-                "execution is {:?}, cannot heartbeat",
-                execution.status
-            )));
+            return Err(AppError::Conflict(
+                "execution is not in a heartbeatable state".into(),
+            ));
         }
 
         // 5. Extend lease using execution policy (migration-aware)
@@ -149,6 +148,24 @@ mod tests {
         }
         fn extend_lease(&self, id: &str, expiry: DateTime<Utc>) -> Result<bool, AppError> {
             self.extended.lock().unwrap().push((id.to_string(), expiry));
+            Ok(true)
+        }
+        fn acquire_completing(
+            &self,
+            _: &str,
+            _: bool,
+            _: Option<DateTime<Utc>>,
+        ) -> Result<bool, AppError> {
+            Ok(true)
+        }
+        fn revert_completing(
+            &self,
+            _: &str,
+            _: ExecutionStatus,
+            _: Option<chrono::DateTime<chrono::Utc>>,
+            _: chrono::DateTime<chrono::Utc>,
+            _: Option<&str>,
+        ) -> Result<bool, AppError> {
             Ok(true)
         }
         fn find_dispatched_jobs(
@@ -468,6 +485,24 @@ mod tests {
             }
             fn extend_lease(&self, _: &str, _: DateTime<Utc>) -> Result<bool, AppError> {
                 Ok(false) // Simulates race: execution no longer claimed
+            }
+            fn acquire_completing(
+                &self,
+                _: &str,
+                _: bool,
+                _: Option<DateTime<Utc>>,
+            ) -> Result<bool, AppError> {
+                Ok(true)
+            }
+            fn revert_completing(
+                &self,
+                _: &str,
+                _: ExecutionStatus,
+                _: Option<chrono::DateTime<chrono::Utc>>,
+                _: chrono::DateTime<chrono::Utc>,
+                _: Option<&str>,
+            ) -> Result<bool, AppError> {
+                Ok(true)
             }
             fn find_dispatched_jobs(
                 &self,

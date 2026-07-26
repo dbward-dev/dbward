@@ -317,3 +317,249 @@ fn concurrent_claim_only_one_succeeds() {
         "Exactly one agent should claim: r1={r1:?}, r2={r2:?}"
     );
 }
+
+#[test]
+fn acquire_completing_cas_only_one_wins() {
+    let conn = setup();
+    register_db(&conn);
+
+    let agent_repo = SqliteAgentRepo::new(conn.clone());
+
+    // Register agent
+    let agent = Agent {
+        id: "agent-cas".into(),
+        token_id: "tok-cas".into(),
+        databases: vec![],
+        status: AgentStatus::Active,
+        max_concurrent: 4,
+        in_flight: 0,
+        uptime_secs: 0,
+        active_jobs: vec![],
+        lease_duration_secs: None,
+        last_seen: None,
+        created_at: Utc::now(),
+    };
+    agent_repo.upsert(&agent).unwrap();
+
+    // Insert a request (required FK)
+    let request_repo = SqliteRequestRepo::new(conn.clone());
+    let req = Request {
+        id: "req-cas".into(),
+        requester: "alice".into(),
+        database: DatabaseName::new("app").unwrap(),
+        environment: Environment::new("production").unwrap(),
+        operation: Operation::ExecuteDml,
+        detail: "SELECT 1".into(),
+        status: RequestStatus::Running,
+        emergency: false,
+        reason: None,
+        idempotency_key: None,
+        idempotency_fingerprint: None,
+        metadata_json: "{}".into(),
+        share_with: vec![],
+        no_result_store: false,
+        workflow_snapshot_json: None,
+        decision_trace_json: None,
+        execution_plan_json: None,
+        cancel_reason: None,
+        cancelled_by: None,
+        created_at: Utc::now(),
+        updated_at: Utc::now(),
+        resolved_at: None,
+        expires_at: None,
+    };
+    request_repo.insert(&req).unwrap();
+
+    // Create execution in Claimed state
+    let exec = Execution {
+        id: "exec-cas".into(),
+        request_id: "req-cas".into(),
+        agent_id: "agent-cas".into(),
+        status: ExecutionStatus::Claimed,
+        token: "tok".into(),
+        lease_expires_at: Utc::now() + chrono::Duration::minutes(5),
+        started_at: Some(Utc::now()),
+        finished_at: None,
+        error_message: None,
+        created_at: Utc::now(),
+    };
+    agent_repo.create_execution(&exec).unwrap();
+
+    // Two calls to acquire_completing on the same execution — only one wins
+    let result1 = agent_repo
+        .acquire_completing("exec-cas", false, None)
+        .unwrap();
+    let result2 = agent_repo
+        .acquire_completing("exec-cas", false, None)
+        .unwrap();
+
+    assert!(result1, "first acquire should win");
+    assert!(!result2, "second acquire should lose");
+
+    // Verify execution is in Completing state
+    let updated = agent_repo.get_execution("exec-cas").unwrap().unwrap();
+    assert_eq!(updated.status, ExecutionStatus::Completing);
+}
+
+#[test]
+fn find_expired_leases_includes_completing() {
+    let conn = setup();
+    register_db(&conn);
+
+    let agent_repo = SqliteAgentRepo::new(conn.clone());
+
+    let agent = Agent {
+        id: "agent-lease".into(),
+        token_id: "tok-lease".into(),
+        databases: vec![],
+        status: AgentStatus::Active,
+        max_concurrent: 4,
+        in_flight: 0,
+        uptime_secs: 0,
+        active_jobs: vec![],
+        lease_duration_secs: None,
+        last_seen: None,
+        created_at: Utc::now(),
+    };
+    agent_repo.upsert(&agent).unwrap();
+
+    let request_repo = SqliteRequestRepo::new(conn.clone());
+    let req = Request {
+        id: "req-lease".into(),
+        requester: "alice".into(),
+        database: DatabaseName::new("app").unwrap(),
+        environment: Environment::new("production").unwrap(),
+        operation: Operation::ExecuteDml,
+        detail: "SELECT 1".into(),
+        status: RequestStatus::Running,
+        emergency: false,
+        reason: None,
+        idempotency_key: None,
+        idempotency_fingerprint: None,
+        metadata_json: "{}".into(),
+        share_with: vec![],
+        no_result_store: false,
+        workflow_snapshot_json: None,
+        decision_trace_json: None,
+        execution_plan_json: None,
+        cancel_reason: None,
+        cancelled_by: None,
+        created_at: Utc::now(),
+        updated_at: Utc::now(),
+        resolved_at: None,
+        expires_at: None,
+    };
+    request_repo.insert(&req).unwrap();
+
+    // Create execution with expired lease in Completing state
+    let past = Utc::now() - chrono::Duration::minutes(10);
+    let exec = Execution {
+        id: "exec-lease-completing".into(),
+        request_id: "req-lease".into(),
+        agent_id: "agent-lease".into(),
+        status: ExecutionStatus::Claimed,
+        token: "tok".into(),
+        lease_expires_at: past,
+        started_at: Some(Utc::now()),
+        finished_at: None,
+        error_message: None,
+        created_at: Utc::now(),
+    };
+    agent_repo.create_execution(&exec).unwrap();
+
+    // Manually set to completing (simulates acquire_completing succeeded then stuck)
+    agent_repo
+        .acquire_completing("exec-lease-completing", false, None)
+        .unwrap();
+
+    // find_expired_leases should pick it up
+    let now = Utc::now().to_rfc3339();
+    let expired = agent_repo.find_expired_leases(&now).unwrap();
+    assert!(
+        expired.iter().any(|(id, _)| id == "exec-lease-completing"),
+        "completing execution with expired lease should be found: {:?}",
+        expired
+    );
+}
+
+#[test]
+fn acquire_completing_late_completion_resets_lease() {
+    let conn = setup();
+    register_db(&conn);
+
+    let agent_repo = SqliteAgentRepo::new(conn.clone());
+
+    let agent = Agent {
+        id: "agent-late".into(),
+        token_id: "tok-late".into(),
+        databases: vec![],
+        status: AgentStatus::Active,
+        max_concurrent: 4,
+        in_flight: 0,
+        uptime_secs: 0,
+        active_jobs: vec![],
+        lease_duration_secs: None,
+        last_seen: None,
+        created_at: Utc::now(),
+    };
+    agent_repo.upsert(&agent).unwrap();
+
+    let request_repo = SqliteRequestRepo::new(conn.clone());
+    let req = Request {
+        id: "req-late".into(),
+        requester: "alice".into(),
+        database: DatabaseName::new("app").unwrap(),
+        environment: Environment::new("production").unwrap(),
+        operation: Operation::ExecuteDml,
+        detail: "SELECT 1".into(),
+        status: RequestStatus::ExecutionLost,
+        emergency: false,
+        reason: None,
+        idempotency_key: None,
+        idempotency_fingerprint: None,
+        metadata_json: "{}".into(),
+        share_with: vec![],
+        no_result_store: false,
+        workflow_snapshot_json: None,
+        decision_trace_json: None,
+        execution_plan_json: None,
+        cancel_reason: None,
+        cancelled_by: None,
+        created_at: Utc::now(),
+        updated_at: Utc::now(),
+        resolved_at: None,
+        expires_at: None,
+    };
+    request_repo.insert(&req).unwrap();
+
+    // Create execution in Failed state with expired lease (simulates lease expiry recovery)
+    let past = Utc::now() - chrono::Duration::minutes(10);
+    let exec = Execution {
+        id: "exec-late".into(),
+        request_id: "req-late".into(),
+        agent_id: "agent-late".into(),
+        status: ExecutionStatus::Failed,
+        token: "tok".into(),
+        lease_expires_at: past,
+        started_at: Some(Utc::now()),
+        finished_at: Some(Utc::now()),
+        error_message: Some("lease expired".into()),
+        created_at: Utc::now(),
+    };
+    agent_repo.create_execution(&exec).unwrap();
+
+    // Late-completion: acquire_completing from Failed state with new lease
+    let new_lease = Utc::now() + chrono::Duration::minutes(5);
+    let acquired = agent_repo
+        .acquire_completing("exec-late", true, Some(new_lease))
+        .unwrap();
+    assert!(acquired, "late-completion acquire should succeed");
+
+    // Verify: status is Completing and lease is refreshed
+    let updated = agent_repo.get_execution("exec-late").unwrap().unwrap();
+    assert_eq!(updated.status, ExecutionStatus::Completing);
+    assert!(
+        updated.lease_expires_at > Utc::now(),
+        "lease should be refreshed to future"
+    );
+}

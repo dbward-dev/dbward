@@ -648,10 +648,17 @@ mod common {
         fn insert_execution(&self, _: &dbward_domain::entities::Execution) -> Result<(), AppError> {
             Ok(())
         }
-        fn mark_completed(
+        fn mark_completed_from_completing(
             &self,
             _: &str,
             _: bool,
+            _: chrono::DateTime<chrono::Utc>,
+        ) -> Result<bool, AppError> {
+            Ok(true)
+        }
+        fn mark_failed_lease_expired(
+            &self,
+            _: &str,
             _: chrono::DateTime<chrono::Utc>,
         ) -> Result<bool, AppError> {
             Ok(true)
@@ -1229,6 +1236,55 @@ impl AgentRepo for SharedAgentRepo {
             .find(|e| e.id == id && e.status == ExecutionStatus::Claimed)
         {
             e.lease_expires_at = new_expiry;
+            Ok(true)
+        } else {
+            Ok(false)
+        }
+    }
+    fn acquire_completing(
+        &self,
+        execution_id: &str,
+        is_late_completion: bool,
+        new_lease_expires_at: Option<DateTime<Utc>>,
+    ) -> Result<bool, AppError> {
+        let mut execs = self.executions.lock().unwrap();
+        if let Some(e) = execs.iter_mut().find(|e| {
+            e.id == execution_id
+                && if is_late_completion {
+                    e.status == ExecutionStatus::Failed
+                } else {
+                    matches!(
+                        e.status,
+                        ExecutionStatus::Claimed | ExecutionStatus::Running
+                    )
+                }
+        }) {
+            e.status = ExecutionStatus::Completing;
+            if let Some(expiry) = new_lease_expires_at {
+                e.lease_expires_at = expiry;
+            }
+            Ok(true)
+        } else {
+            Ok(false)
+        }
+    }
+    fn revert_completing(
+        &self,
+        execution_id: &str,
+        target_status: ExecutionStatus,
+        original_finished_at: Option<DateTime<Utc>>,
+        original_lease_expires_at: DateTime<Utc>,
+        original_error_message: Option<&str>,
+    ) -> Result<bool, AppError> {
+        let mut execs = self.executions.lock().unwrap();
+        if let Some(e) = execs
+            .iter_mut()
+            .find(|e| e.id == execution_id && e.status == ExecutionStatus::Completing)
+        {
+            e.status = target_status;
+            e.finished_at = original_finished_at;
+            e.lease_expires_at = original_lease_expires_at;
+            e.error_message = original_error_message.map(|s| s.to_string());
             Ok(true)
         } else {
             Ok(false)

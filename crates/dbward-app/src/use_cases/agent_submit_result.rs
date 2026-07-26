@@ -37,6 +37,7 @@ pub struct AgentSubmitResultInput {
     pub duration_ms: Option<u64>,
 }
 
+#[derive(Debug)]
 pub struct AgentSubmitResultOutput {
     pub request_id: String,
     pub status: RequestStatus,
@@ -82,15 +83,35 @@ impl AgentSubmitResult {
         // 5. Verify execution is still active (or eligible for late completion)
         let is_late_completion = execution.status == ExecutionStatus::Failed
             && request.status == RequestStatus::ExecutionLost;
-        if execution.status != ExecutionStatus::Claimed && !is_late_completion {
-            return Err(AppError::Conflict(format!(
-                "execution is {:?}, cannot submit result",
-                execution.status
+        match execution.status {
+            ExecutionStatus::Claimed | ExecutionStatus::Running => {}
+            ExecutionStatus::Failed if is_late_completion => {}
+            ExecutionStatus::Completing => {
+                return Err(AppError::Conflict(
+                    "execution is already being completed".into(),
+                ));
+            }
+            _ => {
+                return Err(AppError::Conflict(
+                    "execution is not in a submittable state".into(),
+                ));
+            }
+        }
+
+        // 5b. Payload size check (before CAS to avoid leaving execution stuck in Completing)
+        if !request.no_result_store
+            && let Some(ref data) = input.result_data
+            && data.len() > self.max_persist_bytes
+        {
+            return Err(AppError::PayloadTooLarge(format!(
+                "result size {} exceeds limit {}",
+                data.len(),
+                self.max_persist_bytes
             )));
         }
 
-        // 6. Determine final status via status_machine
-        // (Cancelled, Complete) → Cancelled is handled by status_machine (ADR-003/004)
+        // 6. Determine final status via status_machine (before CAS — read-only, no state change)
+        // Moved here to avoid leaving execution stuck in Completing if transition fails.
         let now = self.clock.now();
         let result = status_machine::transition(
             request.status,
@@ -118,7 +139,7 @@ impl AgentSubmitResult {
 
         let new_request_status = result.status();
 
-        // 6b. Look up ResultPolicy for this database/environment
+        // 6b. Look up ResultPolicy (before CAS — read-only)
         let policy = self
             .policy_repo
             .find_result_policy(&request.database, &request.environment)?;
@@ -132,28 +153,51 @@ impl AgentSubmitResult {
             .map(|p| p.access.iter().collect())
             .unwrap_or_default();
 
-        // delivery_mode only applies to successful results; failures always store
         let should_store = !matches!(delivery_mode, dbward_domain::policies::DeliveryMode::Stream)
             || !input.success;
 
-        // 7. Store result to external storage (success results, or failure with partial data)
+        // 7. Acquire Completing state (CAS) — only the winner proceeds to storage write.
+        // For late-completion, refresh the lease since the original has already expired.
+        // For the normal path, extend only if the remaining lease is shorter than 300 seconds
+        // to give enough time for storage write + DB commit without shortening long leases.
+        let prior_status = execution.status;
+        let prior_finished_at = execution.finished_at;
+        let prior_lease_expires_at = execution.lease_expires_at;
+        let prior_error_message = execution.error_message.clone();
+        let completing_floor = self.clock.now() + chrono::Duration::seconds(300);
+        let new_lease = if is_late_completion || execution.lease_expires_at < completing_floor {
+            Some(completing_floor)
+        } else {
+            None
+        };
+        // WHY: if the original lease has already elapsed by the time we revert,
+        // restoring it verbatim would let lease reclaim immediately reclaim the
+        // execution before the agent can retry. Give a 60-second grace window.
+        let revert_lease =
+            prior_lease_expires_at.max(self.clock.now() + chrono::Duration::seconds(60));
+        let acquired = self.agent_repo.acquire_completing(
+            &input.execution_id,
+            is_late_completion,
+            new_lease,
+        )?;
+        if !acquired {
+            return Err(AppError::Conflict(
+                "execution is already being completed".into(),
+            ));
+        }
+
+        // 8. Store result to external storage (success results, or failure with partial data)
         let mut result_manifest: Option<ExecutionResult> = None;
         let data_len: u64;
         let has_result_data = !request.no_result_store && input.result_data.is_some();
         if (input.success || has_result_data) && !request.no_result_store {
             if let Some(data) = &input.result_data {
-                if data.len() > self.max_persist_bytes {
-                    return Err(AppError::PayloadTooLarge(format!(
-                        "result size {} exceeds limit {}",
-                        data.len(),
-                        self.max_persist_bytes
-                    )));
-                }
                 let storage_key = format!("{}/{}", execution.request_id, execution.id);
                 if should_store {
                     let stored_at = self.clock.now();
                     let expires_at = stored_at + chrono::Duration::days(retention_days as i64);
-                    self.result_store
+                    if let Err(e) = self
+                        .result_store
                         .put(
                             &storage_key,
                             data,
@@ -161,7 +205,24 @@ impl AgentSubmitResult {
                                 expires_at: Some(expires_at),
                             },
                         )
-                        .await?;
+                        .await
+                    {
+                        // Storage write failed — nothing was persisted. Revert to allow retry.
+                        if let Err(revert_err) = self.agent_repo.revert_completing(
+                            &input.execution_id,
+                            prior_status,
+                            prior_finished_at,
+                            revert_lease,
+                            prior_error_message.as_deref(),
+                        ) {
+                            tracing::warn!(
+                                execution_id = %input.execution_id,
+                                error = %revert_err,
+                                "revert_completing failed after storage PUT error; lease reclaim will recover"
+                            );
+                        }
+                        return Err(e);
+                    }
                 }
                 data_len = data.len() as u64;
                 let checksum = hex::encode(sha2::Sha256::digest(data));
@@ -200,7 +261,8 @@ impl AgentSubmitResult {
             let err_bytes = err_json.to_string().into_bytes();
             let stored_at = self.clock.now();
             let expires_at = stored_at + chrono::Duration::days(retention_days as i64);
-            self.result_store
+            if let Err(e) = self
+                .result_store
                 .put(
                     &storage_key,
                     &err_bytes,
@@ -208,7 +270,23 @@ impl AgentSubmitResult {
                         expires_at: Some(expires_at),
                     },
                 )
-                .await?;
+                .await
+            {
+                if let Err(revert_err) = self.agent_repo.revert_completing(
+                    &input.execution_id,
+                    prior_status,
+                    prior_finished_at,
+                    revert_lease,
+                    prior_error_message.as_deref(),
+                ) {
+                    tracing::warn!(
+                        execution_id = %input.execution_id,
+                        error = %revert_err,
+                        "revert_completing failed after storage PUT error; lease reclaim will recover"
+                    );
+                }
+                return Err(e);
+            }
             data_len = err_bytes.len() as u64;
             let checksum = hex::encode(sha2::Sha256::digest(&err_bytes));
             result_manifest = Some(ExecutionResult {
@@ -260,7 +338,7 @@ impl AgentSubmitResult {
             vec![]
         };
 
-        // 8. Atomically update execution + request status + audit + result manifest
+        // 9. Atomically update execution + request status + audit + result manifest
         let now = self.clock.now();
         let mut audit_event = AuditEvent::simple(
             if input.success {
@@ -325,7 +403,7 @@ impl AgentSubmitResult {
             &*self.uow,
             move |tx| {
                 use crate::ports::CompletionOutcome;
-                let exec_updated = tx.mark_completed(&exec_id, success, now)?;
+                let exec_updated = tx.mark_completed_from_completing(&exec_id, success, now)?;
                 if !exec_updated {
                     // Execution already completed/cancelled by concurrent request.
                     // Return Conflict to prevent compensation delete of winner's storage.
@@ -349,11 +427,17 @@ impl AgentSubmitResult {
         ) {
             Ok(v) => v,
             Err(AppError::Conflict(_)) => {
-                // Concurrent completion won — do NOT delete their stored result
+                // Lease reclaim beat us to completion — delete our orphaned storage.
+                // With Completing state, only we write to storage, so this is safe.
+                if let Some(ref rm) = result_manifest
+                    && !rm.storage_key.is_empty()
+                {
+                    let _ = self.result_store.delete(&rm.storage_key).await;
+                }
                 return Err(AppError::Conflict("execution already completed".into()));
             }
             Err(e) => {
-                // Compensate: delete orphaned storage object
+                // Compensate: delete orphaned storage object and revert execution state
                 if let Some(ref rm) = result_manifest {
                     if !rm.storage_key.is_empty()
                         && let Err(del_err) = self.result_store.delete(&rm.storage_key).await
@@ -365,6 +449,20 @@ impl AgentSubmitResult {
                     if let Err(del_err) = self.result_store.delete(&storage_key).await {
                         tracing::error!(key = %storage_key, error = %del_err, "compensation delete failed for error result");
                     }
+                }
+                // Revert Completing → prior state to allow retry
+                if let Err(revert_err) = self.agent_repo.revert_completing(
+                    &input.execution_id,
+                    prior_status,
+                    prior_finished_at,
+                    revert_lease,
+                    prior_error_message.as_deref(),
+                ) {
+                    tracing::warn!(
+                        execution_id = %input.execution_id,
+                        error = %revert_err,
+                        "revert_completing failed after UoW error; lease reclaim will recover"
+                    );
                 }
                 return Err(e);
             }
@@ -553,6 +651,24 @@ mod tests {
             Ok(())
         }
         fn extend_lease(&self, _: &str, _: DateTime<Utc>) -> Result<bool, AppError> {
+            Ok(true)
+        }
+        fn acquire_completing(
+            &self,
+            _: &str,
+            _: bool,
+            _: Option<DateTime<Utc>>,
+        ) -> Result<bool, AppError> {
+            Ok(true)
+        }
+        fn revert_completing(
+            &self,
+            _: &str,
+            _: ExecutionStatus,
+            _: Option<chrono::DateTime<chrono::Utc>>,
+            _: chrono::DateTime<chrono::Utc>,
+            _: Option<&str>,
+        ) -> Result<bool, AppError> {
             Ok(true)
         }
         fn find_dispatched_jobs(
@@ -1218,5 +1334,223 @@ mod tests {
         let original = event.metadata_json.clone();
         promote_migrate_result(&mut event, b"not json");
         assert_eq!(event.metadata_json, original);
+    }
+
+    // --- AUD-2: Completing state tests ---
+
+    /// FakeAgentRepo variant that returns false from acquire_completing
+    /// to simulate a concurrent submit race (loser path).
+    struct FakeAgentRepoAcquireFails {
+        execution: Mutex<Option<Execution>>,
+    }
+    impl AgentRepo for FakeAgentRepoAcquireFails {
+        fn get_execution(&self, _: &str) -> Result<Option<Execution>, AppError> {
+            Ok(self.execution.lock().unwrap().clone())
+        }
+        fn upsert(&self, _: &Agent) -> Result<(), AppError> {
+            Ok(())
+        }
+        fn get(&self, _: &str) -> Result<Option<Agent>, AppError> {
+            Ok(None)
+        }
+        fn list(&self) -> Result<Vec<Agent>, AppError> {
+            Ok(vec![])
+        }
+        fn create_execution(&self, _: &Execution) -> Result<(), AppError> {
+            Ok(())
+        }
+        fn update_execution_status(&self, _: &str, _: ExecutionStatus) -> Result<(), AppError> {
+            Ok(())
+        }
+        fn extend_lease(&self, _: &str, _: DateTime<Utc>) -> Result<bool, AppError> {
+            Ok(true)
+        }
+        fn acquire_completing(
+            &self,
+            _: &str,
+            _: bool,
+            _: Option<DateTime<Utc>>,
+        ) -> Result<bool, AppError> {
+            Ok(false) // Simulate: another request already won the CAS
+        }
+        fn revert_completing(
+            &self,
+            _: &str,
+            _: ExecutionStatus,
+            _: Option<chrono::DateTime<chrono::Utc>>,
+            _: chrono::DateTime<chrono::Utc>,
+            _: Option<&str>,
+        ) -> Result<bool, AppError> {
+            Ok(true)
+        }
+        fn find_dispatched_jobs(
+            &self,
+            _: &[(DatabaseName, Environment)],
+        ) -> Result<Vec<DomainRequest>, AppError> {
+            Ok(vec![])
+        }
+        fn has_running_migration(
+            &self,
+            _: &DatabaseName,
+            _: &Environment,
+            _: &str,
+        ) -> Result<bool, AppError> {
+            Ok(false)
+        }
+        fn find_executions_for_request(&self, _: &str) -> Result<Vec<Execution>, AppError> {
+            Ok(vec![])
+        }
+        fn claim_and_mark_running(
+            &self,
+            _: &Execution,
+            _: &str,
+            _: DateTime<Utc>,
+        ) -> Result<bool, AppError> {
+            Ok(true)
+        }
+        fn complete_execution(
+            &self,
+            _: &str,
+            _: &str,
+            _: bool,
+            _: DateTime<Utc>,
+            _: &AuditEvent,
+            _: Option<&ExecutionResult>,
+            _: &[ResultAccess],
+        ) -> Result<crate::ports::CompletionOutcome, AppError> {
+            Ok(crate::ports::CompletionOutcome::Normal)
+        }
+        fn find_expired_leases(&self, _: &str) -> Result<Vec<(String, String)>, AppError> {
+            Ok(vec![])
+        }
+        fn mark_execution_lost(&self, _: &str, _: &str, _: &str) -> Result<bool, AppError> {
+            Ok(true)
+        }
+        fn mark_execution_lost_and_record(
+            &self,
+            _: &str,
+            _: &str,
+            _: &AuditEvent,
+            _: &str,
+        ) -> Result<bool, AppError> {
+            Ok(true)
+        }
+        fn find_expired_results(&self, _: &str) -> Result<Vec<(String, String)>, AppError> {
+            Ok(vec![])
+        }
+        fn delete_result(&self, _: &str) -> Result<(), AppError> {
+            Ok(())
+        }
+    }
+
+    #[tokio::test]
+    async fn acquire_completing_fails_returns_conflict() {
+        // Simulates second concurrent submit: acquire_completing returns false
+        let uc = AgentSubmitResult {
+            authorizer: Arc::new(AllowAll),
+            agent_repo: Arc::new(FakeAgentRepoAcquireFails {
+                execution: Mutex::new(Some(make_execution(ExecutionStatus::Claimed))),
+            }),
+            request_reader: Arc::new(FakeRequestRepo {
+                request: Mutex::new(Some(make_request(RequestStatus::Running))),
+            }),
+            result_store: Arc::new(FakeResultStore {
+                stored: Mutex::new(vec![]),
+            }),
+            result_channel: Arc::new(FakeResultChannel),
+            notifier: Arc::new(NoopNotifier),
+            uow: Arc::new(crate::test_support::NoopUnitOfWork),
+            clock: Arc::new(FakeClock),
+            max_persist_bytes: 10 * 1024 * 1024,
+            policy_repo: Arc::new(FakePolicyRepo),
+            storage_backend: "local".into(),
+        };
+        let input = AgentSubmitResultInput {
+            execution_id: "exec-1".into(),
+            success: true,
+            result_data: Some(b"data".to_vec()),
+            error_message: None,
+            rows_affected: None,
+            duration_ms: None,
+        };
+        let err = uc
+            .execute(
+                input,
+                &agent_user(),
+                &dbward_domain::entities::AuditContext::System,
+            )
+            .await
+            .unwrap_err();
+        assert!(matches!(err, AppError::Conflict(_)));
+        // Verify: no storage write happened (loser never writes)
+        let _stored = uc.result_store.get_stream("req-1/exec-1").await;
+        // FakeResultStore always returns empty — the key point is put() was never called
+    }
+
+    #[tokio::test]
+    async fn completing_status_returns_conflict_before_cas() {
+        // If execution is already Completing, the status check rejects immediately
+        let uc = make_uc(ExecutionStatus::Completing, RequestStatus::Running);
+        let input = AgentSubmitResultInput {
+            execution_id: "exec-1".into(),
+            success: true,
+            result_data: None,
+            error_message: None,
+            rows_affected: None,
+            duration_ms: None,
+        };
+        let err = uc
+            .execute(
+                input,
+                &agent_user(),
+                &dbward_domain::entities::AuditContext::System,
+            )
+            .await
+            .unwrap_err();
+        assert!(matches!(err, AppError::Conflict(_)));
+    }
+
+    #[tokio::test]
+    async fn completing_error_message_does_not_leak_state() {
+        // Verify the error message doesn't contain "Completing" (internal state name)
+        let uc = make_uc(ExecutionStatus::Completing, RequestStatus::Running);
+        let input = AgentSubmitResultInput {
+            execution_id: "exec-1".into(),
+            success: true,
+            result_data: None,
+            error_message: None,
+            rows_affected: None,
+            duration_ms: None,
+        };
+        let err = uc
+            .execute(
+                input,
+                &agent_user(),
+                &dbward_domain::entities::AuditContext::System,
+            )
+            .await
+            .unwrap_err();
+        match err {
+            AppError::Conflict(msg) => {
+                assert!(
+                    !msg.contains("Completing"),
+                    "error message should not leak internal state: {msg}"
+                );
+                assert!(
+                    !msg.contains("completing"),
+                    "error message should not leak internal state: {msg}"
+                );
+            }
+            _ => panic!("expected Conflict"),
+        }
+    }
+
+    #[test]
+    fn as_api_str_maps_completing_to_running() {
+        assert_eq!(ExecutionStatus::Completing.as_api_str(), "running");
+        assert_eq!(ExecutionStatus::Claimed.as_api_str(), "claimed");
+        assert_eq!(ExecutionStatus::Running.as_api_str(), "running");
+        assert_eq!(ExecutionStatus::Completed.as_api_str(), "completed");
+        assert_eq!(ExecutionStatus::Failed.as_api_str(), "failed");
     }
 }

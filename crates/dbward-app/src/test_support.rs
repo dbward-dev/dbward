@@ -675,10 +675,17 @@ impl crate::ports::transaction::ExecutionWriterOps for NoopTxScope {
     ) -> Result<(), crate::error::AppError> {
         Ok(())
     }
-    fn mark_completed(
+    fn mark_completed_from_completing(
         &self,
         _: &str,
         _: bool,
+        _: chrono::DateTime<chrono::Utc>,
+    ) -> Result<bool, crate::error::AppError> {
+        Ok(true)
+    }
+    fn mark_failed_lease_expired(
+        &self,
+        _: &str,
         _: chrono::DateTime<chrono::Utc>,
     ) -> Result<bool, crate::error::AppError> {
         Ok(true)
@@ -1105,6 +1112,24 @@ impl crate::ports::AgentRepo for FakeAgentRepo {
         Ok(())
     }
     fn extend_lease(&self, _: &str, _: chrono::DateTime<chrono::Utc>) -> Result<bool, AppError> {
+        Ok(true)
+    }
+    fn acquire_completing(
+        &self,
+        _: &str,
+        _: bool,
+        _: Option<chrono::DateTime<chrono::Utc>>,
+    ) -> Result<bool, AppError> {
+        Ok(true)
+    }
+    fn revert_completing(
+        &self,
+        _: &str,
+        _: ExecutionStatus,
+        _: Option<chrono::DateTime<chrono::Utc>>,
+        _: chrono::DateTime<chrono::Utc>,
+        _: Option<&str>,
+    ) -> Result<bool, AppError> {
         Ok(true)
     }
     fn find_dispatched_jobs(

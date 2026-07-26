@@ -557,7 +557,7 @@ impl ExecutionWriterOps for SqliteTxScope<'_> {
         Ok(())
     }
 
-    fn mark_completed(
+    fn mark_completed_from_completing(
         &self,
         execution_id: &str,
         success: bool,
@@ -567,10 +567,25 @@ impl ExecutionWriterOps for SqliteTxScope<'_> {
         let n = self
             .conn
             .execute(
-                "UPDATE executions SET status = ?1, finished_at = ?2 WHERE id = ?3 AND status IN ('claimed', 'running')",
+                "UPDATE executions SET status = ?1, finished_at = ?2 WHERE id = ?3 AND status = 'completing'",
                 params![status, now.to_rfc3339(), execution_id],
             )
-            .map_err(db_err("tx: mark_execution_completed"))?;
+            .map_err(db_err("tx: mark_completed_from_completing"))?;
+        Ok(n > 0)
+    }
+
+    fn mark_failed_lease_expired(
+        &self,
+        execution_id: &str,
+        now: DateTime<Utc>,
+    ) -> Result<bool, AppError> {
+        let n = self
+            .conn
+            .execute(
+                "UPDATE executions SET status = 'failed', finished_at = ?1 WHERE id = ?2 AND status IN ('claimed', 'running', 'completing')",
+                params![now.to_rfc3339(), execution_id],
+            )
+            .map_err(db_err("tx: mark_failed_lease_expired"))?;
         Ok(n > 0)
     }
 }
