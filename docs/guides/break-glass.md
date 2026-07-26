@@ -83,9 +83,18 @@ If you need to execute emergency SQL while in an AI session, switch to a termina
 Break-glass permission is granted via roles. By default, only `admin` has it:
 
 ```toml
+# DML-only emergency role (SELECT emergencies require request.break_glass_query instead)
 [[auth.roles]]
 name = "oncall"
 permissions = ["request.break_glass_dml", "request.dml", "request.view"]
+```
+
+For SELECT and write emergencies combined:
+
+```toml
+[[auth.roles]]
+name = "oncall-full"
+permissions = ["request.break_glass_query", "request.break_glass_dml", "request.dml", "request.query", "request.view"]
 ```
 
 To also allow DDL bypass in emergencies:

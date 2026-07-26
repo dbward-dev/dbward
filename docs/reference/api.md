@@ -45,7 +45,7 @@ Most error responses follow this structure:
 
 Create a new SQL execution or migration request.
 
-Permission: `request.dml` | `request.query` | `request.ddl` | `request.break_glass_dml` (scoped by database/environment). DDL operations (DROP TABLE/VIEW/INDEX/SEQUENCE, TRUNCATE, CREATE SEQUENCE) require `request.ddl`. `allow_ddl=true` additionally requires `request.break_glass_ddl`.
+Permission: `request.dml` | `request.query` | `request.ddl` | `request.break_glass_query` (emergency SELECT) | `request.break_glass_dml` (emergency writes) — scoped by database/environment. DDL operations (DROP TABLE/VIEW/INDEX/SEQUENCE, TRUNCATE, CREATE SEQUENCE) require `request.ddl`. `allow_ddl=true` additionally requires `request.break_glass_ddl`.
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
