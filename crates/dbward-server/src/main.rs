@@ -110,8 +110,16 @@ fn run_reload(pid_arg: Option<u32>, config: &str) -> Result<(), Box<dyn std::err
         let mut content = String::new();
         std::fs::File::open(&pid_path)
             .and_then(|mut f| f.read_to_string(&mut content))
-            .map_err(|_| format!("cannot read PID file at {}. Use --pid to specify manually.", pid_path.display()))?;
-        content.trim().parse::<u32>().map_err(|_| "invalid PID in pid file")?
+            .map_err(|_| {
+                format!(
+                    "cannot read PID file at {}. Use --pid to specify manually.",
+                    pid_path.display()
+                )
+            })?;
+        content
+            .trim()
+            .parse::<u32>()
+            .map_err(|_| "invalid PID in pid file")?
     };
 
     let ret = unsafe { libc::kill(pid as libc::pid_t, libc::SIGHUP) };
@@ -119,7 +127,11 @@ fn run_reload(pid_arg: Option<u32>, config: &str) -> Result<(), Box<dyn std::err
         eprintln!("✅ Sent SIGHUP to server (PID {pid})");
         Ok(())
     } else {
-        Err(format!("failed to send SIGHUP to PID {pid}: {}", std::io::Error::last_os_error()).into())
+        Err(format!(
+            "failed to send SIGHUP to PID {pid}: {}",
+            std::io::Error::last_os_error()
+        )
+        .into())
     }
 }
 
