@@ -354,7 +354,7 @@ dbward execute "SELECT pg_terminate_backend(12345)" \
 - Agent picks up and executes when dispatched
 - Webhook fires `request.break_glass` event (🚨 in Slack)
 - Reason recorded in audit log
-- Operator only (requires `request.break_glass_*` permission)
+- Operator or admin (requires `request.break_glass_*` permission)
 
 ## MCP Async Approval
 

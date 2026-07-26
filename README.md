@@ -385,7 +385,7 @@ dbward execute "SELECT pg_terminate_backend(12345)" \
 - Skips approval — agent executes immediately when dispatched
 - Fires `request.break_glass` webhook (🚨 in Slack)
 - Reason recorded in audit log
-- **Operator role only** (requires `request.break_glass_dml` permission)
+- **Operator or admin role** (requires `request.break_glass_dml` permission)
 - **Not available via MCP** (AI agents cannot trigger break-glass)
 
 ## Configuration

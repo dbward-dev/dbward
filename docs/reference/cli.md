@@ -586,6 +586,9 @@ dbward-server reload --pid 12345
 
 **`dbward-server reload` options:**
 
+> `--config` is a top-level option and must be placed before the `reload` subcommand:
+> `dbward-server --config /path/to/server.toml reload`
+
 | Option | Default | Description |
 |--------|---------|-------------|
 | `--pid <PID>` | | PID of the server process (overrides PID file lookup) |
