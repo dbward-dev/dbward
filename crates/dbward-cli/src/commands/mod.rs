@@ -1,4 +1,3 @@
-mod agent;
 mod audit;
 mod auth;
 mod dev;
@@ -11,7 +10,6 @@ mod misc;
 mod policy;
 mod preflight;
 mod request;
-mod server;
 mod slack;
 mod token;
 mod user;
@@ -185,17 +183,6 @@ pub enum Command {
     Mcp,
     /// List registered databases
     Databases,
-    /// Start the dbward HTTP server
-    Server {
-        #[command(subcommand)]
-        action: server::ServerAction,
-    },
-    /// Start the dbward agent
-    Agent {
-        /// Path to agent config file
-        #[arg(long, default_value = "dbward-agent.toml")]
-        config: PathBuf,
-    },
     /// Start local dev server + agent
     Dev {
         #[arg(long)]
@@ -671,12 +658,6 @@ pub async fn run(
         return Ok(Some(outcome));
     }
 
-    // --- Server ---
-    if let Command::Server { ref action } = cli.command {
-        let outcome: crate::output::CliOutcome = server::run_server_command(action).await?.into();
-        return Ok(Some(outcome));
-    }
-
     // --- Self-update ---
     if let Command::SelfUpdate { latest } = cli.command {
         let outcome: crate::output::CliOutcome = self_update::run_self_update(
@@ -894,12 +875,6 @@ pub async fn run(
     // -----------------------------------------------------------------------
 
     match cli.command {
-        Command::Agent {
-            config: ref agent_config_path,
-        } => {
-            agent::run_agent(agent_config_path).await?;
-            Ok(None)
-        }
         Command::Dev {
             ref database_url,
             port,

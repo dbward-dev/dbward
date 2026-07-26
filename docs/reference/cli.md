@@ -561,33 +561,40 @@ dbward dev --database-url "postgres://localhost/myapp"
 
 ---
 
-## dbward server reload
+## Server and Agent binaries
 
-Send SIGHUP to a running server to reload configuration without restarting.
+The server and agent are separate binaries with their own CLIs.
+
+### dbward-server
 
 ```bash
-dbward server reload --server-config server.toml
-dbward server reload --pid 12345
+# Start the server
+dbward-server --config server.toml --listen 0.0.0.0:3000
+
+# Reload configuration (sends SIGHUP without restarting)
+dbward-server reload --config server.toml
+dbward-server reload --pid 12345
 ```
+
+**`dbward-server` options:**
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `--server-config <PATH>` | `dbward-server.toml` | Server config (to locate PID file) |
+| `--config <PATH>` | `dbward-server.toml` | Server config file |
+| `--listen <ADDR>` | `127.0.0.1:3000` | Listen address |
+| `--force-bootstrap` | false | Revoke existing bootstrap tokens and regenerate |
+
+**`dbward-server reload` options:**
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `--config <PATH>` | `dbward-server.toml` | Server config (to locate PID file) |
 | `--pid <PID>` | | PID of the server process (overrides PID file lookup) |
 
-> **Starting the server:** Use the `dbward-server` binary directly.
-> ```bash
-> dbward-server --config server.toml --listen 0.0.0.0:3000
-> ```
-
----
-
-## dbward agent
-
-Start the dbward agent.
+### dbward-agent
 
 ```bash
-dbward agent --config agent.toml
+dbward-agent --config agent.toml
 ```
 
 | Option | Default | Description |
