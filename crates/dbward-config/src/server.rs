@@ -795,6 +795,77 @@ pub enum AutoApproveDef {
     },
 }
 
+// ============================================================================
+// Validated workflow step types (output of validation)
+// ============================================================================
+
+/// Validated workflow step definition.
+///
+/// This is the output type after parsing and validating raw TOML steps.
+/// Used by both `ServerConfig` (after validation) and for conversion to domain types.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WorkflowStepDef {
+    pub mode: WorkflowStepModeDef,
+    pub approvers: Vec<ApproverDef>,
+}
+
+/// Workflow step approval mode.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WorkflowStepModeDef {
+    /// All approvers must approve.
+    All,
+    /// Any one approver is sufficient.
+    Any,
+}
+
+impl WorkflowStepModeDef {
+    /// Parse from string (case-insensitive).
+    pub fn from_str(s: &str) -> Option<Self> {
+        match s.to_lowercase().as_str() {
+            "all" => Some(Self::All),
+            "any" => Some(Self::Any),
+            _ => None,
+        }
+    }
+}
+
+/// Validated approver definition.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ApproverDef {
+    pub selector_type: ApproverSelectorType,
+    pub value: String,
+    pub min: Option<u32>,
+}
+
+/// Type of approver selector.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ApproverSelectorType {
+    Role,
+    Group,
+    User,
+}
+
+impl ApproverSelectorType {
+    /// Parse from string (case-insensitive).
+    pub fn from_str(s: &str) -> Option<Self> {
+        match s.to_lowercase().as_str() {
+            "role" => Some(Self::Role),
+            "group" => Some(Self::Group),
+            "user" => Some(Self::User),
+            _ => None,
+        }
+    }
+
+    /// Convert to string representation.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Role => "role",
+            Self::Group => "group",
+            Self::User => "user",
+        }
+    }
+}
+
 fn default_true() -> bool {
     true
 }
