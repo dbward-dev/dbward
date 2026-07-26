@@ -1,4 +1,5 @@
 use clap::{Parser, Subcommand};
+use std::path::PathBuf;
 
 #[derive(Parser)]
 #[command(
@@ -51,6 +52,15 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
+    /// Validate server configuration
+    Validate {
+        /// Path to server config file
+        #[arg(long, default_value = "dbward-server.toml")]
+        config: PathBuf,
+        /// Also check external connectivity (OIDC issuer, Slack API)
+        #[arg(long)]
+        preflight: bool,
+    },
     /// Send SIGHUP to a running server to reload configuration
     Reload {
         /// PID of the server process (reads from state_dir/server.pid if omitted)
@@ -64,12 +74,21 @@ async fn main() {
     let cli = Cli::parse();
 
     // Handle subcommands first
-    if let Some(Command::Reload { pid }) = cli.command {
-        if let Err(e) = run_reload(pid, &cli.config) {
-            eprintln!("Error: {e}");
-            std::process::exit(1);
+    match cli.command {
+        Some(Command::Validate { config, preflight }) => {
+            run_validate(&config, preflight).await;
+            return;
         }
-        return;
+        Some(Command::Reload { pid }) => {
+            if let Err(e) = run_reload(pid, &cli.config) {
+                eprintln!("Error: {e}");
+                std::process::exit(1);
+            }
+            return;
+        }
+        None => {
+            // Default: start server (continue below)
+        }
     }
 
     let result = dbward_server::run_from_args(
@@ -138,6 +157,179 @@ fn run_reload(pid_arg: Option<u32>, config: &str) -> Result<(), Box<dyn std::err
 #[cfg(not(unix))]
 fn run_reload(_pid_arg: Option<u32>, _config: &str) -> Result<(), Box<dyn std::error::Error>> {
     Err("server reload via SIGHUP is only supported on Unix".into())
+}
+
+/// Validate server configuration.
+///
+/// Runs static diagnostics (env vars, parse, semantic validation).
+/// With --preflight, also checks external connectivity (OIDC, Slack).
+async fn run_validate(config_path: &std::path::Path, preflight: bool) {
+    use dbward_config::validation::ValidationSeverity;
+
+    // Read config file
+    let raw_content = match std::fs::read_to_string(config_path) {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("[ERROR] failed to read config: {e}");
+            std::process::exit(1);
+        }
+    };
+
+    // Run static diagnostics
+    let result =
+        dbward_config::ServerConfig::diagnose_static(&raw_content, &config_path.display().to_string());
+
+    // Display issues
+    let mut error_count = 0;
+    let mut warning_count = 0;
+    for issue in &result.issues {
+        let prefix = match issue.severity {
+            ValidationSeverity::Error => {
+                error_count += 1;
+                "[ERROR]"
+            }
+            ValidationSeverity::Warning => {
+                warning_count += 1;
+                "[WARN]"
+            }
+        };
+        eprintln!("{} {}: {}", prefix, issue.id, issue.message);
+        if let Some(hint) = &issue.hint {
+            eprintln!("        hint: {hint}");
+        }
+    }
+
+    // Exit if static errors
+    if result.has_errors() {
+        eprintln!("\nConfig invalid ({error_count} error(s), {warning_count} warning(s)).");
+        if preflight {
+            eprintln!("Preflight checks skipped.");
+        }
+        std::process::exit(1);
+    }
+
+    let mut has_preflight_error = false;
+
+    // Runtime Preflight (--preflight only)
+    if preflight {
+        // Note: has_errors() == false implies config.is_some()
+        let cfg = result
+            .config
+            .as_ref()
+            .expect("BUG: no errors but config is None");
+
+        eprintln!("\n--- Preflight Checks ---");
+
+        // OIDC issuer check
+        if let Some(ref oidc) = cfg.auth.oidc {
+            match check_oidc_issuer(&oidc.issuer_url).await {
+                Ok(()) => eprintln!("[PASS] oidc_issuer: reachable"),
+                Err(e) => {
+                    eprintln!("[FAIL] oidc_issuer: {e}");
+                    has_preflight_error = true;
+                }
+            }
+        }
+
+        // Slack check
+        if let Some(ref slack) = cfg.slack {
+            match check_slack(slack).await {
+                Ok(msg) => eprintln!("[PASS] slack: {msg}"),
+                Err(e) => {
+                    eprintln!("[FAIL] slack: {e}");
+                    has_preflight_error = true;
+                }
+            }
+        }
+    }
+
+    // Final message and exit code
+    if has_preflight_error {
+        eprintln!("\nConfig valid, but preflight checks failed.");
+        std::process::exit(1);
+    } else if error_count == 0 && warning_count == 0 {
+        if preflight {
+            eprintln!("\nConfig valid, all preflight checks passed.");
+        } else {
+            eprintln!("Config valid.");
+        }
+    } else {
+        eprintln!("\nConfig valid with {warning_count} warning(s).");
+    }
+    std::process::exit(0);
+}
+
+/// Check OIDC issuer connectivity.
+async fn check_oidc_issuer(issuer_url: &str) -> Result<(), String> {
+    let well_known = format!(
+        "{}/.well-known/openid-configuration",
+        issuer_url.trim_end_matches('/')
+    );
+
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(10))
+        .build()
+        .map_err(|e| format!("failed to create HTTP client: {e}"))?;
+
+    let resp = client
+        .get(&well_known)
+        .send()
+        .await
+        .map_err(|e| format!("connection failed: {e}"))?;
+
+    if !resp.status().is_success() {
+        return Err(format!(
+            "HTTP {} from {}",
+            resp.status(),
+            well_known
+        ));
+    }
+
+    // Verify it's valid JSON with expected fields
+    let body: serde_json::Value = resp
+        .json()
+        .await
+        .map_err(|e| format!("invalid JSON response: {e}"))?;
+
+    if body.get("issuer").is_none() {
+        return Err("response missing 'issuer' field".to_string());
+    }
+
+    Ok(())
+}
+
+/// Check Slack connectivity (auth.test API).
+async fn check_slack(slack: &dbward_config::server::SlackConfig) -> Result<String, String> {
+    // Validate token format first
+    if !slack.bot_token.starts_with("xoxb-") || slack.bot_token.len() < 10 {
+        return Err("invalid bot_token format (expected xoxb-...)".to_string());
+    }
+
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(10))
+        .build()
+        .map_err(|e| format!("failed to create HTTP client: {e}"))?;
+
+    let resp = client
+        .post("https://slack.com/api/auth.test")
+        .bearer_auth(&slack.bot_token)
+        .send()
+        .await
+        .map_err(|e| format!("connection failed: {e}"))?;
+
+    let body: serde_json::Value = resp
+        .json()
+        .await
+        .map_err(|e| format!("invalid response: {e}"))?;
+
+    if body["ok"].as_bool() != Some(true) {
+        let error = body["error"].as_str().unwrap_or("unknown");
+        return Err(format!("Slack API error: {error}"));
+    }
+
+    let team = body["team"].as_str().unwrap_or("?");
+    let bot = body["user"].as_str().unwrap_or("?");
+    Ok(format!("team={team}, bot={bot}"))
 }
 
 #[cfg(test)]
