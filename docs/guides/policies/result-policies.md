@@ -20,7 +20,7 @@ delivery_mode = "both"
 access = ["role:admin", "role:requester"]
 ```
 
-Changes take effect on server restart or `dbward server reload`.
+Changes take effect on server restart or `dbward-server reload`.
 
 ## Fields
 

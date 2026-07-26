@@ -143,7 +143,7 @@ pub async fn run_from_args(
     std::fs::create_dir_all(&state_dir)?;
     let db_path = state_dir.join("dbward.db");
 
-    // Write PID file for `dbward server reload`
+    // Write PID file for `dbward-server reload`
     std::fs::write(state_dir.join("server.pid"), std::process::id().to_string())?;
 
     // Logging: apply config, with RUST_LOG env override taking precedence

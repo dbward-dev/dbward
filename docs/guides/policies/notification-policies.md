@@ -19,7 +19,7 @@ webhooks = ["ops-alerts"]
 events = ["request.created", "request.break_glass", "execution.completed"]
 ```
 
-Changes take effect on server restart or `dbward server reload`.
+Changes take effect on server restart or `dbward-server reload`.
 
 ## Fields
 
