@@ -6,13 +6,12 @@
 use regex::Regex;
 use std::sync::LazyLock;
 
-use crate::validation::{EnvVarIssueEntry, EnvVarIssueType, ValidationIssue, IssueContext};
+use crate::expand::ENV_VAR_PATTERN;
+use crate::validation::{EnvVarIssueEntry, EnvVarIssueType, IssueContext, ValidationIssue};
 
-/// Regex pattern for environment variable references: `${VAR}` or `${VAR:-default}`.
-static ENV_VAR_REF_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
-    // Matches ${VAR} but not ${VAR:-default} (which has a fallback)
-    Regex::new(r"\$\{([A-Za-z_][A-Za-z0-9_]*)(?::-[^}]*)?\}").unwrap()
-});
+/// Compiled regex for environment variable references, reusing the pattern from expand.rs.
+static ENV_VAR_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(ENV_VAR_PATTERN).expect("BUG: invalid ENV_VAR_PATTERN regex"));
 
 /// Sensitive variable name patterns (lowercase).
 const SENSITIVE_PATTERNS: &[&str] = &["token", "password", "secret", "key", "credential"];
@@ -30,9 +29,10 @@ pub fn audit_env_vars(raw_toml: &str) -> Vec<EnvVarIssueEntry> {
     let mut issues = Vec::new();
     let mut seen_vars: std::collections::HashSet<String> = std::collections::HashSet::new();
 
-    for cap in ENV_VAR_REF_PATTERN.captures_iter(raw_toml) {
-        let full_match = cap.get(0).unwrap().as_str();
+    for cap in ENV_VAR_RE.captures_iter(raw_toml) {
         let var_name = &cap[1];
+        // Check if this reference has a default value (capture group 2)
+        let has_default = cap.get(2).is_some();
 
         // Skip if we've already processed this variable
         if !seen_vars.insert(var_name.to_string()) {
@@ -40,7 +40,7 @@ pub fn audit_env_vars(raw_toml: &str) -> Vec<EnvVarIssueEntry> {
         }
 
         // Skip if this reference has a default value
-        if full_match.contains(":-") {
+        if has_default {
             continue;
         }
 
