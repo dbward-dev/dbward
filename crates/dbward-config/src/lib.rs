@@ -9,6 +9,7 @@ pub mod transport;
 pub mod validation;
 
 pub use agent::AgentConfig;
+pub use agent::AgentDiagnosticsResult;
 pub use client::ClientConfig;
 pub use error::ConfigError;
 pub use expand::{ENV_VAR_PATTERN, expand_env_vars, expand_toml_value};

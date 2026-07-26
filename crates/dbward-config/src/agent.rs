@@ -5,7 +5,9 @@ use std::path::Path;
 use serde::Deserialize;
 
 use crate::ConfigError;
+use crate::diagnostics::{audit_env_vars, env_issues_to_validation_issues};
 use crate::expand::expand_env_vars;
+use crate::validation::{ValidationIssue, ValidationSeverity};
 
 #[derive(Clone, Deserialize)]
 pub struct AgentConfig {
@@ -56,7 +58,111 @@ impl AgentConfig {
                 "at least 1 database must be configured".into(),
             ));
         }
+        // Validate db_url scheme for each database
+        for (db_name, envs) in &self.databases {
+            for (env_name, entry) in envs {
+                if !entry.url.starts_with("postgres://")
+                    && !entry.url.starts_with("postgresql://")
+                    && !entry.url.starts_with("mysql://")
+                {
+                    return Err(ConfigError::Validation(format!(
+                        "databases.{db_name}.{env_name}.url: unsupported scheme (expected postgres://, postgresql://, or mysql://)"
+                    )));
+                }
+            }
+        }
         Ok(())
+    }
+
+    // ========================================
+    // Diagnostics API (collect all issues)
+    // ========================================
+
+    /// Static diagnostics: all issues without early exit.
+    ///
+    /// Includes: env var audit + parse + semantic validation.
+    /// Used by: validate subcommand, doctor
+    ///
+    /// # Arguments
+    /// * `raw_content` - Raw TOML content (before env var expansion)
+    /// * `source` - Source identifier for error messages (e.g., file path)
+    pub fn diagnose_static(raw_content: &str, source: &str) -> AgentDiagnosticsResult {
+        let mut issues = Vec::new();
+
+        // Phase 1: Raw env var audit (before expansion)
+        let env_issues = audit_env_vars(raw_content);
+        issues.extend(env_issues_to_validation_issues(&env_issues));
+
+        // Phase 2: Expand env vars
+        let expanded = match expand_env_vars(raw_content) {
+            Ok(s) => s,
+            Err(e) => {
+                issues.push(ValidationIssue::error("env_expand", e.to_string()));
+                return AgentDiagnosticsResult {
+                    config: None,
+                    issues,
+                };
+            }
+        };
+
+        // Phase 3: Parse TOML
+        let cfg: Self = match toml::from_str(&expanded) {
+            Ok(c) => c,
+            Err(e) => {
+                issues.push(ValidationIssue::error(
+                    "toml_parse",
+                    format!("{source}: {e}"),
+                ));
+                return AgentDiagnosticsResult {
+                    config: None,
+                    issues,
+                };
+            }
+        };
+
+        // Phase 4: Semantic validation (collect issues)
+        cfg.validate_collecting(&mut issues);
+
+        AgentDiagnosticsResult {
+            config: Some(cfg),
+            issues,
+        }
+    }
+
+    /// Validate and collect issues (for diagnose_static).
+    fn validate_collecting(&self, issues: &mut Vec<ValidationIssue>) {
+        // server.url scheme validation
+        if !self.server.url.starts_with("http://") && !self.server.url.starts_with("https://") {
+            issues.push(ValidationIssue::error(
+                "server_url_scheme",
+                "server.url must have http or https scheme",
+            ));
+        }
+
+        // databases not empty
+        if self.databases.is_empty() {
+            issues.push(ValidationIssue::error(
+                "databases_not_empty",
+                "at least 1 database must be configured",
+            ));
+        }
+
+        // db_url scheme validation for each database
+        for (db_name, envs) in &self.databases {
+            for (env_name, entry) in envs {
+                if !entry.url.starts_with("postgres://")
+                    && !entry.url.starts_with("postgresql://")
+                    && !entry.url.starts_with("mysql://")
+                {
+                    issues.push(ValidationIssue::error(
+                        "db_url_scheme",
+                        format!(
+                            "databases.{db_name}.{env_name}.url: unsupported scheme (expected postgres://, postgresql://, or mysql://)"
+                        ),
+                    ));
+                }
+            }
+        }
     }
 
     pub fn agent_id(&self) -> String {
@@ -162,6 +268,43 @@ impl fmt::Debug for AgentServerConfig {
 #[derive(Debug, Clone, Deserialize)]
 pub struct DatabaseEntry {
     pub url: String,
+}
+
+// ---------------------------------------------------------------------------
+// Agent Diagnostics Result
+// ---------------------------------------------------------------------------
+
+/// Result of static configuration diagnostics for AgentConfig.
+///
+/// Contains both the parsed config (if parsing succeeded) and all validation issues.
+#[derive(Debug)]
+pub struct AgentDiagnosticsResult {
+    /// Parsed config, if TOML parsing and basic structure were valid.
+    /// May be `Some` even when there are semantic errors.
+    pub config: Option<AgentConfig>,
+    /// All validation issues (errors and warnings).
+    pub issues: Vec<ValidationIssue>,
+}
+
+impl AgentDiagnosticsResult {
+    /// Returns true if there are any Error-level issues.
+    pub fn has_errors(&self) -> bool {
+        self.issues
+            .iter()
+            .any(|i| i.severity == ValidationSeverity::Error)
+    }
+
+    /// Returns an iterator over Warning-level issues only.
+    pub fn warnings(&self) -> impl Iterator<Item = &ValidationIssue> {
+        self.issues
+            .iter()
+            .filter(|i| i.severity == ValidationSeverity::Warning)
+    }
+
+    /// Returns true if the config was successfully parsed.
+    pub fn is_parseable(&self) -> bool {
+        self.config.is_some()
+    }
 }
 
 #[cfg(test)]
@@ -296,5 +439,73 @@ url = "postgres://localhost/x"
 "#;
         let cfg = AgentConfig::from_str(toml, "test").unwrap();
         assert_eq!(cfg.startup_max_wait_secs(), 0);
+    }
+
+    // ========================================
+    // diagnose_static tests
+    // ========================================
+
+    #[test]
+    fn diagnose_static_valid_config() {
+        let toml = r#"
+[server]
+url = "http://localhost:8080"
+agent_token = "tok"
+
+[databases.db.dev]
+url = "postgres://localhost/x"
+"#;
+        let result = AgentConfig::diagnose_static(toml, "test");
+        assert!(result.is_parseable());
+        assert!(!result.has_errors());
+    }
+
+    #[test]
+    fn diagnose_static_collects_multiple_errors() {
+        let toml = r#"
+[server]
+url = "localhost:8080"
+agent_token = "tok"
+
+[databases]
+"#;
+        let result = AgentConfig::diagnose_static(toml, "test");
+        // Should parse but have errors
+        assert!(result.is_parseable());
+        assert!(result.has_errors());
+        // Should have at least two errors: server_url_scheme and databases_not_empty
+        let error_ids: Vec<_> = result
+            .issues
+            .iter()
+            .filter(|i| i.is_error())
+            .map(|i| i.id)
+            .collect();
+        assert!(error_ids.contains(&"server_url_scheme"));
+        assert!(error_ids.contains(&"databases_not_empty"));
+    }
+
+    #[test]
+    fn diagnose_static_parse_error() {
+        let toml = "[invalid toml syntax";
+        let result = AgentConfig::diagnose_static(toml, "test");
+        assert!(!result.is_parseable());
+        assert!(result.has_errors());
+        assert!(result.issues.iter().any(|i| i.id == "toml_parse"));
+    }
+
+    #[test]
+    fn diagnose_static_db_url_scheme_error() {
+        let toml = r#"
+[server]
+url = "http://localhost:8080"
+agent_token = "tok"
+
+[databases.db.dev]
+url = "invalid://localhost/x"
+"#;
+        let result = AgentConfig::diagnose_static(toml, "test");
+        assert!(result.is_parseable());
+        assert!(result.has_errors());
+        assert!(result.issues.iter().any(|i| i.id == "db_url_scheme"));
     }
 }
