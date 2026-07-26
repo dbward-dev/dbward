@@ -21,7 +21,7 @@ Stop accidents before they hit production. Add approval gates, audit trails, and
 - 🔍 **Preflight** — analyze SQL before submitting. Get risk level, EXPLAIN plan, review findings, and fix hints without creating a request. AI agents converge on safe SQL before asking for approval
 - 🧠 **Auto schema context** — the agent collects table structures, columns, FKs, and row counts automatically. AI tools access schema via MCP resources — no manual documentation needed
 - 💬 **Slack approvals** — approve/reject from Slack with one click. `dbward slack init` generates the app manifest
-- 🚨 **Break-glass** — emergency bypass with mandatory reason and audit. Admin-only, not available via MCP
+- 🚨 **Break-glass** — emergency bypass with mandatory reason and audit. Operator/admin only, not available via MCP
 - 🆓 **Core features free** — approval, audit, MCP, Slack, break-glass all included under [Apache-2.0](LICENSE-APACHE). Team features (OIDC, group auth) require a [commercial license](LICENSE-COMMERCIAL)
 
 ## Architecture
