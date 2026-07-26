@@ -370,10 +370,17 @@ impl dbward_app::ports::transaction::ExecutionWriterOps for NoopTxScope {
     ) -> Result<(), dbward_app::error::AppError> {
         Ok(())
     }
-    fn mark_completed(
+    fn mark_completed_from_completing(
         &self,
         _: &str,
         _: bool,
+        _: chrono::DateTime<chrono::Utc>,
+    ) -> Result<bool, dbward_app::error::AppError> {
+        Ok(true)
+    }
+    fn mark_failed_lease_expired(
+        &self,
+        _: &str,
         _: chrono::DateTime<chrono::Utc>,
     ) -> Result<bool, dbward_app::error::AppError> {
         Ok(true)

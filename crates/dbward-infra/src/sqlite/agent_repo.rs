@@ -173,6 +173,67 @@ impl AgentRepo for SqliteAgentRepo {
         Ok(n > 0)
     }
 
+    fn acquire_completing(
+        &self,
+        execution_id: &str,
+        is_late_completion: bool,
+        new_lease_expires_at: Option<DateTime<Utc>>,
+    ) -> Result<bool, AppError> {
+        let conn = self.conn.lock();
+        let n = if is_late_completion {
+            let expiry = new_lease_expires_at
+                .expect("new_lease_expires_at required for late-completion")
+                .to_rfc3339();
+            conn.execute(
+                "UPDATE executions SET status = 'completing', lease_expires_at = ?1, finished_at = NULL, error_message = NULL \
+                 WHERE id = ?2 AND status = 'failed'",
+                params![expiry, execution_id],
+            )
+            .map_err(db_err("agent: acquire_completing_late"))?
+        } else if let Some(expiry) = new_lease_expires_at {
+            conn.execute(
+                "UPDATE executions SET status = 'completing', lease_expires_at = ?1 \
+                 WHERE id = ?2 AND status IN ('claimed', 'running')",
+                params![expiry.to_rfc3339(), execution_id],
+            )
+            .map_err(db_err("agent: acquire_completing"))?
+        } else {
+            conn.execute(
+                "UPDATE executions SET status = 'completing' \
+                 WHERE id = ?1 AND status IN ('claimed', 'running')",
+                params![execution_id],
+            )
+            .map_err(db_err("agent: acquire_completing"))?
+        };
+        Ok(n > 0)
+    }
+
+    fn revert_completing(
+        &self,
+        execution_id: &str,
+        target_status: ExecutionStatus,
+        original_finished_at: Option<DateTime<Utc>>,
+        original_lease_expires_at: DateTime<Utc>,
+        original_error_message: Option<&str>,
+    ) -> Result<bool, AppError> {
+        let conn = self.conn.lock();
+        let status_str = execution_status_str(target_status);
+        let n = conn
+            .execute(
+                "UPDATE executions SET status = ?1, finished_at = ?2, lease_expires_at = ?3, error_message = ?4 \
+                 WHERE id = ?5 AND status = 'completing'",
+                params![
+                    status_str,
+                    original_finished_at.map(|t| t.to_rfc3339()),
+                    original_lease_expires_at.to_rfc3339(),
+                    original_error_message,
+                    execution_id
+                ],
+            )
+            .map_err(db_err("agent: revert_completing"))?;
+        Ok(n > 0)
+    }
+
     fn find_dispatched_jobs(
         &self,
         databases: &[(DatabaseName, Environment)],
@@ -439,7 +500,7 @@ impl AgentRepo for SqliteAgentRepo {
     fn find_expired_leases(&self, now: &str) -> Result<Vec<(String, String)>, AppError> {
         let conn = self.conn.lock();
         let mut stmt = conn.prepare(
-            "SELECT id, request_id FROM executions WHERE status IN ('claimed', 'running') AND datetime(lease_expires_at) < datetime(?1)"
+            "SELECT id, request_id FROM executions WHERE status IN ('claimed', 'running', 'completing') AND datetime(lease_expires_at) < datetime(?1)"
         ).map_err(db_err("agent: find_expired_leases"))?;
         let rows = stmt
             .query_map(rusqlite::params![now], |row| {
@@ -461,7 +522,7 @@ impl AgentRepo for SqliteAgentRepo {
             .unchecked_transaction()
             .map_err(db_err("agent: mark_execution_lost"))?;
         let n1 = tx.execute(
-            "UPDATE executions SET status = 'failed', finished_at = ?2 WHERE id = ?1 AND status IN ('claimed', 'running')",
+            "UPDATE executions SET status = 'failed', finished_at = ?2 WHERE id = ?1 AND status IN ('claimed', 'running', 'completing')",
             rusqlite::params![execution_id, now],
         ).map_err(db_err("agent: mark_execution_lost"))?;
         if n1 == 0 {
@@ -487,7 +548,7 @@ impl AgentRepo for SqliteAgentRepo {
             .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
             .map_err(db_err("agent: mark_execution_lost_and_record"))?;
         let n1 = tx.execute(
-            "UPDATE executions SET status = 'failed', finished_at = ?2 WHERE id = ?1 AND status IN ('claimed', 'running')",
+            "UPDATE executions SET status = 'failed', finished_at = ?2 WHERE id = ?1 AND status IN ('claimed', 'running', 'completing')",
             rusqlite::params![execution_id, now],
         ).map_err(db_err("agent: mark_execution_lost_and_record"))?;
         if n1 == 0 {
@@ -603,6 +664,7 @@ fn execution_status_str(s: ExecutionStatus) -> &'static str {
     match s {
         ExecutionStatus::Claimed => "claimed",
         ExecutionStatus::Running => "running",
+        ExecutionStatus::Completing => "completing",
         ExecutionStatus::Completed => "completed",
         ExecutionStatus::Failed => "failed",
     }
@@ -612,6 +674,7 @@ fn parse_execution_status(s: &str) -> Result<ExecutionStatus, AppError> {
     match s {
         "claimed" => Ok(ExecutionStatus::Claimed),
         "running" => Ok(ExecutionStatus::Running),
+        "completing" => Ok(ExecutionStatus::Completing),
         "completed" => Ok(ExecutionStatus::Completed),
         "failed" => Ok(ExecutionStatus::Failed),
         _ => Err(AppError::Internal(format!("unknown execution status: {s}"))),

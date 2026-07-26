@@ -35,23 +35,30 @@ pub(crate) async fn run_lease_reclaim_once(state: &AppState) -> TickResult {
         audit.resource_id = Some(exec_id.clone());
         let exec_id_owned = exec_id.clone();
         let req_id_owned = req_id.clone();
+        let should_notify = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let should_notify_tx = should_notify.clone();
         match bg.uow().execute(Box::new(move |tx| {
             // Mark execution as failed (lease expired)
-            let exec_updated = tx.mark_completed(&exec_id_owned, false, now)?;
+            let exec_updated = tx.mark_failed_lease_expired(&exec_id_owned, now)?;
             if !exec_updated {
                 return Ok(()); // already completed/cancelled, skip
             }
             // Revert request to execution_lost state
             let req_updated = tx.mark_execution_lost(&req_id_owned, now)?;
             if !req_updated {
-                return Ok(()); // request already cancelled/transitioned
+                // Execution failed but request was already execution_lost (e.g. late-completion path).
+                // Commit the execution update but suppress the webhook to avoid duplicate notification.
+                return Ok(());
             }
             tx.record(&audit)?;
+            should_notify_tx.store(true, std::sync::atomic::Ordering::Relaxed);
             Ok(())
         })) {
             Ok(()) => {
                 result.processed += 1;
-                emit_webhook(state, "execution.lost", &req_id);
+                if should_notify.load(std::sync::atomic::Ordering::Relaxed) {
+                    emit_webhook(state, "execution.lost", &req_id);
+                }
             }
             Err(e) => {
                 result.failed += 1;

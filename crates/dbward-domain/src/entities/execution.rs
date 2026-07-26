@@ -6,8 +6,27 @@ use serde::{Deserialize, Serialize};
 pub enum ExecutionStatus {
     Claimed,
     Running,
+    /// Internal transient state: CAS acquired, awaiting storage write + final commit.
+    /// Never exposed in external APIs (mapped to "running" via `as_api_str()`).
+    /// WARNING: Do not serialize `Execution` directly to API responses.
+    /// Always use `status.as_api_str()` for external-facing status strings.
+    Completing,
     Completed,
     Failed,
+}
+
+impl ExecutionStatus {
+    /// API-safe string representation. `Completing` is mapped to `"running"`
+    /// because it is an internal transient state not exposed to clients.
+    pub fn as_api_str(&self) -> &'static str {
+        match self {
+            Self::Claimed => "claimed",
+            Self::Running => "running",
+            Self::Completing => "running",
+            Self::Completed => "completed",
+            Self::Failed => "failed",
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

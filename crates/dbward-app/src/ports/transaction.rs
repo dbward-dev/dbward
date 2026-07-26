@@ -89,10 +89,19 @@ pub trait AuditWriterOps {
 /// Operations available on executions within a transaction.
 pub trait ExecutionWriterOps {
     fn insert_execution(&self, exec: &dbward_domain::entities::Execution) -> Result<(), AppError>;
-    fn mark_completed(
+    /// Final commit for agent submit: Completing → Completed/Failed.
+    /// Only succeeds if execution is currently in `Completing` state.
+    fn mark_completed_from_completing(
         &self,
         execution_id: &str,
         success: bool,
+        now: chrono::DateTime<chrono::Utc>,
+    ) -> Result<bool, AppError>;
+    /// Used by lease reclaim: force-fail an expired execution from any active state.
+    /// Transitions from Claimed/Running/Completing → Failed.
+    fn mark_failed_lease_expired(
+        &self,
+        execution_id: &str,
         now: chrono::DateTime<chrono::Utc>,
     ) -> Result<bool, AppError>;
 }

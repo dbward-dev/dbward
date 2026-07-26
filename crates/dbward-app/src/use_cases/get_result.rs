@@ -510,6 +510,24 @@ mod tests {
         fn extend_lease(&self, _: &str, _: DateTime<Utc>) -> Result<bool, AppError> {
             Ok(true)
         }
+        fn acquire_completing(
+            &self,
+            _: &str,
+            _: bool,
+            _: Option<DateTime<Utc>>,
+        ) -> Result<bool, AppError> {
+            Ok(true)
+        }
+        fn revert_completing(
+            &self,
+            _: &str,
+            _: ExecutionStatus,
+            _: Option<chrono::DateTime<chrono::Utc>>,
+            _: chrono::DateTime<chrono::Utc>,
+            _: Option<&str>,
+        ) -> Result<bool, AppError> {
+            Ok(true)
+        }
         fn find_dispatched_jobs(
             &self,
             _: &[(DatabaseName, Environment)],

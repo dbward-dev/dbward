@@ -553,7 +553,7 @@ pub async fn list_executions(
             let has_stored = stored_ids.contains(&e.id);
             json!({
                 "id": e.id,
-                "status": format!("{:?}", e.status).to_lowercase(),
+                "status": e.status.as_api_str(),
                 "agent_id": e.agent_id,
                 "created_at": e.created_at.to_rfc3339(),
                 "started_at": e.started_at.map(|t| t.to_rfc3339()),
