@@ -638,6 +638,19 @@ impl ServerConfig {
 
         // Auth connection (OIDC config fields)
         self.validate_auth_connection_collecting(issues);
+
+        // ========================================
+        // Warning-level checks
+        // ========================================
+
+        // Workflow coverage: check if all registered DB×env have a matching workflow
+        self.validate_workflow_coverage(issues);
+
+        // Workflow refs: check if workflow db/env references exist in databases
+        self.validate_workflow_refs(issues);
+
+        // SQL review safety: warn if destructive DDL rules are disabled in production
+        self.validate_sql_review_safety(issues);
     }
 
     fn validate_workflow_operations_overlap(&self, issues: &mut Vec<ValidationIssue>) {
@@ -1069,6 +1082,278 @@ impl ServerConfig {
                     "auth.oidc: at least one of client_id or audience must be non-empty",
                 ));
             }
+        }
+    }
+
+    // ========================================
+    // Warning-level checks (for diagnose_static)
+    // ========================================
+
+    /// Check if all registered DB×env pairs have a matching workflow.
+    /// Uncovered pairs will reject all requests (fail-closed).
+    fn validate_workflow_coverage(&self, issues: &mut Vec<ValidationIssue>) {
+        use crate::validation::CoverageEntry;
+
+        if self.databases.is_empty() || self.workflows.is_empty() {
+            return; // Other checks handle these cases
+        }
+
+        let mut coverage_entries = Vec::new();
+        let mut gap_count = 0usize;
+        let mut total_pairs = 0usize;
+
+        for db in &self.databases {
+            if db.name == "*" {
+                continue; // Skip wildcard databases
+            }
+            for env in &db.environments {
+                if env == "*" {
+                    continue; // Skip wildcard environments
+                }
+                total_pairs += 1;
+
+                // Find best matching workflow using specificity score
+                let matched = self
+                    .workflows
+                    .iter()
+                    .filter(|wf| {
+                        Self::workflow_covers_scope(
+                            wf.database.as_str(),
+                            wf.environment.as_str(),
+                            db.name.as_str(),
+                            env.as_str(),
+                        )
+                    })
+                    .max_by_key(|wf| {
+                        let mut score = 0u8;
+                        if wf.environment != "*" && wf.environment == *env {
+                            score += 4;
+                        }
+                        if wf.database != "*" && wf.database == db.name {
+                            score += 2;
+                        }
+                        score
+                    });
+
+                let (workflow_label, auto_approve_label) = match matched {
+                    Some(wf) => {
+                        let wf_label = format!("({},{})", wf.database, wf.environment);
+                        let aa_label = match &wf.auto_approve {
+                            Some(AutoApproveDef::Always) => Some("always".to_string()),
+                            Some(AutoApproveDef::RiskBased { risk, .. }) => {
+                                Some(format!("risk_based({risk})"))
+                            }
+                            None => None,
+                        };
+                        (Some(wf_label), aa_label)
+                    }
+                    None => {
+                        gap_count += 1;
+                        (None, None)
+                    }
+                };
+
+                coverage_entries.push(CoverageEntry {
+                    database: db.name.clone(),
+                    environment: env.clone(),
+                    workflow: workflow_label,
+                    auto_approve: auto_approve_label,
+                });
+            }
+        }
+
+        if gap_count > 0 && gap_count < total_pairs {
+            // Some but not all pairs are uncovered -> Warning
+            issues.push(
+                ValidationIssue::warning(
+                    "workflow_coverage",
+                    format!("{gap_count} of {total_pairs} DB×env pairs have no workflow"),
+                )
+                .with_hint("Uncovered pairs will reject all requests (fail-closed)")
+                .with_context(crate::validation::IssueContext::WorkflowCoverage(
+                    coverage_entries,
+                )),
+            );
+        } else if gap_count == total_pairs && total_pairs > 0 {
+            // All pairs uncovered -> Error (this is more serious)
+            issues.push(
+                ValidationIssue::error(
+                    "workflow_coverage",
+                    format!("all {gap_count} DB×env pairs have no workflow"),
+                )
+                .with_hint("Add [[workflows]] matching your databases")
+                .with_context(crate::validation::IssueContext::WorkflowCoverage(
+                    coverage_entries,
+                )),
+            );
+        }
+        // If gap_count == 0, all covered -> no issue
+    }
+
+    /// Check if a workflow pattern covers a specific (db, env) pair.
+    fn workflow_covers_scope(wf_db: &str, wf_env: &str, db: &str, env: &str) -> bool {
+        let db_match = wf_db == "*" || wf_db == db;
+        let env_match = wf_env == "*" || wf_env == env;
+        db_match && env_match
+    }
+
+    /// Check if workflow db/env references exist in registered databases.
+    /// Dead workflows (referencing non-existent db/env) are warnings unless all are dead.
+    fn validate_workflow_refs(&self, issues: &mut Vec<ValidationIssue>) {
+        use crate::validation::InvalidWorkflowEntry;
+
+        if self.workflows.is_empty() {
+            // No workflows defined -> Error (fail-closed)
+            issues.push(
+                ValidationIssue::error(
+                    "workflow_refs",
+                    "no workflows defined — all requests will be rejected (fail-closed)",
+                )
+                .with_hint("Add [[workflows]] sections"),
+            );
+            return;
+        }
+
+        // Build set of all registered (db, env) pairs
+        let mut registered_pairs: HashSet<(&str, &str)> = HashSet::new();
+        for db in &self.databases {
+            for env in &db.environments {
+                registered_pairs.insert((db.name.as_str(), env.as_str()));
+            }
+        }
+        let registered_dbs: HashSet<&str> =
+            self.databases.iter().map(|d| d.name.as_str()).collect();
+
+        let mut dead_entries = Vec::new();
+
+        for (i, wf) in self.workflows.iter().enumerate() {
+            // Wildcard db/env always valid
+            if wf.database == "*" && wf.environment == "*" {
+                continue;
+            }
+
+            let workflow_name = format!("({},{})", wf.database, wf.environment);
+
+            // Check database
+            if wf.database != "*" && !registered_dbs.contains(wf.database.as_str()) {
+                dead_entries.push(InvalidWorkflowEntry {
+                    workflow_index: i,
+                    workflow_name: workflow_name.clone(),
+                    reason: format!("database '{}' not registered", wf.database),
+                });
+                continue;
+            }
+
+            // Check environment (if both are concrete)
+            if wf.database != "*"
+                && wf.environment != "*"
+                && !registered_pairs.contains(&(wf.database.as_str(), wf.environment.as_str()))
+            {
+                dead_entries.push(InvalidWorkflowEntry {
+                    workflow_index: i,
+                    workflow_name,
+                    reason: format!(
+                        "environment '{}' not in database '{}'",
+                        wf.environment, wf.database
+                    ),
+                });
+                continue;
+            }
+
+            // workflow with db=* but env=concrete: check if ANY db has that env
+            if wf.database == "*" && wf.environment != "*" {
+                let env_exists = self
+                    .databases
+                    .iter()
+                    .any(|db| db.environments.iter().any(|e| e == &wf.environment));
+                if !env_exists {
+                    dead_entries.push(InvalidWorkflowEntry {
+                        workflow_index: i,
+                        workflow_name,
+                        reason: format!(
+                            "environment '{}' not found in any database",
+                            wf.environment
+                        ),
+                    });
+                }
+            }
+        }
+
+        if !dead_entries.is_empty() {
+            if dead_entries.len() == self.workflows.len() {
+                // All workflows are dead -> Error
+                issues.push(
+                    ValidationIssue::error(
+                        "workflow_refs",
+                        format!(
+                            "all {} workflows reference unregistered databases/environments",
+                            dead_entries.len()
+                        ),
+                    )
+                    .with_hint("Add [[databases]] for referenced databases")
+                    .with_context(crate::validation::IssueContext::InvalidWorkflows(
+                        dead_entries,
+                    )),
+                );
+            } else {
+                // Some workflows are dead -> Warning
+                let dead_names: Vec<_> = dead_entries
+                    .iter()
+                    .map(|e| format!("workflows[{}]", e.workflow_index))
+                    .collect();
+                issues.push(
+                    ValidationIssue::warning(
+                        "workflow_refs",
+                        format!("{} dead workflow(s): {}", dead_entries.len(), dead_names.join(", ")),
+                    )
+                    .with_context(crate::validation::IssueContext::InvalidWorkflows(
+                        dead_entries,
+                    )),
+                );
+            }
+        }
+    }
+
+    /// Warn if destructive DDL rules (drop_table, truncate) are disabled in production scope.
+    fn validate_sql_review_safety(&self, issues: &mut Vec<ValidationIssue>) {
+        use crate::validation::SqlReviewSafetyEntry;
+
+        let mut warnings = Vec::new();
+
+        for sr in &self.sql_review {
+            // Check if this is a production scope
+            if sr.environment == "*" || sr.environment.contains("prod") {
+                if sr.drop_table == "off" {
+                    warnings.push(SqlReviewSafetyEntry {
+                        database: sr.database.clone(),
+                        environment: sr.environment.clone(),
+                        rule: "drop_table=off".to_string(),
+                    });
+                }
+                if sr.truncate == "off" {
+                    warnings.push(SqlReviewSafetyEntry {
+                        database: sr.database.clone(),
+                        environment: sr.environment.clone(),
+                        rule: "truncate=off".to_string(),
+                    });
+                }
+            }
+        }
+
+        if !warnings.is_empty() {
+            issues.push(
+                ValidationIssue::warning(
+                    "sql_review_safety",
+                    format!(
+                        "{} dangerous sql_review setting(s) detected in production scope",
+                        warnings.len()
+                    ),
+                )
+                .with_hint(
+                    "Disabling drop_table or truncate rules in production reduces safety guarantees",
+                )
+                .with_context(crate::validation::IssueContext::SqlReviewSafety(warnings)),
+            );
         }
     }
 }
@@ -2172,6 +2457,149 @@ environment = "*"
             .issues
             .iter()
             .any(|i| i.id == "toml_parse"));
+    }
+
+    #[test]
+    fn diagnose_static_workflow_coverage_warning() {
+        // Database "app" has "dev" and "prod", but workflow only covers "*"+"dev"
+        let toml = test_cfg(
+            r#"
+[[databases]]
+name = "app"
+environments = ["dev", "prod"]
+
+[[workflows]]
+database = "*"
+environment = "dev"
+
+[workflows.auto_approve]
+mode = "always"
+"#,
+        );
+        let result = ServerConfig::diagnose_static(&toml, "test");
+        assert!(result.is_parseable());
+        // Should have a warning for uncovered "prod"
+        let warnings: Vec<_> = result.warnings().collect();
+        assert!(
+            warnings.iter().any(|w| w.id == "workflow_coverage"),
+            "expected workflow_coverage warning, got: {:?}",
+            warnings
+        );
+    }
+
+    #[test]
+    fn diagnose_static_workflow_refs_warning() {
+        // Workflow references non-existent database
+        let toml = test_cfg(
+            r#"
+[[databases]]
+name = "app"
+environments = ["dev"]
+
+[[workflows]]
+database = "nonexistent"
+environment = "*"
+
+[workflows.auto_approve]
+mode = "always"
+
+[[workflows]]
+database = "*"
+environment = "*"
+
+[workflows.auto_approve]
+mode = "always"
+"#,
+        );
+        let result = ServerConfig::diagnose_static(&toml, "test");
+        assert!(result.is_parseable());
+        // Should have a warning for dead workflow
+        let warnings: Vec<_> = result.warnings().collect();
+        assert!(
+            warnings.iter().any(|w| w.id == "workflow_refs"),
+            "expected workflow_refs warning, got: {:?}",
+            warnings
+        );
+    }
+
+    #[test]
+    fn diagnose_static_workflow_refs_all_dead_error() {
+        // All workflows reference non-existent databases -> Error
+        let toml = test_cfg(
+            r#"
+[[databases]]
+name = "app"
+environments = ["dev"]
+
+[[workflows]]
+database = "nonexistent"
+environment = "*"
+
+[workflows.auto_approve]
+mode = "always"
+"#,
+        );
+        let result = ServerConfig::diagnose_static(&toml, "test");
+        assert!(result.is_parseable());
+        // Should have an error since all workflows are dead
+        let errors: Vec<_> = result.issues.iter().filter(|i| i.is_error()).collect();
+        assert!(
+            errors.iter().any(|e| e.id == "workflow_refs"),
+            "expected workflow_refs error, got: {:?}",
+            errors
+        );
+    }
+
+    #[test]
+    fn diagnose_static_no_workflows_error() {
+        // No workflows defined -> Error
+        let toml = test_cfg(
+            r#"
+[[databases]]
+name = "app"
+environments = ["dev"]
+"#,
+        );
+        let result = ServerConfig::diagnose_static(&toml, "test");
+        assert!(result.is_parseable());
+        let errors: Vec<_> = result.issues.iter().filter(|i| i.is_error()).collect();
+        assert!(
+            errors.iter().any(|e| e.id == "workflow_refs"),
+            "expected workflow_refs error for no workflows, got: {:?}",
+            errors
+        );
+    }
+
+    #[test]
+    fn diagnose_static_sql_review_safety_warning() {
+        // Dangerous SQL review settings in production
+        let toml = test_cfg(
+            r#"
+[[databases]]
+name = "app"
+environments = ["production"]
+
+[[workflows]]
+database = "*"
+environment = "*"
+
+[workflows.auto_approve]
+mode = "always"
+
+[[sql_review]]
+environment = "production"
+drop_table = "off"
+truncate = "off"
+"#,
+        );
+        let result = ServerConfig::diagnose_static(&toml, "test");
+        assert!(result.is_parseable());
+        let warnings: Vec<_> = result.warnings().collect();
+        assert!(
+            warnings.iter().any(|w| w.id == "sql_review_safety"),
+            "expected sql_review_safety warning, got: {:?}",
+            warnings
+        );
     }
 }
 
