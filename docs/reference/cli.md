@@ -572,7 +572,7 @@ The server and agent are separate binaries with their own CLIs.
 dbward-server --config server.toml --listen 0.0.0.0:3000
 
 # Reload configuration (sends SIGHUP without restarting)
-dbward-server reload --config server.toml
+dbward-server --config server.toml reload
 dbward-server reload --pid 12345
 ```
 
@@ -588,7 +588,6 @@ dbward-server reload --pid 12345
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `--config <PATH>` | `dbward-server.toml` | Server config (to locate PID file) |
 | `--pid <PID>` | | PID of the server process (overrides PID file lookup) |
 
 ### dbward-agent
