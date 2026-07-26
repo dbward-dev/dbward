@@ -102,7 +102,7 @@ To also allow DDL bypass in emergencies:
 ```toml
 [[auth.roles]]
 name = "oncall-senior"
-permissions = ["request.break_glass_query", "request.break_glass_dml", "request.break_glass_ddl", "request.dml", "request.query", "request.view"]
+permissions = ["request.break_glass_query", "request.break_glass_dml", "request.break_glass_ddl", "request.ddl", "request.dml", "request.query", "request.view"]
 ```
 
 ## Limitations
