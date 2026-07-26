@@ -11,7 +11,7 @@ dbward uses role-based access control (RBAC) with database and environment scopi
 
 | Role | Permissions | Scope |
 |------|-------------|-------|
-| `admin` | `workflow.read`, `workflow.write`, `policy.write`, `role.write`, `user.read`, `user.write`, `webhook.write`, `token.create`, `token.revoke:any`, `token.list`, `token.create_agent`, `token.reissue`, `audit.read`, `metrics.view` | All |
+| `admin` | `*` (all permissions) | All |
 | `requester` | `request.dml`, `request.ddl`, `request.query`, `request.view:own`, `request.cancel:own`, `request.resume:own`, `request.preflight`, `request.preflight_explain`, `result.view:own`, `schema.read`, `workflow.read`, `token.create`, `token.revoke:own` | All |
 | `approver` | `request.view:own`, `result.view:own`, `schema.read`, `workflow.read`, `token.create`, `token.revoke:own` | All |
 | `operator` | `request.query`, `request.dml`, `request.ddl`, `request.view:any`, `request.cancel:any`, `request.resume:any`, `request.break_glass_query`, `request.break_glass_dml`, `request.break_glass_ddl`, `result.view:any`, `schema.read`, `audit.read`, `metrics.view`, `workflow.read`, `token.create`, `token.revoke:own` | All |
@@ -107,7 +107,8 @@ default_role = "requester"
 | `request.resume` | Resume approved requests |
 | `request.cancel` | Cancel own requests |
 | `request.view` | View requests and status |
-| `request.break_glass_dml` | Use emergency bypass (DML) |
+| `request.break_glass_query` | Use emergency bypass (SELECT only) |
+| `request.break_glass_dml` | Use emergency bypass (DML/writes) |
 | `request.break_glass_ddl` | Allow DDL in emergency mode (requires `request.break_glass_dml`) |
 | `request.preflight` | Run preflight SQL analysis |
 | `request.preflight_explain` | Run preflight with EXPLAIN |

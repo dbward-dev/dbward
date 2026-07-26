@@ -92,10 +92,10 @@ Config as Authority: TOML config becomes the sole source of truth for all policy
 
 ### Features
 
-- **Hot reload via SIGHUP**: Change `server.toml` and send SIGHUP (or `dbward server reload`) to apply without downtime. On failure, old config continues.
+- **Hot reload via SIGHUP**: Change `server.toml` and send SIGHUP (or `dbward-server reload`) to apply without downtime. On failure, old config continues.
 - **New TOML sections**: `[[result_policies]]`, `[[notification_policies]]`, `[[users]]`
 - **Safety guard**: Server rejects startup if DB has config-managed records but the corresponding TOML section is missing (prevents accidental data loss).
-- **`dbward server reload` CLI command**: Sends SIGHUP to running server for config hot reload.
+- **`dbward-server reload` CLI command**: Sends SIGHUP to running server for config hot reload.
 - **`allow_private_networks` config option**: Permits webhook URLs to internal/Docker hosts in dev environments.
 - **User suspend/activate warning**: Suspending a config-managed user shows a warning that status will revert on restart.
 - **`config_synced` audit event**: Recorded after every successful config sync.

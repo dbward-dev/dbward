@@ -26,7 +26,7 @@ trusted_proxies = ["10.0.0.0/8"]  # Trust X-Forwarded-For from these CIDRs
 
 ```toml
 [auth]
-# break-glass: users with request.break_glass_* permissions (operator role)
+# break-glass: users with request.break_glass_* permissions (operator or admin role)
 ```
 
 For OIDC setup, see [Authentication](../guides/authentication.md).

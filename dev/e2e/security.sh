@@ -51,9 +51,9 @@ echo ""
 echo "--- Role enforcement tests ---"
 
 if [ -n "$ADMIN_TOKEN" ]; then
-  # Admin cannot list requests (no request.view in new model)
+  # Admin can list requests (admin has all permissions)
   STATUS=$(api_status GET /api/requests "$ADMIN_TOKEN")
-  [ "$STATUS" = "403" ] && pass "Admin cannot list requests (no request.view)" || fail "Admin list" "got $STATUS"
+  [ "$STATUS" = "200" ] && pass "Admin can list requests (has all permissions)" || fail "Admin list" "got $STATUS"
 
   # Admin can CRUD policies/workflows
   STATUS=$(api_status GET /api/workflows "$ADMIN_TOKEN")
@@ -122,9 +122,9 @@ if [ -n "${OPERATOR_TOKEN:-}" ] && [ -n "$DEV_TOKEN" ]; then
     STATUS=$(api_status GET "/api/requests/$REQ_ID" "$OPERATOR_TOKEN")
     [ "$STATUS" = "200" ] && pass "Operator can see requester's request (request.view:Any)" || fail "Operator get dev request" "got $STATUS"
 
-    # Admin cannot see it (no request.view)
+    # Admin can see it (has all permissions including request.view:any)
     STATUS=$(api_status GET "/api/requests/$REQ_ID" "$ADMIN_TOKEN")
-    [ "$STATUS" = "403" ] && pass "Admin cannot see requester's request (no request.view)" || fail "Admin get dev request" "got $STATUS"
+    [ "$STATUS" = "200" ] && pass "Admin can see requester's request (has all permissions)" || fail "Admin get dev request" "got $STATUS"
   fi
 fi
 
@@ -132,12 +132,12 @@ fi
 echo ""
 echo "--- Break-glass boundary ---"
 
-# Admin alone cannot break-glass (no request.break_glass_*)
+# Admin can break-glass (has all permissions)
 ADMIN_ONLY_TOKEN=$(create_token "sec-admin-only" admin)
 if [ -n "$ADMIN_ONLY_TOKEN" ]; then
   STATUS=$(api_status POST /api/requests "$ADMIN_ONLY_TOKEN" \
     -d '{"operation":"execute_select","environment":"production","database":"app","detail":"SELECT 1","emergency":true,"reason":"admin emergency"}')
-  [ "$STATUS" = "403" ] && pass "Admin alone cannot break-glass (403)" || fail "Admin break-glass" "got $STATUS"
+  [ "$STATUS" = "201" ] && pass "Admin can break-glass (has all permissions)" || fail "Admin break-glass" "got $STATUS"
 fi
 
 # Operator alone can break-glass

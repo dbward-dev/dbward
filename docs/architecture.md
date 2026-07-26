@@ -39,7 +39,7 @@ description: System components and data flow
                │ Outbound HTTPS polling (no inbound needed)
                ▼
 ┌──────────────────────────────────────────────────────────┐
-│ Agent (dbward agent)                                     │
+│ Agent (dbward-agent)                                     │
 │   - ONLY component with DB credentials                   │
 │   - Polls server for dispatched jobs                     │
 │   - Claims + executes operations                         │
@@ -354,7 +354,7 @@ dbward execute "SELECT pg_terminate_backend(12345)" \
 - Agent picks up and executes when dispatched
 - Webhook fires `request.break_glass` event (🚨 in Slack)
 - Reason recorded in audit log
-- Operator only (requires `request.break_glass_*` permission)
+- Operator or admin (requires `request.break_glass_query` for SELECT, `request.break_glass_dml` for writes)
 
 ## MCP Async Approval
 
@@ -488,7 +488,7 @@ dbward mcp                      # MCP stdio server
 dbward-server --config server.toml        # HTTP server (auto-initializes on first run)
 dbward token create --subject <USER> --scope-roles <ROLE>
 dbward token revoke <ID>
-dbward agent --config <PATH>    # Start agent
+dbward-agent --config <PATH>   # Start agent
 ```
 
 ## Migration File Format (dbmate-compatible)

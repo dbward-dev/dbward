@@ -561,27 +561,42 @@ dbward dev --database-url "postgres://localhost/myapp"
 
 ---
 
-## dbward server start
+## Server and Agent binaries
 
-Start the dbward HTTP server (production).
+The server and agent are separate binaries with their own CLIs.
+
+### dbward-server
 
 ```bash
-dbward server start --config server.toml --listen 0.0.0.0:3000
+# Start the server
+dbward-server --config server.toml --listen 0.0.0.0:3000
+
+# Reload configuration (sends SIGHUP without restarting)
+dbward-server --config server.toml reload
+dbward-server reload --pid 12345
 ```
+
+**`dbward-server` options:**
 
 | Option | Default | Description |
 |--------|---------|-------------|
 | `--config <PATH>` | `dbward-server.toml` | Server config file |
 | `--listen <ADDR>` | `127.0.0.1:3000` | Listen address |
+| `--force-bootstrap` | false | Revoke existing bootstrap tokens and regenerate |
 
----
+**`dbward-server reload` options:**
 
-## dbward agent
+> `--config` is a top-level option and must be placed before the `reload` subcommand:
+> `dbward-server --config /path/to/server.toml reload`
 
-Start the dbward agent.
+| Option | Default | Description |
+|--------|---------|-------------|
+| `--pid <PID>` | | PID of the server process (overrides PID file lookup) |
+
+### dbward-agent
 
 ```bash
-dbward agent --config agent.toml
+dbward-agent --config agent.toml
 ```
 
 | Option | Default | Description |

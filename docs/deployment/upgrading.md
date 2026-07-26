@@ -38,17 +38,35 @@ services:
     # ...
 ```
 
-## Binary
+## Binary (systemd)
 
 ```bash
-# Update CLI
+# 1. Stop services (agent first to drain in-flight jobs, then server)
+systemctl stop dbward-agent
+systemctl stop dbward-server
+
+# 2. Update binaries (specify version, or omit for latest)
+DBWARD_VERSION=0.2.0 curl -fsSL https://dbward.dev/install.sh | sh
+
+# 3. Start services (server first — applies SQLite migrations on startup)
+systemctl start dbward-server
+systemctl start dbward-agent
+```
+
+> **Do not update binaries while services are running.** The install script overwrites files in place, which can corrupt a running process.
+
+**Install script options:**
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `DBWARD_VERSION` | latest | Pin to a specific version |
+| `DBWARD_INSTALL_DIR` | `/usr/local/bin` | Installation directory |
+| `DBWARD_COMPONENTS` | `all` | `all`, `cli`, or comma-separated list (`dbward-server,dbward-agent`) |
+
+**Update CLI on developer machines** (independent of server/agent):
+
+```bash
 dbward self-update
-
-# Restart server (applies SQLite migrations on startup)
-systemctl restart dbward-server
-
-# Restart agent (gracefully drains in-flight jobs)
-systemctl restart dbward-agent
 ```
 
 ## Checking for updates

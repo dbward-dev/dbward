@@ -677,7 +677,7 @@ pub enum LogFormat {
     Json,
 }
 
-#[derive(Debug, Deserialize, Default)]
+#[derive(Debug, Deserialize)]
 pub struct ResultStorageConfig {
     #[serde(default = "default_backend")]
     pub backend: String,
@@ -693,6 +693,23 @@ pub struct ResultStorageConfig {
     pub prefix: Option<String>,
     #[serde(default = "default_max_persist_bytes")]
     pub max_persist_bytes: usize,
+}
+
+impl Default for ResultStorageConfig {
+    fn default() -> Self {
+        Self {
+            backend: default_backend(),
+            root_dir: None,
+            bucket: None,
+            region: None,
+            endpoint: None,
+            access_key_id: None,
+            secret_access_key: None,
+            path_style: false,
+            prefix: default_result_prefix(),
+            max_persist_bytes: default_max_persist_bytes(),
+        }
+    }
 }
 
 fn default_backend() -> String {

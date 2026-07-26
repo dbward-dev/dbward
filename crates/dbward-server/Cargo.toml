@@ -44,6 +44,9 @@ hex = "0.4"
 subtle = "2"
 form_urlencoded = "1"
 
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
 [dev-dependencies]
 dbward-commercial-license = { path = "../../commercial/license" }
 tower = { version = "0.5", features = ["util"] }

@@ -342,6 +342,10 @@ no_where_delete = "block"
 no_where_update = "block"
 drop_table = "warn"
 
+# Result storage (local by default; use "s3" for production)
+[result_storage]
+backend = "local"
+
 "#
     )
 }
