@@ -107,7 +107,8 @@ default_role = "requester"
 | `request.resume` | Resume approved requests |
 | `request.cancel` | Cancel own requests |
 | `request.view` | View requests and status |
-| `request.break_glass_dml` | Use emergency bypass (DML) |
+| `request.break_glass_query` | Use emergency bypass (SELECT only) |
+| `request.break_glass_dml` | Use emergency bypass (DML/writes) |
 | `request.break_glass_ddl` | Allow DDL in emergency mode (requires `request.break_glass_dml`) |
 | `request.preflight` | Run preflight SQL analysis |
 | `request.preflight_explain` | Run preflight with EXPLAIN |
