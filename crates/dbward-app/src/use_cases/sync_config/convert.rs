@@ -1,4 +1,5 @@
 use dbward_config::server;
+use dbward_config::{ApproverDef, WorkflowStepDef, WorkflowStepModeDef};
 use dbward_domain::policies::{
     ApproverGroup, AutoApproveMode, AutoApproveSettings, Workflow, WorkflowStep, WorkflowStepMode,
 };
@@ -10,6 +11,36 @@ use super::{
     ResultPolicyInput, RoleInput, WebhookInput, WorkflowInput, WorkflowStepInput,
 };
 use crate::error::AppError;
+
+// ============================================================================
+// WorkflowStepDef → WorkflowStepInput conversion functions
+// ============================================================================
+
+/// Convert ApproverDef (config) to ApproverInput (app layer DTO).
+pub fn approver_def_to_input(def: &ApproverDef) -> ApproverInput {
+    let selector_type = def.selector_type.as_str().to_string();
+    ApproverInput {
+        selector_type,
+        value: def.value.clone(),
+        min: def.min.unwrap_or(1),
+    }
+}
+
+/// Convert WorkflowStepModeDef (config) to String for WorkflowStepInput.
+pub fn step_mode_to_input(mode: WorkflowStepModeDef) -> String {
+    match mode {
+        WorkflowStepModeDef::All => "all".to_string(),
+        WorkflowStepModeDef::Any => "any".to_string(),
+    }
+}
+
+/// Convert WorkflowStepDef (config) to WorkflowStepInput (app layer DTO).
+pub fn step_def_to_input(def: &WorkflowStepDef) -> WorkflowStepInput {
+    WorkflowStepInput {
+        mode: step_mode_to_input(def.mode),
+        approvers: def.approvers.iter().map(approver_def_to_input).collect(),
+    }
+}
 
 fn convert_auto_approve_def(
     def: &Option<server::AutoApproveDef>,
