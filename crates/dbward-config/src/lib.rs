@@ -15,7 +15,7 @@ pub use expand::{ENV_VAR_PATTERN, expand_env_vars, expand_toml_value};
 pub use merged::{MergedConfig, Source, global_config_dir, load_merged, scoped_credentials_path};
 pub use server::ServerConfig;
 pub use server::{
-    ApproverDef, ApproverSelectorType, WorkflowStepDef, WorkflowStepModeDef,
+    ApproverDef, ApproverSelectorType, DiagnosticsResult, WorkflowStepDef, WorkflowStepModeDef,
 };
 pub use validation::{
     CoverageEntry, DeadStepEntry, EnvVarIssueEntry, EnvVarIssueType, InvalidWorkflowEntry,

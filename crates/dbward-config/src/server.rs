@@ -4,7 +4,9 @@ use std::path::Path;
 use serde::Deserialize;
 
 use crate::ConfigError;
+use crate::diagnostics::{audit_env_vars, env_issues_to_validation_issues};
 use crate::expand::expand_env_vars;
+use crate::validation::{ValidationIssue, ValidationSeverity};
 
 #[derive(Debug, Deserialize)]
 pub struct ServerConfig {
@@ -523,11 +525,590 @@ impl ServerConfig {
 
         Ok(())
     }
+
+    // ========================================
+    // Diagnostics API (collect all issues)
+    // ========================================
+
+    /// Static diagnostics: all issues without early exit.
+    ///
+    /// Includes: env var audit + deprecated fields check + parse + semantic validation.
+    /// Used by: validate subcommand, doctor
+    ///
+    /// # Arguments
+    /// * `raw_content` - Raw TOML content (before env var expansion)
+    /// * `source` - Source identifier for error messages (e.g., file path)
+    pub fn diagnose_static(raw_content: &str, source: &str) -> DiagnosticsResult {
+        let mut issues = Vec::new();
+
+        // Phase 1: Raw env var audit (before expansion)
+        let env_issues = audit_env_vars(raw_content);
+        issues.extend(env_issues_to_validation_issues(&env_issues));
+
+        // Phase 2a: Expand env vars
+        let expanded = match expand_env_vars(raw_content) {
+            Ok(s) => s,
+            Err(e) => {
+                // Expansion error - add as issue and return early (can't parse)
+                issues.push(ValidationIssue::error("env_expand", e.to_string()));
+                return DiagnosticsResult {
+                    config: None,
+                    issues,
+                };
+            }
+        };
+
+        // Phase 2b: Check deprecated fields (collect as issues, don't fail)
+        if let Err(e) = check_deprecated_fields(&expanded, source) {
+            issues.push(ValidationIssue::error("deprecated_field", e.to_string()));
+            // Continue - we can still try to parse
+        }
+
+        // Phase 2c: Parse TOML
+        let cfg: Self = match toml::from_str(&expanded) {
+            Ok(c) => c,
+            Err(e) => {
+                issues.push(ValidationIssue::error(
+                    "toml_parse",
+                    format!("{source}: {e}"),
+                ));
+                return DiagnosticsResult {
+                    config: None,
+                    issues,
+                };
+            }
+        };
+
+        // Phase 3: Semantic validation (collect issues)
+        cfg.validate_collecting(&mut issues);
+
+        DiagnosticsResult {
+            config: Some(cfg),
+            issues,
+        }
+    }
+
+    /// Validate and collect issues (for diagnose_static).
+    /// This mirrors validate_common() but collects issues instead of failing fast.
+    fn validate_collecting(&self, issues: &mut Vec<ValidationIssue>) {
+        // retention.approval_ttl_secs
+        if self.retention.approval_ttl_secs == 0 {
+            issues.push(ValidationIssue::error(
+                "approval_ttl",
+                "retention.approval_ttl_secs must be > 0 (immediate expiry makes approval impossible)",
+            ));
+        }
+
+        // Workflow operations overlap
+        self.validate_workflow_operations_overlap(issues);
+
+        // Legacy [[auto_approve]] rejection
+        if !self.auto_approve.is_empty() {
+            issues.push(ValidationIssue::error(
+                "legacy_auto_approve",
+                "[[auto_approve]] is no longer supported. Move auto_approve settings into [workflows.auto_approve]. See: docs/guides/policies/auto-approve.md",
+            ));
+        }
+
+        // Workflow auto_approve validation
+        self.validate_workflow_auto_approve(issues);
+
+        // Webhook validation
+        self.validate_webhooks(issues);
+
+        // Notification policy validation
+        self.validate_notification_policies(issues);
+
+        // Result policy validation
+        self.validate_result_policies(issues);
+
+        // Execution policy validation
+        self.validate_execution_policies(issues);
+
+        // Auth validation
+        self.validate_auth(issues);
+
+        // SQL review validation
+        self.validate_sql_review(issues);
+
+        // OIDC role mappings (if OIDC is configured)
+        if self.auth.oidc.is_some() {
+            self.validate_oidc_role_mappings_collecting(issues);
+        }
+
+        // Auth connection (OIDC config fields)
+        self.validate_auth_connection_collecting(issues);
+    }
+
+    fn validate_workflow_operations_overlap(&self, issues: &mut Vec<ValidationIssue>) {
+        type ScopeEntries = Vec<(usize, Vec<String>)>;
+        let mut scope_ops: HashMap<(&str, &str), ScopeEntries> = HashMap::new();
+        for (i, wf) in self.workflows.iter().enumerate() {
+            scope_ops
+                .entry((wf.database.as_str(), wf.environment.as_str()))
+                .or_default()
+                .push((i, wf.operations.clone()));
+        }
+        for ((db, env), entries) in &scope_ops {
+            let has_catchall = entries.iter().any(|(_, ops)| ops.is_empty());
+            if has_catchall && entries.len() > 1 {
+                issues.push(ValidationIssue::error(
+                    "workflow_operations_overlap",
+                    format!(
+                        "workflow validation: database={db}, environment={env} has both catchall (operations omitted) and specific operations workflows — ambiguous"
+                    ),
+                ));
+            }
+            let mut seen: HashSet<&str> = HashSet::new();
+            for (idx, ops) in entries {
+                for op in ops {
+                    if !seen.insert(op.as_str()) {
+                        issues.push(ValidationIssue::error(
+                            "workflow_operations_overlap",
+                            format!(
+                                "workflow validation: operation '{op}' appears in multiple workflows for database={db}, environment={env} (workflow index {idx})"
+                            ),
+                        ));
+                    }
+                }
+            }
+        }
+    }
+
+    fn validate_workflow_auto_approve(&self, issues: &mut Vec<ValidationIssue>) {
+        for (i, wf) in self.workflows.iter().enumerate() {
+            if wf.auto_approve.is_none() && wf.steps.is_empty() {
+                issues.push(ValidationIssue::error(
+                    "workflow_missing_approval",
+                    format!("workflows[{i}]: must have [workflows.auto_approve], [[workflows.steps]], or both"),
+                ));
+            }
+            if let Some(AutoApproveDef::Always) = &wf.auto_approve
+                && !wf.steps.is_empty()
+            {
+                issues.push(ValidationIssue::error(
+                    "workflow_unreachable_steps",
+                    format!("workflows[{i}]: mode = \"always\" makes steps unreachable — remove [[workflows.steps]] or use mode = \"risk_based\""),
+                ));
+            }
+            if let Some(AutoApproveDef::RiskBased { risk, .. }) = &wf.auto_approve {
+                if wf.steps.is_empty() {
+                    issues.push(ValidationIssue::error(
+                        "workflow_missing_fallback",
+                        format!("workflows[{i}]: risk_based auto_approve without steps has no fallback — add [[workflows.steps]] or use mode = \"always\""),
+                    ));
+                }
+                if !["low", "medium", "high"].contains(&risk.as_str()) {
+                    issues.push(ValidationIssue::error(
+                        "workflow_invalid_risk",
+                        format!("workflows[{i}].auto_approve.risk: unknown value '{risk}' (expected: low, medium, high)"),
+                    ));
+                }
+            }
+        }
+    }
+
+    fn validate_webhooks(&self, issues: &mut Vec<ValidationIssue>) {
+        let id_re = regex::Regex::new(r"^[a-z0-9]([a-z0-9\-]*[a-z0-9])?$").unwrap();
+        let mut seen_ids: HashSet<&str> = HashSet::new();
+        for (i, wh) in self.webhooks.iter().enumerate() {
+            if wh.id.is_empty() {
+                let suggestion = slug_from_url(&wh.url);
+                issues.push(
+                    ValidationIssue::error(
+                        "webhook_id_missing",
+                        format!("webhooks[{i}] is missing required 'id' field"),
+                    )
+                    .with_hint(format!("suggested: id = \"{suggestion}\"")),
+                );
+            } else {
+                if wh.id.len() > 64 {
+                    issues.push(ValidationIssue::error(
+                        "webhook_id_too_long",
+                        format!("webhooks[{i}].id '{}' exceeds 64 characters", wh.id),
+                    ));
+                }
+                if !id_re.is_match(&wh.id) {
+                    issues.push(ValidationIssue::error(
+                        "webhook_id_format",
+                        format!("webhooks[{i}].id '{}' must match [a-z0-9][a-z0-9\\-]*", wh.id),
+                    ));
+                }
+                if !seen_ids.insert(wh.id.as_str()) {
+                    issues.push(ValidationIssue::error(
+                        "webhook_id_duplicate",
+                        format!("webhooks[{i}].id '{}' is duplicated", wh.id),
+                    ));
+                }
+            }
+        }
+    }
+
+    fn validate_notification_policies(&self, issues: &mut Vec<ValidationIssue>) {
+        let webhook_ids: HashSet<&str> = self.webhooks.iter().map(|w| w.id.as_str()).collect();
+        for (i, np) in self.notification_policies.iter().enumerate() {
+            for wh_id in &np.webhooks {
+                if !webhook_ids.contains(wh_id.as_str()) {
+                    issues.push(ValidationIssue::error(
+                        "notification_webhook_ref",
+                        format!(
+                            "notification_policies[{i}].webhooks: '{}' does not match any [[webhooks]].id",
+                            wh_id
+                        ),
+                    ));
+                }
+            }
+        }
+    }
+
+    fn validate_result_policies(&self, issues: &mut Vec<ValidationIssue>) {
+        for (i, rp) in self.result_policies.iter().enumerate() {
+            match rp.delivery_mode.as_str() {
+                "both" | "stream" => {}
+                other => {
+                    issues.push(ValidationIssue::error(
+                        "result_policy_delivery_mode",
+                        format!(
+                            "result_policies[{i}].delivery_mode: unknown value '{other}' (expected: both, stream)"
+                        ),
+                    ));
+                }
+            }
+        }
+    }
+
+    fn validate_execution_policies(&self, issues: &mut Vec<ValidationIssue>) {
+        for (i, ep) in self.execution_policies.iter().enumerate() {
+            if ep.max_executions == Some(0) {
+                issues.push(ValidationIssue::error(
+                    "execution_policy_max",
+                    format!("execution_policies[{i}]: max_executions must be >= 1"),
+                ));
+            }
+            if let (Some(st), Some(max_st)) =
+                (ep.statement_timeout_secs, ep.max_statement_timeout_secs)
+                && st > max_st
+            {
+                issues.push(ValidationIssue::error(
+                    "execution_policy_timeout",
+                    format!("execution_policies[{i}]: statement_timeout_secs must not exceed max_statement_timeout_secs"),
+                ));
+            }
+            if let (Some(mig_st), Some(max_st)) = (
+                ep.migration_statement_timeout_secs,
+                ep.max_statement_timeout_secs,
+            ) && mig_st > 0
+                && mig_st > max_st
+            {
+                issues.push(ValidationIssue::error(
+                    "execution_policy_migration_timeout",
+                    format!("execution_policies[{i}]: migration_statement_timeout_secs must not exceed max_statement_timeout_secs"),
+                ));
+            }
+        }
+    }
+
+    fn validate_auth(&self, issues: &mut Vec<ValidationIssue>) {
+        let builtin_roles: HashSet<&str> = [
+            "admin",
+            "requester",
+            "approver",
+            "operator",
+            "agent-default",
+        ]
+        .into_iter()
+        .collect();
+        let mut custom_role_names: HashSet<&str> = HashSet::new();
+
+        // Custom role definitions
+        for rc in &self.auth.roles {
+            if builtin_roles.contains(rc.name.as_str()) {
+                issues.push(ValidationIssue::error(
+                    "role_builtin_collision",
+                    format!("auth.roles: '{}' is a built-in role and cannot be redefined", rc.name),
+                ));
+            }
+            if !custom_role_names.insert(rc.name.as_str()) {
+                issues.push(ValidationIssue::error(
+                    "role_duplicate",
+                    format!("auth.roles: duplicate role name '{}'", rc.name),
+                ));
+            }
+            if rc.permissions.is_empty() {
+                issues.push(ValidationIssue::error(
+                    "role_no_permissions",
+                    format!("auth.roles[{}]: permissions cannot be empty", rc.name),
+                ));
+            }
+            for perm in &rc.permissions {
+                self.validate_permission(rc.name.as_str(), perm, issues);
+            }
+            for db in &rc.databases {
+                if db != "*" && dbward_domain::values::DatabaseName::new(db).is_err() {
+                    issues.push(ValidationIssue::error(
+                        "role_invalid_database",
+                        format!("auth.roles[{}]: invalid database name '{}'", rc.name, db),
+                    ));
+                }
+            }
+            for env in &rc.environments {
+                if env != "*" && dbward_domain::values::Environment::new(env).is_err() {
+                    issues.push(ValidationIssue::error(
+                        "role_invalid_environment",
+                        format!("auth.roles[{}]: invalid environment name '{}'", rc.name, env),
+                    ));
+                }
+            }
+        }
+
+        // Group definitions
+        let all_defined_roles: HashSet<&str> = builtin_roles
+            .iter()
+            .copied()
+            .chain(custom_role_names.iter().copied())
+            .collect();
+        let mut group_names: HashSet<&str> = HashSet::new();
+        for gc in &self.auth.groups {
+            if !group_names.insert(gc.name.as_str()) {
+                issues.push(ValidationIssue::error(
+                    "group_duplicate",
+                    format!("auth.groups: duplicate group name '{}'", gc.name),
+                ));
+            }
+            if gc.roles.is_empty() {
+                issues.push(ValidationIssue::error(
+                    "group_no_roles",
+                    format!("auth.groups[{}]: roles cannot be empty", gc.name),
+                ));
+            }
+            for role in &gc.roles {
+                if !all_defined_roles.contains(role.as_str()) {
+                    issues.push(ValidationIssue::error(
+                        "group_role_ref",
+                        format!(
+                            "auth.groups[{}]: role '{}' is not defined in auth.roles or built-in",
+                            gc.name, role
+                        ),
+                    ));
+                }
+            }
+        }
+
+        // default_role must reference defined roles
+        if let Some(ref default) = self.auth.default_role
+            && !all_defined_roles.contains(default.as_str())
+        {
+            issues.push(ValidationIssue::error(
+                "default_role_ref",
+                format!(
+                    "auth.default_role: role '{}' is not defined in auth.roles or built-in",
+                    default
+                ),
+            ));
+        }
+    }
+
+    fn validate_permission(&self, role_name: &str, perm: &str, issues: &mut Vec<ValidationIssue>) {
+        let (perm_part, ownership_part) = if let Some(idx) = perm.rfind(':') {
+            let (p, o) = perm.split_at(idx);
+            (p, Some(&o[1..]))
+        } else {
+            (perm, None)
+        };
+
+        let parsed = perm_part.parse::<dbward_domain::auth::Permission>();
+        if parsed.is_err() {
+            issues.push(ValidationIssue::error(
+                "role_unknown_permission",
+                format!("auth.roles[{}]: unknown permission '{}'", role_name, perm),
+            ));
+            return;
+        }
+
+        if let Some(ownership) = ownership_part {
+            if parsed.unwrap() == dbward_domain::auth::Permission::All {
+                issues.push(ValidationIssue::error(
+                    "role_permission_ownership",
+                    format!(
+                        "auth.roles[{}]: permission '*' cannot have an ownership suffix (it is implicitly 'any')",
+                        role_name
+                    ),
+                ));
+            } else if ownership != "own" && ownership != "any" {
+                issues.push(ValidationIssue::error(
+                    "role_invalid_ownership",
+                    format!(
+                        "auth.roles[{}]: invalid ownership '{}' in '{}' (expected 'own' or 'any')",
+                        role_name, ownership, perm
+                    ),
+                ));
+            }
+        }
+    }
+
+    fn validate_sql_review(&self, issues: &mut Vec<ValidationIssue>) {
+        let valid_actions = ["block", "warn", "off"];
+        let mut sr_scopes: HashSet<(String, String)> = HashSet::new();
+        for (i, sr) in self.sql_review.iter().enumerate() {
+            if sr.database == "any" || sr.environment == "any" {
+                issues.push(ValidationIssue::error(
+                    "sql_review_reserved",
+                    format!("sql_review[{i}]: 'any' is reserved (use '*' for wildcard)"),
+                ));
+            }
+            let scope = (sr.database.clone(), sr.environment.clone());
+            if !sr_scopes.insert(scope) {
+                issues.push(ValidationIssue::error(
+                    "sql_review_duplicate",
+                    format!(
+                        "sql_review[{i}]: duplicate scope (database='{}', environment='{}')",
+                        sr.database, sr.environment
+                    ),
+                ));
+            }
+            let rules: &[(&str, &str)] = &[
+                ("no_where_delete", &sr.no_where_delete),
+                ("no_where_update", &sr.no_where_update),
+                ("drop_table", &sr.drop_table),
+                ("drop_column", &sr.drop_column),
+                ("drop_index", &sr.drop_index),
+                ("drop_view", &sr.drop_view),
+                ("drop_sequence", &sr.drop_sequence),
+                ("create_sequence", &sr.create_sequence),
+                ("not_null_without_default", &sr.not_null_without_default),
+                ("create_index_not_concurrently", &sr.create_index_not_concurrently),
+                ("alter_column_type", &sr.alter_column_type),
+                ("truncate", &sr.truncate),
+                ("mixed_ddl_dml", &sr.mixed_ddl_dml),
+                ("large_in_list", &sr.large_in_list),
+            ];
+            for (field, value) in rules {
+                if !valid_actions.contains(value) {
+                    issues.push(ValidationIssue::error(
+                        "sql_review_invalid_action",
+                        format!(
+                            "sql_review[{i}].{field}: invalid value '{}' (expected: block, warn, off)",
+                            value
+                        ),
+                    ));
+                }
+            }
+        }
+    }
+
+    fn validate_oidc_role_mappings_collecting(&self, issues: &mut Vec<ValidationIssue>) {
+        let builtin_roles: HashSet<&str> = [
+            "admin",
+            "requester",
+            "approver",
+            "operator",
+            "agent-default",
+        ]
+        .into_iter()
+        .collect();
+        let custom: HashSet<&str> = self.auth.roles.iter().map(|r| r.name.as_str()).collect();
+        let all_roles: HashSet<&str> = builtin_roles
+            .iter()
+            .copied()
+            .chain(custom.iter().copied())
+            .collect();
+
+        if let Some(ref oidc) = self.auth.oidc {
+            for mapping in &oidc.role_mappings {
+                if !all_roles.contains(mapping.role.as_str()) {
+                    issues.push(ValidationIssue::error(
+                        "oidc_role_mapping_ref",
+                        format!(
+                            "auth.oidc.role_mappings: role '{}' is not defined in auth.roles or built-in",
+                            mapping.role
+                        ),
+                    ));
+                }
+            }
+        }
+    }
+
+    fn validate_auth_connection_collecting(&self, issues: &mut Vec<ValidationIssue>) {
+        if let Some(ref oidc) = self.auth.oidc {
+            let issuer = oidc.issuer_url.trim();
+            if issuer.is_empty() {
+                issues.push(ValidationIssue::error(
+                    "oidc_issuer_empty",
+                    "auth.oidc.issuer_url cannot be empty",
+                ));
+            } else if !issuer.starts_with("http://") && !issuer.starts_with("https://") {
+                issues.push(ValidationIssue::error(
+                    "oidc_issuer_scheme",
+                    format!("auth.oidc.issuer_url: must start with http:// or https://, got '{issuer}'"),
+                ));
+            }
+
+            if let Some(ref jwks) = oidc.jwks_uri {
+                let jwks_trimmed = jwks.trim();
+                if jwks_trimmed.is_empty() {
+                    issues.push(ValidationIssue::error(
+                        "oidc_jwks_empty",
+                        "auth.oidc.jwks_uri: cannot be empty (omit the field to use default)",
+                    ));
+                } else if !jwks_trimmed.starts_with("http://") && !jwks_trimmed.starts_with("https://") {
+                    issues.push(ValidationIssue::error(
+                        "oidc_jwks_scheme",
+                        format!("auth.oidc.jwks_uri: must start with http:// or https://, got '{jwks_trimmed}'"),
+                    ));
+                }
+            }
+
+            let has_client_id = oidc
+                .client_id
+                .as_deref()
+                .is_some_and(|s| !s.trim().is_empty());
+            let has_audience = !oidc.audience.trim().is_empty();
+            if !has_client_id && !has_audience {
+                issues.push(ValidationIssue::error(
+                    "oidc_no_audience",
+                    "auth.oidc: at least one of client_id or audience must be non-empty",
+                ));
+            }
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
-// Sub-types
+// Diagnostics Result
 // ---------------------------------------------------------------------------
+
+/// Result of static configuration diagnostics.
+///
+/// Contains both the parsed config (if parsing succeeded) and all validation issues.
+#[derive(Debug)]
+pub struct DiagnosticsResult {
+    /// Parsed config, if TOML parsing and basic structure were valid.
+    /// May be `Some` even when there are semantic errors.
+    pub config: Option<ServerConfig>,
+    /// All validation issues (errors and warnings).
+    pub issues: Vec<ValidationIssue>,
+}
+
+impl DiagnosticsResult {
+    /// Returns true if there are any Error-level issues.
+    pub fn has_errors(&self) -> bool {
+        self.issues
+            .iter()
+            .any(|i| i.severity == ValidationSeverity::Error)
+    }
+
+    /// Returns an iterator over Warning-level issues only.
+    pub fn warnings(&self) -> impl Iterator<Item = &ValidationIssue> {
+        self.issues
+            .iter()
+            .filter(|i| i.severity == ValidationSeverity::Warning)
+    }
+
+    /// Returns true if the config was successfully parsed.
+    pub fn is_parseable(&self) -> bool {
+        self.config.is_some()
+    }
+}
 
 #[derive(Debug, Deserialize)]
 pub struct RetentionConfig {
@@ -1527,6 +2108,70 @@ drop_tables = "block"
         );
         let err = ServerConfig::from_str(&toml, "test").unwrap_err();
         assert!(err.to_string().contains("unknown field"), "got: {}", err);
+    }
+
+    // ========================================
+    // diagnose_static tests
+    // ========================================
+
+    #[test]
+    fn diagnose_static_valid_config() {
+        let toml = test_cfg(
+            r#"
+[[databases]]
+name = "app"
+environments = ["dev"]
+
+[[workflows]]
+database = "*"
+environment = "*"
+
+[workflows.auto_approve]
+mode = "always"
+"#,
+        );
+        let result = ServerConfig::diagnose_static(&toml, "test");
+        assert!(result.is_parseable());
+        assert!(!result.has_errors());
+    }
+
+    #[test]
+    fn diagnose_static_collects_multiple_errors() {
+        let toml = test_cfg(
+            r#"
+[retention]
+approval_ttl_secs = 0
+
+[[workflows]]
+database = "*"
+environment = "*"
+"#,
+        );
+        let result = ServerConfig::diagnose_static(&toml, "test");
+        // Should parse but have errors
+        assert!(result.is_parseable());
+        assert!(result.has_errors());
+        // Should have at least two errors: approval_ttl and workflow missing approval
+        let error_ids: Vec<_> = result
+            .issues
+            .iter()
+            .filter(|i| i.is_error())
+            .map(|i| i.id)
+            .collect();
+        assert!(error_ids.contains(&"approval_ttl"));
+        assert!(error_ids.contains(&"workflow_missing_approval"));
+    }
+
+    #[test]
+    fn diagnose_static_parse_error() {
+        let toml = "state_dir = \"/tmp\"\n[invalid toml syntax";
+        let result = ServerConfig::diagnose_static(toml, "test");
+        assert!(!result.is_parseable());
+        assert!(result.has_errors());
+        assert!(result
+            .issues
+            .iter()
+            .any(|i| i.id == "toml_parse"));
     }
 }
 
