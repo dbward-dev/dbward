@@ -515,10 +515,16 @@ pub async fn run(
                 name.as_deref(),
                 expires.as_deref(),
                 role.as_deref(),
+                cli.yes,
+                cli.format,
             )
             .await?
             .into(),
-            token::TokenAction::Revoke { id } => token::run_token_revoke(&sc, id).await?.into(),
+            token::TokenAction::Revoke { id } => {
+                token::run_token_revoke(&sc, id, cli.yes, cli.format)
+                    .await?
+                    .into()
+            }
             token::TokenAction::Inspect { id } => token::run_token_inspect(&sc, id).await?.into(),
         };
         return Ok(Some(outcome));
@@ -538,7 +544,9 @@ pub async fn run(
 
         let outcome: crate::output::CliOutcome = match action {
             user::UserAction::Add { id, role, group } => {
-                user::run_user_add(&sc, id, role, group).await?.into()
+                user::run_user_add(&sc, id, role, group, cli.yes, cli.format)
+                    .await?
+                    .into()
             }
             user::UserAction::List => user::run_user_list(&sc).await?.into(),
             user::UserAction::Show { id } => user::run_user_show(&sc, id).await?.into(),
@@ -559,14 +567,28 @@ pub async fn run(
                 add_group,
                 rm_group,
                 slack_user_id.as_deref(),
+                cli.yes,
+                cli.format,
             )
             .await?
             .into(),
-            user::UserAction::Suspend { id } => user::run_user_suspend(&sc, id).await?.into(),
-            user::UserAction::Activate { id } => user::run_user_activate(&sc, id).await?.into(),
-            user::UserAction::Rm { id } => user::run_user_rm(&sc, id).await?.into(),
+            user::UserAction::Suspend { id } => {
+                user::run_user_suspend(&sc, id, cli.yes, cli.format)
+                    .await?
+                    .into()
+            }
+            user::UserAction::Activate { id } => {
+                user::run_user_activate(&sc, id, cli.yes, cli.format)
+                    .await?
+                    .into()
+            }
+            user::UserAction::Rm { id } => user::run_user_rm(&sc, id, cli.yes, cli.format)
+                .await?
+                .into(),
             user::UserAction::ReissueInitialToken { id } => {
-                user::run_user_reissue_token(&sc, id).await?.into()
+                user::run_user_reissue_token(&sc, id, cli.yes, cli.format)
+                    .await?
+                    .into()
             }
         };
         return Ok(Some(outcome));

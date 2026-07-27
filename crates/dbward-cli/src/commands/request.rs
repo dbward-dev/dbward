@@ -186,11 +186,13 @@ pub async fn run_request_cmd(
             comment,
             selector,
         } => {
+            confirm_or_reject(mode, yes)?;
             let resolved = resolve_request_id(sc, id).await?;
             let resp = run_approve(sc, &resolved, comment.as_deref(), selector.as_deref()).await?;
             Ok(resp.into())
         }
         RequestAction::Reject { id, reason } => {
+            confirm_or_reject(mode, yes)?;
             let resolved = resolve_request_id(sc, id).await?;
             let resp = run_reject(sc, &resolved, reason.as_deref()).await?;
             Ok(resp.into())
