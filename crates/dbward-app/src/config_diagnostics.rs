@@ -161,8 +161,9 @@ min = 0
             .collect();
 
         assert!(
-            errors.iter().any(|i| i.id == "workflow_step_validity"
-                && i.message.contains("min=0")),
+            errors
+                .iter()
+                .any(|i| i.id == "workflow_step_validity" && i.message.contains("min=0")),
             "Should have workflow_step_validity error for min=0. Errors: {:?}",
             errors
         );
@@ -249,10 +250,7 @@ min = 1
         assert!(result.config.is_none(), "Config should fail to parse");
         assert!(result.has_errors(), "Should have parse error");
         assert!(
-            result
-                .issues
-                .iter()
-                .any(|i| i.id == "toml_parse"),
+            result.issues.iter().any(|i| i.id == "toml_parse"),
             "Should have toml_parse error"
         );
     }

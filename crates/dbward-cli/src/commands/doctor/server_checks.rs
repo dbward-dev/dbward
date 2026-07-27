@@ -41,10 +41,7 @@ pub(super) fn run_server_mode(ctx: &mut DoctorContext, path: &std::path::Path) {
 
     // Emit workflow_step_validity pass if no such issues were recorded and config has steps
     if let Some(ref cfg) = result.config {
-        let has_step_issues = ctx
-            .results
-            .iter()
-            .any(|r| r.id == "workflow_step_validity");
+        let has_step_issues = ctx.results.iter().any(|r| r.id == "workflow_step_validity");
         let non_auto_workflows = cfg.workflows.iter().filter(|w| !w.steps.is_empty()).count();
         if !has_step_issues && non_auto_workflows > 0 {
             ctx.record(CheckResult {
@@ -80,24 +77,24 @@ fn convert_issues_to_results(ctx: &mut DoctorContext, issues: &[dbward_config::V
 
         // Build details from context if available
         let details = match &issue.context {
-            Some(IssueContext::WorkflowCoverage(entries)) => {
-                build_coverage_table(entries)
-            }
-            Some(IssueContext::InvalidWorkflows(entries)) => {
-                entries.iter()
-                    .map(|e| format!("workflows[{}] ({}): {}", e.workflow_index, e.workflow_name, e.reason))
-                    .collect()
-            }
-            Some(IssueContext::SqlReviewSafety(entries)) => {
-                entries.iter()
-                    .map(|e| format!("({}, {}): {}", e.database, e.environment, e.rule))
-                    .collect()
-            }
-            Some(IssueContext::EnvVarIssues(entries)) => {
-                entries.iter()
-                    .map(|e| format!("${{{}}}: {:?}", e.var_name, e.issue_type))
-                    .collect()
-            }
+            Some(IssueContext::WorkflowCoverage(entries)) => build_coverage_table(entries),
+            Some(IssueContext::InvalidWorkflows(entries)) => entries
+                .iter()
+                .map(|e| {
+                    format!(
+                        "workflows[{}] ({}): {}",
+                        e.workflow_index, e.workflow_name, e.reason
+                    )
+                })
+                .collect(),
+            Some(IssueContext::SqlReviewSafety(entries)) => entries
+                .iter()
+                .map(|e| format!("({}, {}): {}", e.database, e.environment, e.rule))
+                .collect(),
+            Some(IssueContext::EnvVarIssues(entries)) => entries
+                .iter()
+                .map(|e| format!("${{{}}}: {:?}", e.var_name, e.issue_type))
+                .collect(),
             _ => vec![],
         };
 
@@ -114,9 +111,9 @@ fn convert_issues_to_results(ctx: &mut DoctorContext, issues: &[dbward_config::V
 /// Build a coverage table from CoverageEntry items.
 fn build_coverage_table(entries: &[dbward_config::validation::CoverageEntry]) -> Vec<String> {
     use crate::display::{display_width, sanitize_table_cell, truncate_table_cell};
-    
+
     const COL_MAX: usize = 20;
-    
+
     if entries.is_empty() {
         return vec![];
     }
@@ -140,7 +137,7 @@ fn build_coverage_table(entries: &[dbward_config::validation::CoverageEntry]) ->
     }
 
     let mut lines = Vec::new();
-    
+
     // Header
     lines.push(format!(
         "{}  {}  {}  {}",
@@ -149,7 +146,7 @@ fn build_coverage_table(entries: &[dbward_config::validation::CoverageEntry]) ->
         pad_col(headers[2], widths[2]),
         pad_col(headers[3], widths[3]),
     ));
-    
+
     // Separator
     lines.push(format!(
         "{}  {}  {}  {}",
@@ -158,20 +155,26 @@ fn build_coverage_table(entries: &[dbward_config::validation::CoverageEntry]) ->
         "-".repeat(widths[2]),
         "-".repeat(widths[3]),
     ));
-    
+
     // Data rows
     for r in entries {
         let wf = r.workflow.as_deref().unwrap_or("✗ NO COVERAGE");
         let aa = r.auto_approve.as_deref().unwrap_or("—");
         lines.push(format!(
             "{}  {}  {}  {}",
-            pad_col(&truncate_table_cell(&sanitize_table_cell(&r.database), COL_MAX), widths[0]),
-            pad_col(&truncate_table_cell(&sanitize_table_cell(&r.environment), COL_MAX), widths[1]),
+            pad_col(
+                &truncate_table_cell(&sanitize_table_cell(&r.database), COL_MAX),
+                widths[0]
+            ),
+            pad_col(
+                &truncate_table_cell(&sanitize_table_cell(&r.environment), COL_MAX),
+                widths[1]
+            ),
             pad_col(&truncate_table_cell(wf, COL_MAX), widths[2]),
             pad_col(&truncate_table_cell(aa, COL_MAX), widths[3]),
         ));
     }
-    
+
     lines
 }
 
@@ -222,7 +225,12 @@ mode = "always"
 "#,
         );
         assert!(result.has_errors());
-        assert!(result.issues.iter().any(|i| i.id == "workflow_refs" && i.is_error()));
+        assert!(
+            result
+                .issues
+                .iter()
+                .any(|i| i.id == "workflow_refs" && i.is_error())
+        );
     }
 
     #[test]

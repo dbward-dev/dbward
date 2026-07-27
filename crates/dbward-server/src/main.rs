@@ -278,11 +278,7 @@ async fn check_oidc_issuer(issuer_url: &str) -> Result<(), String> {
         .map_err(|e| format!("connection failed: {e}"))?;
 
     if !resp.status().is_success() {
-        return Err(format!(
-            "HTTP {} from {}",
-            resp.status(),
-            well_known
-        ));
+        return Err(format!("HTTP {} from {}", resp.status(), well_known));
     }
 
     // Verify it's valid JSON with expected fields

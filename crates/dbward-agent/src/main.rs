@@ -100,8 +100,10 @@ async fn run_validate(config_path: &std::path::Path, preflight: bool) {
     };
 
     // Run static diagnostics
-    let result =
-        dbward_config::AgentConfig::diagnose_static(&raw_content, &config_path.display().to_string());
+    let result = dbward_config::AgentConfig::diagnose_static(
+        &raw_content,
+        &config_path.display().to_string(),
+    );
 
     // Display issues
     let mut error_count = 0;
@@ -192,19 +194,15 @@ async fn check_server_health(
         .build()
         .map_err(|e| format!("failed to create HTTP client: {e}"))?;
 
-    let resp = client
-        .get(&health_url)
-        .send()
-        .await
-        .map_err(|e| {
-            if e.is_timeout() {
-                "connection timed out".to_string()
-            } else if e.is_connect() {
-                "connection refused".to_string()
-            } else {
-                e.to_string()
-            }
-        })?;
+    let resp = client.get(&health_url).send().await.map_err(|e| {
+        if e.is_timeout() {
+            "connection timed out".to_string()
+        } else if e.is_connect() {
+            "connection refused".to_string()
+        } else {
+            e.to_string()
+        }
+    })?;
 
     if !resp.status().is_success() {
         return Err(format!("HTTP {}", resp.status()));
@@ -215,10 +213,7 @@ async fn check_server_health(
         .await
         .map_err(|e| format!("invalid response: {e}"))?;
 
-    let version = body["version"]
-        .as_str()
-        .unwrap_or("unknown")
-        .to_string();
+    let version = body["version"].as_str().unwrap_or("unknown").to_string();
 
     Ok(version)
 }

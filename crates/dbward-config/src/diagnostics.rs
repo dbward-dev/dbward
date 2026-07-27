@@ -96,7 +96,10 @@ pub fn env_issues_to_validation_issues(issues: &[EnvVarIssueEntry]) -> Vec<Valid
         result.push(
             ValidationIssue::error(
                 "env_var_undefined",
-                format!("environment variable ${{{0}}} is not defined", entry.var_name),
+                format!(
+                    "environment variable ${{{0}}} is not defined",
+                    entry.var_name
+                ),
             )
             .with_hint("Set the variable or use a default: ${VAR:-default}"),
         );
@@ -117,7 +120,9 @@ pub fn env_issues_to_validation_issues(issues: &[EnvVarIssueEntry]) -> Vec<Valid
     }
 
     // Add context if there are issues
-    if !issues.is_empty() && let Some(first) = result.first_mut() {
+    if !issues.is_empty()
+        && let Some(first) = result.first_mut()
+    {
         first.context = Some(IssueContext::EnvVarIssues(issues.to_vec()));
     }
 

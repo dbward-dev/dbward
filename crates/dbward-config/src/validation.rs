@@ -171,8 +171,7 @@ mod tests {
 
     #[test]
     fn test_with_hint() {
-        let issue =
-            ValidationIssue::error("test", "Error").with_hint("Try doing X instead");
+        let issue = ValidationIssue::error("test", "Error").with_hint("Try doing X instead");
         assert_eq!(issue.hint, Some("Try doing X instead".to_string()));
     }
 

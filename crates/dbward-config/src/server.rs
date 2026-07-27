@@ -240,8 +240,12 @@ impl ServerConfig {
         // Workflow auto_approve validation
         for (i, wf) in self.workflows.iter().enumerate() {
             // Count only supported step types (Unknown steps are ignored at runtime)
-            let supported_steps_count = wf.steps.iter().filter(|s| s.step_type.is_supported()).count();
-            
+            let supported_steps_count = wf
+                .steps
+                .iter()
+                .filter(|s| s.step_type.is_supported())
+                .count();
+
             if wf.auto_approve.is_none() && supported_steps_count == 0 {
                 return Err(ConfigError::Validation(format!(
                     "workflows[{i}]: must have [workflows.auto_approve], [[workflows.steps]], or both"
@@ -716,8 +720,12 @@ impl ServerConfig {
     fn validate_workflow_auto_approve(&self, issues: &mut Vec<ValidationIssue>) {
         for (i, wf) in self.workflows.iter().enumerate() {
             // Count only supported step types (Unknown steps are ignored at runtime)
-            let supported_steps_count = wf.steps.iter().filter(|s| s.step_type.is_supported()).count();
-            
+            let supported_steps_count = wf
+                .steps
+                .iter()
+                .filter(|s| s.step_type.is_supported())
+                .count();
+
             if wf.auto_approve.is_none() && supported_steps_count == 0 {
                 issues.push(ValidationIssue::error(
                     "workflow_missing_approval",
@@ -772,7 +780,10 @@ impl ServerConfig {
                 if !id_re.is_match(&wh.id) {
                     issues.push(ValidationIssue::error(
                         "webhook_id_format",
-                        format!("webhooks[{i}].id '{}' must match [a-z0-9][a-z0-9\\-]*", wh.id),
+                        format!(
+                            "webhooks[{i}].id '{}' must match [a-z0-9][a-z0-9\\-]*",
+                            wh.id
+                        ),
                     ));
                 }
                 if !seen_ids.insert(wh.id.as_str()) {
@@ -866,7 +877,10 @@ impl ServerConfig {
             if builtin_roles.contains(rc.name.as_str()) {
                 issues.push(ValidationIssue::error(
                     "role_builtin_collision",
-                    format!("auth.roles: '{}' is a built-in role and cannot be redefined", rc.name),
+                    format!(
+                        "auth.roles: '{}' is a built-in role and cannot be redefined",
+                        rc.name
+                    ),
                 ));
             }
             if !custom_role_names.insert(rc.name.as_str()) {
@@ -896,7 +910,10 @@ impl ServerConfig {
                 if env != "*" && dbward_domain::values::Environment::new(env).is_err() {
                     issues.push(ValidationIssue::error(
                         "role_invalid_environment",
-                        format!("auth.roles[{}]: invalid environment name '{}'", rc.name, env),
+                        format!(
+                            "auth.roles[{}]: invalid environment name '{}'",
+                            rc.name, env
+                        ),
                     ));
                 }
             }
@@ -1017,7 +1034,10 @@ impl ServerConfig {
                 ("drop_sequence", &sr.drop_sequence),
                 ("create_sequence", &sr.create_sequence),
                 ("not_null_without_default", &sr.not_null_without_default),
-                ("create_index_not_concurrently", &sr.create_index_not_concurrently),
+                (
+                    "create_index_not_concurrently",
+                    &sr.create_index_not_concurrently,
+                ),
                 ("alter_column_type", &sr.alter_column_type),
                 ("truncate", &sr.truncate),
                 ("mixed_ddl_dml", &sr.mixed_ddl_dml),
@@ -1080,7 +1100,9 @@ impl ServerConfig {
             } else if !issuer.starts_with("http://") && !issuer.starts_with("https://") {
                 issues.push(ValidationIssue::error(
                     "oidc_issuer_scheme",
-                    format!("auth.oidc.issuer_url: must start with http:// or https://, got '{issuer}'"),
+                    format!(
+                        "auth.oidc.issuer_url: must start with http:// or https://, got '{issuer}'"
+                    ),
                 ));
             }
 
@@ -1091,7 +1113,9 @@ impl ServerConfig {
                         "oidc_jwks_empty",
                         "auth.oidc.jwks_uri: cannot be empty (omit the field to use default)",
                     ));
-                } else if !jwks_trimmed.starts_with("http://") && !jwks_trimmed.starts_with("https://") {
+                } else if !jwks_trimmed.starts_with("http://")
+                    && !jwks_trimmed.starts_with("https://")
+                {
                     issues.push(ValidationIssue::error(
                         "oidc_jwks_scheme",
                         format!("auth.oidc.jwks_uri: must start with http:// or https://, got '{jwks_trimmed}'"),
@@ -1319,9 +1343,9 @@ impl ServerConfig {
                         ),
                     )
                     .with_hint("Add [[databases]] for referenced databases")
-                    .with_context(crate::validation::IssueContext::InvalidWorkflows(
-                        dead_entries,
-                    )),
+                    .with_context(
+                        crate::validation::IssueContext::InvalidWorkflows(dead_entries),
+                    ),
                 );
             } else {
                 // Some workflows are dead -> Warning
@@ -1332,11 +1356,15 @@ impl ServerConfig {
                 issues.push(
                     ValidationIssue::warning(
                         "workflow_refs",
-                        format!("{} dead workflow(s): {}", dead_entries.len(), dead_names.join(", ")),
+                        format!(
+                            "{} dead workflow(s): {}",
+                            dead_entries.len(),
+                            dead_names.join(", ")
+                        ),
                     )
-                    .with_context(crate::validation::IssueContext::InvalidWorkflows(
-                        dead_entries,
-                    )),
+                    .with_context(
+                        crate::validation::IssueContext::InvalidWorkflows(dead_entries),
+                    ),
                 );
             }
         }
@@ -2554,10 +2582,7 @@ environment = "*"
         let result = ServerConfig::diagnose_static(toml, "test");
         assert!(!result.is_parseable());
         assert!(result.has_errors());
-        assert!(result
-            .issues
-            .iter()
-            .any(|i| i.id == "toml_parse"));
+        assert!(result.issues.iter().any(|i| i.id == "toml_parse"));
     }
 
     #[test]
@@ -2721,7 +2746,10 @@ role = "admin"
 "#,
         );
         let cfg = ServerConfig::from_str(&toml, "test").unwrap();
-        assert_eq!(cfg.workflows[0].steps[0].step_type, WorkflowStepType::Approval);
+        assert_eq!(
+            cfg.workflows[0].steps[0].step_type,
+            WorkflowStepType::Approval
+        );
     }
 
     #[test]
@@ -2743,7 +2771,10 @@ role = "admin"
 "#,
         );
         let cfg = ServerConfig::from_str(&toml, "test").unwrap();
-        assert_eq!(cfg.workflows[0].steps[0].step_type, WorkflowStepType::Approval);
+        assert_eq!(
+            cfg.workflows[0].steps[0].step_type,
+            WorkflowStepType::Approval
+        );
         assert!(cfg.workflows[0].steps[0].step_type.is_supported());
     }
 
@@ -2772,18 +2803,20 @@ role = "admin"
         // Should parse successfully (auto_approve covers the workflow)
         let cfg = ServerConfig::from_str(&toml, "test").unwrap();
         assert!(!cfg.workflows[0].steps[0].step_type.is_supported());
-        
+
         // diagnose_static should produce a warning for unknown step type
         let result = ServerConfig::diagnose_static(&toml, "test");
         assert!(result.is_parseable());
         let warnings: Vec<_> = result.warnings().collect();
         assert!(
-            warnings.iter().any(|w| w.id == "workflow_step_type_unknown"),
+            warnings
+                .iter()
+                .any(|w| w.id == "workflow_step_type_unknown"),
             "expected workflow_step_type_unknown warning, got: {:?}",
             warnings
         );
     }
-    
+
     #[test]
     fn workflow_unknown_step_only_without_auto_approve_errors() {
         let toml = test_cfg(
