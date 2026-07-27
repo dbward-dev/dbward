@@ -44,7 +44,8 @@ pub fn diagnose_server_config(raw_content: &str, source: &str) -> DiagnosticsRes
 /// - min=0 approvers (must be >= 1)
 /// - Empty approvers list
 /// - Cross-step deadlocks (same user in multiple steps with allow_same_approver_across_steps=false)
-/// - Requester as approver (warning)
+/// - Duplicate selectors within a step (warning)
+/// - Role/group in multiple steps (warning if allow_same_approver_across_steps=false)
 fn validate_workflow_steps_domain(cfg: &ServerConfig) -> Vec<ValidationIssue> {
     let mut issues = Vec::new();
 

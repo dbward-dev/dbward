@@ -39,6 +39,24 @@ pub(super) fn run_server_mode(ctx: &mut DoctorContext, path: &std::path::Path) {
     // Convert ValidationIssues to CheckResults
     convert_issues_to_results(ctx, &result.issues);
 
+    // Emit workflow_step_validity pass if no such issues were recorded and config has steps
+    if let Some(ref cfg) = result.config {
+        let has_step_issues = ctx
+            .results
+            .iter()
+            .any(|r| r.id == "workflow_step_validity");
+        let non_auto_workflows = cfg.workflows.iter().filter(|w| !w.steps.is_empty()).count();
+        if !has_step_issues && non_auto_workflows > 0 {
+            ctx.record(CheckResult {
+                id: "workflow_step_validity",
+                status: Status::Pass,
+                message: format!("{non_auto_workflows} workflows with steps, all valid"),
+                hint: None,
+                details: vec![],
+            });
+        }
+    }
+
     // Record overall parse status
     if result.is_parseable() && !result.has_errors() {
         ctx.record(CheckResult {
