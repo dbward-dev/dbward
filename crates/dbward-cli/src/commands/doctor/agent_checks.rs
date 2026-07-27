@@ -65,9 +65,6 @@ pub(super) fn run_agent_mode(ctx: &mut DoctorContext, path: &std::path::Path) {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use std::time::Duration;
-
     fn diagnose(toml: &str) -> dbward_config::AgentDiagnosticsResult {
         dbward_config::AgentConfig::diagnose_static(toml, "test")
     }

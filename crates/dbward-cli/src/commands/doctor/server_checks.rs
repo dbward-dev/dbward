@@ -195,13 +195,8 @@ fn workflow_covers_scope(wf_db: &str, wf_env: &str, db: &str, env: &str) -> bool
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use std::time::Duration;
-
-    fn server_cfg(toml: &str) -> dbward_config::ServerConfig {
-        let full = format!("state_dir = \"/tmp/test\"\n{toml}");
-        dbward_config::ServerConfig::from_str(&full, "test").unwrap()
-    }
+    use dbward_app::config_diagnostics::diagnose_server_config;
+    use dbward_config::validation::ValidationSeverity;
 
     fn diagnose(toml: &str) -> dbward_config::DiagnosticsResult {
         let full = format!("state_dir = \"/tmp/test\"\n{toml}");
@@ -283,10 +278,7 @@ mode = "always"
 
     #[test]
     fn workflow_step_validity_via_diagnose() {
-        use dbward_app::config_diagnostics::diagnose_server_config;
-
-        let toml = format!(
-            r#"state_dir = "/tmp/test"
+        let toml = r#"state_dir = "/tmp/test"
 
 [[databases]]
 name = "app"
@@ -303,9 +295,8 @@ mode = "all"
 [[workflows.steps.approvers]]
 role = "approver"
 min = 1
-"#,
-        );
-        let result = diagnose_server_config(&toml, "test");
+"#;
+        let result = diagnose_server_config(toml, "test");
         // Should have no errors with valid step configuration
         assert!(result.config.is_some());
         assert!(
@@ -317,11 +308,7 @@ min = 1
 
     #[test]
     fn workflow_step_validity_detects_min_zero() {
-        use dbward_app::config_diagnostics::diagnose_server_config;
-        use dbward_config::validation::ValidationSeverity;
-
-        let toml = format!(
-            r#"state_dir = "/tmp/test"
+        let toml = r#"state_dir = "/tmp/test"
 
 [[databases]]
 name = "app"
@@ -338,9 +325,8 @@ mode = "all"
 [[workflows.steps.approvers]]
 role = "approver"
 min = 0
-"#,
-        );
-        let result = diagnose_server_config(&toml, "test");
+"#;
+        let result = diagnose_server_config(toml, "test");
         // Should have an error for min=0
         assert!(result.config.is_some());
         let errors: Vec<_> = result
