@@ -103,9 +103,9 @@ pub async fn run(
     };
 
     if let Some(path) = agent_config {
-        agent_checks::run_agent_mode(&mut ctx, &path).await;
+        agent_checks::run_agent_mode(&mut ctx, &path);
     } else if let Some(path) = server_config {
-        server_checks::run_server_mode(&mut ctx, &path).await;
+        server_checks::run_server_mode(&mut ctx, &path);
     } else {
         cli_checks::run_cli_mode(&mut ctx, config_path).await;
     }
@@ -229,30 +229,6 @@ pub(super) fn semver_gt(a: &str, b: &str) -> bool {
         )
     };
     parse(a) > parse(b)
-}
-
-/// Scope matching using domain types (same as runtime's workflow_matcher).
-pub(super) fn workflow_covers_scope(
-    wf_db: &str,
-    wf_env: &str,
-    req_db: &str,
-    req_env: &str,
-) -> bool {
-    use dbward_domain::values::{DatabaseName, Environment};
-    let Ok(policy_db) = DatabaseName::new(wf_db) else {
-        return false;
-    };
-    let Ok(policy_env) = Environment::new(wf_env) else {
-        return false;
-    };
-    let Ok(request_db) = DatabaseName::new(req_db) else {
-        return false;
-    };
-    let Ok(request_env) = Environment::new(req_env) else {
-        return false;
-    };
-    (policy_db.is_wildcard() || policy_db == request_db)
-        && (policy_env.is_wildcard() || policy_env == request_env)
 }
 
 pub(super) async fn check_server_health(

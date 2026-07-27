@@ -1,3 +1,4 @@
+pub mod config_diagnostics;
 pub mod error;
 pub mod ports;
 pub mod services;
