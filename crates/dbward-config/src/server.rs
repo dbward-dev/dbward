@@ -1763,16 +1763,7 @@ pub enum WorkflowStepModeDef {
     Any,
 }
 
-impl WorkflowStepModeDef {
-    /// Parse from string (case-insensitive).
-    pub fn from_str(s: &str) -> Option<Self> {
-        match s.to_lowercase().as_str() {
-            "all" => Some(Self::All),
-            "any" => Some(Self::Any),
-            _ => None,
-        }
-    }
-}
+// Note: WorkflowStepModeDef doesn't need from_str - serde handles deserialization.
 
 /// Validated approver definition.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1832,16 +1823,6 @@ pub enum ApproverSelectorType {
 }
 
 impl ApproverSelectorType {
-    /// Parse from string (case-insensitive).
-    pub fn from_str(s: &str) -> Option<Self> {
-        match s.to_lowercase().as_str() {
-            "role" => Some(Self::Role),
-            "group" => Some(Self::Group),
-            "user" => Some(Self::User),
-            _ => None,
-        }
-    }
-
     /// Convert to string representation.
     pub fn as_str(&self) -> &'static str {
         match self {

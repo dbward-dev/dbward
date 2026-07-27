@@ -199,8 +199,26 @@ async fn run_validate(config_path: &std::path::Path, preflight: bool) {
         }
     }
 
+    // Run domain-level workflow step validation (if config parsed successfully)
+    if let Some(ref cfg) = result.config {
+        let step_issues = validate_workflow_steps(cfg);
+        for (severity, message) in step_issues {
+            let prefix = match severity {
+                ValidationSeverity::Error => {
+                    error_count += 1;
+                    "[ERROR]"
+                }
+                ValidationSeverity::Warning => {
+                    warning_count += 1;
+                    "[WARN]"
+                }
+            };
+            eprintln!("{} workflow_step_validity: {}", prefix, message);
+        }
+    }
+
     // Exit if static errors
-    if result.has_errors() {
+    if error_count > 0 {
         eprintln!("\nConfig invalid ({error_count} error(s), {warning_count} warning(s)).");
         if preflight {
             eprintln!("Preflight checks skipped.");
@@ -330,6 +348,73 @@ async fn check_slack(slack: &dbward_config::server::SlackConfig) -> Result<Strin
     let team = body["team"].as_str().unwrap_or("?");
     let bot = body["user"].as_str().unwrap_or("?");
     Ok(format!("team={team}, bot={bot}"))
+}
+
+/// Validate workflow steps using domain-level validation (workflow_validator).
+///
+/// This checks for issues that aren't caught by config-level validation:
+/// - min=0 approvers
+/// - Empty approvers list
+/// - Cross-step deadlocks (same approver in multiple steps)
+/// - Requester in approvers (warning)
+fn validate_workflow_steps(
+    cfg: &dbward_config::ServerConfig,
+) -> Vec<(dbward_config::validation::ValidationSeverity, String)> {
+    use dbward_config::validation::ValidationSeverity;
+    use dbward_config::{ApproverSelectorType, WorkflowStepModeDef};
+    use dbward_domain::policies::workflow::{ApproverGroup, WorkflowStep, WorkflowStepMode};
+    use dbward_domain::services::workflow_validator;
+    use dbward_domain::values::Selector;
+
+    let mut issues = Vec::new();
+
+    for (wf_idx, wf) in cfg.workflows.iter().enumerate() {
+        if wf.steps.is_empty() {
+            continue; // auto-approve workflow, nothing to validate
+        }
+
+        // Convert WorkflowStepDef → WorkflowStep (domain type)
+        // Filter out unknown step types (they are reported separately as warnings)
+        let steps: Vec<WorkflowStep> = wf
+            .steps
+            .iter()
+            .filter(|step| step.step_type.is_supported())
+            .map(|step| {
+                let mode = match step.mode {
+                    WorkflowStepModeDef::All => WorkflowStepMode::All,
+                    WorkflowStepModeDef::Any => WorkflowStepMode::Any,
+                };
+                let approvers: Vec<ApproverGroup> = step
+                    .approvers
+                    .iter()
+                    .map(|a| {
+                        let selector = match a.selector_type {
+                            ApproverSelectorType::Role => Selector::Role(a.value.clone()),
+                            ApproverSelectorType::Group => Selector::Group(a.value.clone()),
+                            ApproverSelectorType::User => Selector::User(a.value.clone()),
+                        };
+                        ApproverGroup {
+                            selector,
+                            min: a.min.unwrap_or(1),
+                        }
+                    })
+                    .collect();
+                WorkflowStep { approvers, mode }
+            })
+            .collect();
+
+        let validator_issues =
+            workflow_validator::validate_steps(&steps, wf.allow_same_approver_across_steps);
+        for issue in validator_issues {
+            let severity = match issue.severity {
+                workflow_validator::Severity::Error => ValidationSeverity::Error,
+                workflow_validator::Severity::Warning => ValidationSeverity::Warning,
+            };
+            issues.push((severity, format!("workflows[{wf_idx}]: {}", issue.message)));
+        }
+    }
+
+    issues
 }
 
 #[cfg(test)]

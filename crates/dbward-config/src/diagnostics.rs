@@ -117,10 +117,8 @@ pub fn env_issues_to_validation_issues(issues: &[EnvVarIssueEntry]) -> Vec<Valid
     }
 
     // Add context if there are issues
-    if !issues.is_empty() {
-        if let Some(first) = result.first_mut() {
-            first.context = Some(IssueContext::EnvVarIssues(issues.to_vec()));
-        }
+    if !issues.is_empty() && let Some(first) = result.first_mut() {
+        first.context = Some(IssueContext::EnvVarIssues(issues.to_vec()));
     }
 
     result

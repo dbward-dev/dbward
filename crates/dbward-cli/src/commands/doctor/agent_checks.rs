@@ -51,18 +51,16 @@ pub(super) fn run_agent_mode(ctx: &mut DoctorContext, path: &std::path::Path) {
     }
 
     // Record overall parse status
-    if result.is_parseable() {
-        if !result.has_errors() {
-            ctx.record(CheckResult {
-                id: "config_valid",
-                status: Status::Pass,
-                message: format!("{}: configuration valid", path.display()),
-                hint: None,
-                details: vec![],
-            });
-        }
+    if result.is_parseable() && !result.has_errors() {
+        ctx.record(CheckResult {
+            id: "config_valid",
+            status: Status::Pass,
+            message: format!("{}: configuration valid", path.display()),
+            hint: None,
+            details: vec![],
+        });
     }
-    // Parse failure is already reported via issues
+    // Note: Parse failures are already reported via issues
 }
 
 #[cfg(test)]

@@ -37,19 +37,16 @@ pub(super) fn run_server_mode(ctx: &mut DoctorContext, path: &std::path::Path) {
     convert_issues_to_results(ctx, &result.issues);
 
     // Record overall parse status
-    if result.is_parseable() {
-        if !result.has_errors() {
-            ctx.record(CheckResult {
-                id: "config_valid",
-                status: Status::Pass,
-                message: format!("{}: configuration valid", path.display()),
-                hint: None,
-                details: vec![],
-            });
-        }
-    } else {
-        // Parse failed - this is already reported via issues
+    if result.is_parseable() && !result.has_errors() {
+        ctx.record(CheckResult {
+            id: "config_valid",
+            status: Status::Pass,
+            message: format!("{}: configuration valid", path.display()),
+            hint: None,
+            details: vec![],
+        });
     }
+    // Note: Parse failures are already reported via issues
 
     // Run additional step validity checks that require domain-level validation
     // (workflow_validator from dbward-domain)
