@@ -239,13 +239,16 @@ impl ServerConfig {
 
         // Workflow auto_approve validation
         for (i, wf) in self.workflows.iter().enumerate() {
-            if wf.auto_approve.is_none() && wf.steps.is_empty() {
+            // Count only supported step types (Unknown steps are ignored at runtime)
+            let supported_steps_count = wf.steps.iter().filter(|s| s.step_type.is_supported()).count();
+            
+            if wf.auto_approve.is_none() && supported_steps_count == 0 {
                 return Err(ConfigError::Validation(format!(
                     "workflows[{i}]: must have [workflows.auto_approve], [[workflows.steps]], or both"
                 )));
             }
             if let Some(AutoApproveDef::Always) = &wf.auto_approve
-                && !wf.steps.is_empty()
+                && supported_steps_count > 0
             {
                 return Err(ConfigError::Validation(format!(
                     "workflows[{i}]: mode = \"always\" makes steps unreachable — \
@@ -253,7 +256,7 @@ impl ServerConfig {
                 )));
             }
             if let Some(AutoApproveDef::RiskBased { risk, .. }) = &wf.auto_approve {
-                if wf.steps.is_empty() {
+                if supported_steps_count == 0 {
                     return Err(ConfigError::Validation(format!(
                         "workflows[{i}]: risk_based auto_approve without steps has no fallback — \
                          add [[workflows.steps]] or use mode = \"always\""
@@ -712,14 +715,17 @@ impl ServerConfig {
 
     fn validate_workflow_auto_approve(&self, issues: &mut Vec<ValidationIssue>) {
         for (i, wf) in self.workflows.iter().enumerate() {
-            if wf.auto_approve.is_none() && wf.steps.is_empty() {
+            // Count only supported step types (Unknown steps are ignored at runtime)
+            let supported_steps_count = wf.steps.iter().filter(|s| s.step_type.is_supported()).count();
+            
+            if wf.auto_approve.is_none() && supported_steps_count == 0 {
                 issues.push(ValidationIssue::error(
                     "workflow_missing_approval",
                     format!("workflows[{i}]: must have [workflows.auto_approve], [[workflows.steps]], or both"),
                 ));
             }
             if let Some(AutoApproveDef::Always) = &wf.auto_approve
-                && !wf.steps.is_empty()
+                && supported_steps_count > 0
             {
                 issues.push(ValidationIssue::error(
                     "workflow_unreachable_steps",
@@ -727,7 +733,7 @@ impl ServerConfig {
                 ));
             }
             if let Some(AutoApproveDef::RiskBased { risk, .. }) = &wf.auto_approve {
-                if wf.steps.is_empty() {
+                if supported_steps_count == 0 {
                     issues.push(ValidationIssue::error(
                         "workflow_missing_fallback",
                         format!("workflows[{i}]: risk_based auto_approve without steps has no fallback — add [[workflows.steps]] or use mode = \"always\""),
@@ -2772,17 +2778,21 @@ environments = ["dev"]
 database = "*"
 environment = "*"
 
+# Unknown step types require auto_approve since they're ignored at runtime
+[workflows.auto_approve]
+mode = "always"
+
 [[workflows.steps]]
 type = "future_type"
 [[workflows.steps.approvers]]
 role = "admin"
 "#,
         );
-        // Should parse successfully
+        // Should parse successfully (auto_approve covers the workflow)
         let cfg = ServerConfig::from_str(&toml, "test").unwrap();
         assert!(!cfg.workflows[0].steps[0].step_type.is_supported());
         
-        // diagnose_static should produce a warning
+        // diagnose_static should produce a warning for unknown step type
         let result = ServerConfig::diagnose_static(&toml, "test");
         assert!(result.is_parseable());
         let warnings: Vec<_> = result.warnings().collect();
@@ -2791,6 +2801,29 @@ role = "admin"
             "expected workflow_step_type_unknown warning, got: {:?}",
             warnings
         );
+    }
+    
+    #[test]
+    fn workflow_unknown_step_only_without_auto_approve_errors() {
+        let toml = test_cfg(
+            r#"
+[[databases]]
+name = "app"
+environments = ["dev"]
+
+[[workflows]]
+database = "*"
+environment = "*"
+
+[[workflows.steps]]
+type = "future_type"
+[[workflows.steps.approvers]]
+role = "admin"
+"#,
+        );
+        // Should fail: unknown step types are ignored, so effectively no steps
+        let err = ServerConfig::from_str(&toml, "test").unwrap_err();
+        assert!(err.to_string().contains("must have"));
     }
 }
 
