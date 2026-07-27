@@ -624,11 +624,6 @@ dbward-server validate --config server.toml --preflight
 - `0` — Valid (may have warnings)
 - `1` — Invalid (has errors)
 
-**Checks performed:**
-- **Static**: TOML parse, required fields, environment variable expansion, workflow definitions, database references, SQL review rules, approver selectors
-- **Warnings**: Workflow coverage gaps, dangling workflow refs, disabled SQL review protections
-- **Preflight** (with `--preflight`): OIDC issuer discovery, Slack API connectivity
-
 ### dbward-agent validate
 
 Validate agent configuration without starting. Returns errors, warnings, and optionally performs connectivity checks.
@@ -649,10 +644,6 @@ dbward-agent validate --config agent.toml --preflight
 **Exit codes:**
 - `0` — Valid (may have warnings)
 - `1` — Invalid (has errors)
-
-**Checks performed:**
-- **Static**: TOML parse, required fields, environment variable expansion, server URL scheme (http/https), database URL schemes (postgres/mysql)
-- **Preflight** (with `--preflight`): Server health endpoint, agent token authentication
 
 ---
 
