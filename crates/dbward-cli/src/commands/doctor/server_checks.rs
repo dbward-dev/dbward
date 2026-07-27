@@ -1,6 +1,7 @@
 //! Server configuration checks for doctor command.
 //!
-//! Uses `ServerConfig::diagnose_static()` for static validation.
+//! Uses `diagnose_server_config()` from dbward-app for full validation
+//! (config-level + domain-level).
 //! Runtime preflight checks (Slack, OIDC connectivity) are in `validate --preflight`.
 
 use super::*;
@@ -11,6 +12,8 @@ use dbward_config::validation::{IssueContext, ValidationSeverity};
 /// This function is now sync since it only performs static validation.
 /// Runtime preflight checks (Slack, OIDC) have been moved to `validate --preflight`.
 pub(super) fn run_server_mode(ctx: &mut DoctorContext, path: &std::path::Path) {
+    use dbward_app::config_diagnostics::diagnose_server_config;
+
     if !ctx.json_output {
         eprintln!("dbward doctor — Server configuration\n");
     }
@@ -30,8 +33,8 @@ pub(super) fn run_server_mode(ctx: &mut DoctorContext, path: &std::path::Path) {
         }
     };
 
-    // Run diagnose_static() to collect all issues
-    let result = dbward_config::ServerConfig::diagnose_static(&raw_content, &path.display().to_string());
+    // Run full diagnostics (config-level + domain-level)
+    let result = diagnose_server_config(&raw_content, &path.display().to_string());
 
     // Convert ValidationIssues to CheckResults
     convert_issues_to_results(ctx, &result.issues);
@@ -47,12 +50,6 @@ pub(super) fn run_server_mode(ctx: &mut DoctorContext, path: &std::path::Path) {
         });
     }
     // Note: Parse failures are already reported via issues
-
-    // Run additional step validity checks that require domain-level validation
-    // (workflow_validator from dbward-domain)
-    if let Some(ref cfg) = result.config {
-        check_workflow_step_validity(ctx, cfg);
-    }
 }
 
 /// Convert ValidationIssues to DoctorContext CheckResults.
@@ -167,81 +164,6 @@ fn pad_col(value: &str, width: usize) -> String {
     format!("{value}{}", " ".repeat(padding))
 }
 
-/// Validate workflow step logic (approver selectors, deadlock detection).
-/// This check requires domain-level validation that isn't in dbward-config.
-fn check_workflow_step_validity(ctx: &mut DoctorContext, cfg: &dbward_config::ServerConfig) {
-    use dbward_config::{ApproverSelectorType, WorkflowStepModeDef};
-    use dbward_domain::policies::workflow::{ApproverGroup, WorkflowStep, WorkflowStepMode};
-    use dbward_domain::services::workflow_validator;
-    use dbward_domain::values::Selector;
-
-    for (wf_idx, wf) in cfg.workflows.iter().enumerate() {
-        if wf.steps.is_empty() {
-            continue; // auto-approve workflow, nothing to validate
-        }
-
-        // Convert WorkflowStepDef → WorkflowStep (domain type)
-        // Filter out unknown step types (they are reported separately as warnings)
-        let steps: Vec<WorkflowStep> = wf
-            .steps
-            .iter()
-            .filter(|step| step.step_type.is_supported())
-            .map(|step| {
-                let mode = match step.mode {
-                    WorkflowStepModeDef::All => WorkflowStepMode::All,
-                    WorkflowStepModeDef::Any => WorkflowStepMode::Any,
-                };
-                let approvers: Vec<ApproverGroup> = step
-                    .approvers
-                    .iter()
-                    .map(|a| {
-                        let selector = match a.selector_type {
-                            ApproverSelectorType::Role => Selector::Role(a.value.clone()),
-                            ApproverSelectorType::Group => Selector::Group(a.value.clone()),
-                            ApproverSelectorType::User => Selector::User(a.value.clone()),
-                        };
-                        ApproverGroup {
-                            selector,
-                            min: a.min.unwrap_or(1),
-                        }
-                    })
-                    .collect();
-                WorkflowStep { approvers, mode }
-            })
-            .collect();
-
-        let issues =
-            workflow_validator::validate_steps(&steps, wf.allow_same_approver_across_steps);
-        for issue in issues {
-            let status = match issue.severity {
-                workflow_validator::Severity::Error => Status::Fail,
-                workflow_validator::Severity::Warning => Status::Warn,
-            };
-            ctx.record(CheckResult {
-                id: "workflow_step_validity",
-                status,
-                message: format!("workflows[{wf_idx}]: {}", issue.message),
-                hint: None,
-                details: vec![],
-            });
-        }
-    }
-
-    // Emit pass if no workflow_step_validity results were recorded
-    if !ctx.results.iter().any(|r| r.id == "workflow_step_validity") {
-        let non_auto = cfg.workflows.iter().filter(|w| !w.steps.is_empty()).count();
-        if non_auto > 0 {
-            ctx.record(CheckResult {
-                id: "workflow_step_validity",
-                status: Status::Pass,
-                message: format!("{non_auto} workflows with steps, all valid"),
-                hint: None,
-                details: vec![],
-            });
-        }
-    }
-}
-
 /// Helper: check if a workflow pattern covers a specific (db, env) pair.
 #[allow(dead_code)]
 fn workflow_covers_scope(wf_db: &str, wf_env: &str, db: &str, env: &str) -> bool {
@@ -334,14 +256,12 @@ mode = "always"
     }
 
     #[test]
-    fn workflow_step_validity_check() {
-        let mut ctx = DoctorContext {
-            results: Vec::new(),
-            json_output: false,
-            timeout: Duration::from_secs(5),
-        };
-        let cfg = server_cfg(
-            r#"
+    fn workflow_step_validity_via_diagnose() {
+        use dbward_app::config_diagnostics::diagnose_server_config;
+
+        let toml = format!(
+            r#"state_dir = "/tmp/test"
+
 [[databases]]
 name = "app"
 environments = ["dev"]
@@ -351,6 +271,7 @@ database = "*"
 environment = "*"
 
 [[workflows.steps]]
+type = "approval"
 mode = "all"
 
 [[workflows.steps.approvers]]
@@ -358,8 +279,55 @@ role = "approver"
 min = 1
 "#,
         );
-        check_workflow_step_validity(&mut ctx, &cfg);
-        // Should pass with valid step configuration
-        assert!(ctx.results.iter().any(|r| r.id == "workflow_step_validity" && r.status == Status::Pass));
+        let result = diagnose_server_config(&toml, "test");
+        // Should have no errors with valid step configuration
+        assert!(result.config.is_some());
+        assert!(
+            !result.has_errors(),
+            "Should have no errors. Issues: {:?}",
+            result.issues
+        );
+    }
+
+    #[test]
+    fn workflow_step_validity_detects_min_zero() {
+        use dbward_app::config_diagnostics::diagnose_server_config;
+        use dbward_config::validation::ValidationSeverity;
+
+        let toml = format!(
+            r#"state_dir = "/tmp/test"
+
+[[databases]]
+name = "app"
+environments = ["dev"]
+
+[[workflows]]
+database = "*"
+environment = "*"
+
+[[workflows.steps]]
+type = "approval"
+mode = "all"
+
+[[workflows.steps.approvers]]
+role = "approver"
+min = 0
+"#,
+        );
+        let result = diagnose_server_config(&toml, "test");
+        // Should have an error for min=0
+        assert!(result.config.is_some());
+        let errors: Vec<_> = result
+            .issues
+            .iter()
+            .filter(|i| i.severity == ValidationSeverity::Error)
+            .collect();
+        assert!(
+            errors
+                .iter()
+                .any(|i| i.id == "workflow_step_validity" && i.message.contains("min=0")),
+            "Should have workflow_step_validity error for min=0. Errors: {:?}",
+            errors
+        );
     }
 }
