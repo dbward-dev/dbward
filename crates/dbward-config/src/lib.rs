@@ -17,6 +17,7 @@ pub use merged::{MergedConfig, Source, global_config_dir, load_merged, scoped_cr
 pub use server::ServerConfig;
 pub use server::{
     ApproverDef, ApproverSelectorType, DiagnosticsResult, WorkflowStepDef, WorkflowStepModeDef,
+    WorkflowStepType,
 };
 pub use validation::{
     CoverageEntry, DeadStepEntry, EnvVarIssueEntry, EnvVarIssueType, InvalidWorkflowEntry,

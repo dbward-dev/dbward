@@ -643,6 +643,9 @@ impl ServerConfig {
         // Warning-level checks
         // ========================================
 
+        // Workflow step types: warn if unknown step types are used
+        self.validate_workflow_step_types(issues);
+
         // Workflow coverage: check if all registered DB×env have a matching workflow
         self.validate_workflow_coverage(issues);
 
@@ -651,6 +654,25 @@ impl ServerConfig {
 
         // SQL review safety: warn if destructive DDL rules are disabled in production
         self.validate_sql_review_safety(issues);
+    }
+
+    /// Warn if unknown step types are used (forward compatibility).
+    fn validate_workflow_step_types(&self, issues: &mut Vec<ValidationIssue>) {
+        for (wf_idx, wf) in self.workflows.iter().enumerate() {
+            for (step_idx, step) in wf.steps.iter().enumerate() {
+                if !step.step_type.is_supported() {
+                    issues.push(
+                        ValidationIssue::warning(
+                            "workflow_step_type_unknown",
+                            format!(
+                                "workflows[{wf_idx}].steps[{step_idx}]: unknown step type (only 'approval' is currently supported)"
+                            ),
+                        )
+                        .with_hint("This step will be ignored at runtime"),
+                    );
+                }
+            }
+        }
     }
 
     fn validate_workflow_operations_overlap(&self, issues: &mut Vec<ValidationIssue>) {
@@ -1631,7 +1653,7 @@ pub struct WorkflowDef {
     #[serde(default)]
     pub auto_approve: Option<AutoApproveDef>,
     #[serde(default)]
-    pub steps: Vec<serde_json::Value>,
+    pub steps: Vec<WorkflowStepDef>,
     #[serde(default)]
     pub require_reason: bool,
     #[serde(default)]
@@ -1669,16 +1691,67 @@ pub enum AutoApproveDef {
 ///
 /// This is the output type after parsing and validating raw TOML steps.
 /// Used by both `ServerConfig` (after validation) and for conversion to domain types.
-#[derive(Debug, Clone, PartialEq, Eq)]
+///
+/// Note: `step_type` is kept for forward compatibility. Currently only "approval"
+/// is implemented. Unknown types are parsed but will produce a warning.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 pub struct WorkflowStepDef {
+    /// Step type. Currently only "approval" is supported.
+    #[serde(rename = "type", default)]
+    pub step_type: WorkflowStepType,
+    #[serde(default)]
     pub mode: WorkflowStepModeDef,
+    #[serde(default)]
     pub approvers: Vec<ApproverDef>,
 }
 
+/// Workflow step type.
+///
+/// Currently only `Approval` is implemented. Unknown types are accepted
+/// for forward compatibility but will produce a warning during validation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum WorkflowStepType {
+    /// Human approval step (default).
+    #[default]
+    Approval,
+    /// Unknown step type (for forward compatibility).
+    Unknown(()),
+}
+
+impl WorkflowStepType {
+    /// Check if this is a known, supported step type.
+    pub fn is_supported(&self) -> bool {
+        matches!(self, Self::Approval)
+    }
+
+    /// Get the string representation.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Approval => "approval",
+            Self::Unknown(_) => "unknown",
+        }
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for WorkflowStepType {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let s = String::deserialize(deserializer)?;
+        Ok(match s.to_lowercase().as_str() {
+            "approval" => Self::Approval,
+            _ => Self::Unknown(()),
+        })
+    }
+}
+
 /// Workflow step approval mode.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum WorkflowStepModeDef {
     /// All approvers must approve.
+    #[default]
     All,
     /// Any one approver is sufficient.
     Any,
@@ -1701,6 +1774,47 @@ pub struct ApproverDef {
     pub selector_type: ApproverSelectorType,
     pub value: String,
     pub min: Option<u32>,
+}
+
+impl<'de> serde::Deserialize<'de> for ApproverDef {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        use serde::de::Error;
+
+        #[derive(Deserialize)]
+        struct RawApprover {
+            role: Option<String>,
+            group: Option<String>,
+            user: Option<String>,
+            min: Option<u32>,
+        }
+
+        let raw = RawApprover::deserialize(deserializer)?;
+
+        let (selector_type, value) = match (&raw.role, &raw.group, &raw.user) {
+            (Some(r), None, None) => (ApproverSelectorType::Role, r.clone()),
+            (None, Some(g), None) => (ApproverSelectorType::Group, g.clone()),
+            (None, None, Some(u)) => (ApproverSelectorType::User, u.clone()),
+            (None, None, None) => {
+                return Err(D::Error::custom(
+                    "approver must have one of: role, group, user",
+                ));
+            }
+            _ => {
+                return Err(D::Error::custom(
+                    "approver must have exactly one of: role, group, user",
+                ));
+            }
+        };
+
+        Ok(ApproverDef {
+            selector_type,
+            value,
+            min: raw.min,
+        })
+    }
 }
 
 /// Type of approver selector.
@@ -2598,6 +2712,83 @@ truncate = "off"
         assert!(
             warnings.iter().any(|w| w.id == "sql_review_safety"),
             "expected sql_review_safety warning, got: {:?}",
+            warnings
+        );
+    }
+
+    #[test]
+    fn workflow_step_type_approval_default() {
+        let toml = test_cfg(
+            r#"
+[[databases]]
+name = "app"
+environments = ["dev"]
+
+[[workflows]]
+database = "*"
+environment = "*"
+
+[[workflows.steps]]
+[[workflows.steps.approvers]]
+role = "admin"
+"#,
+        );
+        let cfg = ServerConfig::from_str(&toml, "test").unwrap();
+        assert_eq!(cfg.workflows[0].steps[0].step_type, WorkflowStepType::Approval);
+    }
+
+    #[test]
+    fn workflow_step_type_explicit_approval() {
+        let toml = test_cfg(
+            r#"
+[[databases]]
+name = "app"
+environments = ["dev"]
+
+[[workflows]]
+database = "*"
+environment = "*"
+
+[[workflows.steps]]
+type = "approval"
+[[workflows.steps.approvers]]
+role = "admin"
+"#,
+        );
+        let cfg = ServerConfig::from_str(&toml, "test").unwrap();
+        assert_eq!(cfg.workflows[0].steps[0].step_type, WorkflowStepType::Approval);
+        assert!(cfg.workflows[0].steps[0].step_type.is_supported());
+    }
+
+    #[test]
+    fn workflow_step_type_unknown_warns() {
+        let toml = test_cfg(
+            r#"
+[[databases]]
+name = "app"
+environments = ["dev"]
+
+[[workflows]]
+database = "*"
+environment = "*"
+
+[[workflows.steps]]
+type = "future_type"
+[[workflows.steps.approvers]]
+role = "admin"
+"#,
+        );
+        // Should parse successfully
+        let cfg = ServerConfig::from_str(&toml, "test").unwrap();
+        assert!(!cfg.workflows[0].steps[0].step_type.is_supported());
+        
+        // diagnose_static should produce a warning
+        let result = ServerConfig::diagnose_static(&toml, "test");
+        assert!(result.is_parseable());
+        let warnings: Vec<_> = result.warnings().collect();
+        assert!(
+            warnings.iter().any(|w| w.id == "workflow_step_type_unknown"),
+            "expected workflow_step_type_unknown warning, got: {:?}",
             warnings
         );
     }

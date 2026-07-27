@@ -238,56 +238,9 @@ pub fn workflows_from_config(
 ) -> Result<Vec<WorkflowInput>, crate::error::AppError> {
     defs.iter()
         .map(|wf| {
-            let steps = wf
-                .steps
-                .iter()
-                .enumerate()
-                .map(|(step_idx, step_val)| {
-                    let mode = step_val
-                        .get("mode")
-                        .and_then(|m| m.as_str())
-                        .unwrap_or("all")
-                        .to_string();
-                    let approvers = step_val
-                        .get("approvers")
-                        .and_then(|a| a.as_array())
-                        .map(|arr| {
-                            arr.iter()
-                                .enumerate()
-                                .map(|(a_idx, a)| {
-                                    let min =
-                                        a.get("min").and_then(|m| m.as_u64()).unwrap_or(1) as u32;
-                                    let (selector_type, value) = if let Some(role) =
-                                        a.get("role").and_then(|r| r.as_str())
-                                    {
-                                        ("role", role)
-                                    } else if let Some(group) =
-                                        a.get("group").and_then(|g| g.as_str())
-                                    {
-                                        ("group", group)
-                                    } else if let Some(user) =
-                                        a.get("user").and_then(|u| u.as_str())
-                                    {
-                                        ("user", user)
-                                    } else {
-                                        return Err(crate::error::AppError::Validation(format!(
-                                            "workflow '{}' step[{}].approvers[{}]: missing role/group/user selector",
-                                            wf.database, step_idx, a_idx
-                                        )));
-                                    };
-                                    Ok(ApproverInput {
-                                        selector_type: selector_type.to_string(),
-                                        value: value.to_string(),
-                                        min,
-                                    })
-                                })
-                                .collect::<Result<Vec<_>, _>>()
-                        })
-                        .transpose()?
-                        .unwrap_or_default();
-                    Ok(WorkflowStepInput { mode, approvers })
-                })
-                .collect::<Result<Vec<_>, crate::error::AppError>>()?;
+            // Use step_def_to_input() for type-safe conversion
+            let steps: Vec<WorkflowStepInput> =
+                wf.steps.iter().map(step_def_to_input).collect();
 
             Ok(WorkflowInput {
                 database: wf.database.clone(),

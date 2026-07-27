@@ -173,6 +173,7 @@ fn pad_col(value: &str, width: usize) -> String {
 /// Validate workflow step logic (approver selectors, deadlock detection).
 /// This check requires domain-level validation that isn't in dbward-config.
 fn check_workflow_step_validity(ctx: &mut DoctorContext, cfg: &dbward_config::ServerConfig) {
+    use dbward_config::{ApproverSelectorType, WorkflowStepModeDef};
     use dbward_domain::policies::workflow::{ApproverGroup, WorkflowStep, WorkflowStepMode};
     use dbward_domain::services::workflow_validator;
     use dbward_domain::values::Selector;
@@ -182,90 +183,33 @@ fn check_workflow_step_validity(ctx: &mut DoctorContext, cfg: &dbward_config::Se
             continue; // auto-approve workflow, nothing to validate
         }
 
-        // Parse steps from serde_json::Value → WorkflowStep
-        let mut steps = Vec::new();
-        let mut parse_error = false;
-        for (step_idx, step_val) in wf.steps.iter().enumerate() {
-            let mode = match step_val
-                .get("mode")
-                .and_then(|m| m.as_str())
-                .unwrap_or("all")
-            {
-                "any" => WorkflowStepMode::Any,
-                "all" => WorkflowStepMode::All,
-                other => {
-                    ctx.record(CheckResult {
-                        id: "workflow_step_validity",
-                        status: Status::Fail,
-                        message: format!(
-                            "workflows[{wf_idx}].steps[{step_idx}]: unknown mode '{other}'"
-                        ),
-                        hint: None,
-                        details: vec![],
-                    });
-                    parse_error = true;
-                    continue;
-                }
-            };
-            let approvers: Vec<ApproverGroup> = step_val
-                .get("approvers")
-                .and_then(|a| a.as_array())
-                .map(|arr| {
-                    let mut parsed = Vec::new();
-                    for (a_idx, a) in arr.iter().enumerate() {
-                        let raw_min = a.get("min").and_then(|m| m.as_u64()).unwrap_or(1);
-                        if raw_min > u32::MAX as u64 {
-                            ctx.record(CheckResult {
-                                id: "workflow_step_validity",
-                                status: Status::Fail,
-                                message: format!(
-                                    "workflows[{wf_idx}].steps[{step_idx}].approvers[{a_idx}]: min={raw_min} exceeds maximum ({})",
-                                    u32::MAX
-                                ),
-                                hint: None,
-                                details: vec![],
-                            });
-                            parse_error = true;
-                            continue;
-                        }
-                        let min = raw_min as u32;
-                        let selector = if let Some(r) = a.get("role").and_then(|v| v.as_str()) {
-                            Selector::Role(r.to_string())
-                        } else if let Some(g) = a.get("group").and_then(|v| v.as_str()) {
-                            Selector::Group(g.to_string())
-                        } else if let Some(u) = a.get("user").and_then(|v| v.as_str()) {
-                            Selector::User(u.to_string())
-                        } else {
-                            ctx.record(CheckResult {
-                                id: "workflow_step_validity",
-                                status: Status::Fail,
-                                message: format!(
-                                    "workflows[{wf_idx}].steps[{step_idx}].approvers[{a_idx}]: no valid selector"
-                                ),
-                                hint: Some(
-                                    "Each approver must have 'role', 'group', or 'user' key".into(),
-                                ),
-                                details: vec![],
-                            });
-                            parse_error = true;
-                            continue;
+        // Convert WorkflowStepDef → WorkflowStep (domain type)
+        let steps: Vec<WorkflowStep> = wf
+            .steps
+            .iter()
+            .map(|step| {
+                let mode = match step.mode {
+                    WorkflowStepModeDef::All => WorkflowStepMode::All,
+                    WorkflowStepModeDef::Any => WorkflowStepMode::Any,
+                };
+                let approvers: Vec<ApproverGroup> = step
+                    .approvers
+                    .iter()
+                    .map(|a| {
+                        let selector = match a.selector_type {
+                            ApproverSelectorType::Role => Selector::Role(a.value.clone()),
+                            ApproverSelectorType::Group => Selector::Group(a.value.clone()),
+                            ApproverSelectorType::User => Selector::User(a.value.clone()),
                         };
-                        parsed.push(ApproverGroup { selector, min });
-                    }
-                    parsed
-                })
-                .unwrap_or_default();
-            steps.push(WorkflowStep { approvers, mode });
-        }
-
-        if parse_error && steps.is_empty() {
-            continue;
-        }
-
-        // Skip logical validation if any parse error occurred for this workflow
-        if parse_error {
-            continue;
-        }
+                        ApproverGroup {
+                            selector,
+                            min: a.min.unwrap_or(1),
+                        }
+                    })
+                    .collect();
+                WorkflowStep { approvers, mode }
+            })
+            .collect();
 
         let issues =
             workflow_validator::validate_steps(&steps, wf.allow_same_approver_across_steps);
