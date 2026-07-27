@@ -184,9 +184,11 @@ fn check_workflow_step_validity(ctx: &mut DoctorContext, cfg: &dbward_config::Se
         }
 
         // Convert WorkflowStepDef → WorkflowStep (domain type)
+        // Filter out unknown step types (they are reported separately as warnings)
         let steps: Vec<WorkflowStep> = wf
             .steps
             .iter()
+            .filter(|step| step.step_type.is_supported())
             .map(|step| {
                 let mode = match step.mode {
                     WorkflowStepModeDef::All => WorkflowStepMode::All,

@@ -238,9 +238,14 @@ pub fn workflows_from_config(
 ) -> Result<Vec<WorkflowInput>, crate::error::AppError> {
     defs.iter()
         .map(|wf| {
-            // Use step_def_to_input() for type-safe conversion
-            let steps: Vec<WorkflowStepInput> =
-                wf.steps.iter().map(step_def_to_input).collect();
+            // Filter out unknown step types (forward compatibility: config accepts them,
+            // but runtime ignores them). Only supported step types are converted.
+            let steps: Vec<WorkflowStepInput> = wf
+                .steps
+                .iter()
+                .filter(|step| step.step_type.is_supported())
+                .map(step_def_to_input)
+                .collect();
 
             Ok(WorkflowInput {
                 database: wf.database.clone(),
