@@ -97,7 +97,7 @@ See [Configuration Reference](../reference/configuration.md) for all options.
 Copy `server.toml` to your server host and start the server:
 
 ```bash
-dbward doctor --server server.toml   # validate config before starting
+dbward-server --config server.toml validate   # validate config before starting
 dbward-server --config server.toml --listen 0.0.0.0:3000
 ```
 
@@ -164,7 +164,7 @@ Set the required environment variables and start:
 export DBWARD_AGENT_TOKEN="dbw_..."  # agent token from server host
 export DATABASE_URL_PRODUCTION="postgres://user:pass@db-host:5432/mydb"
 
-dbward doctor --agent agent.toml     # validate config before starting
+dbward-agent --config agent.toml validate     # validate config before starting
 dbward-agent --config agent.toml
 ```
 

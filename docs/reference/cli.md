@@ -515,15 +515,13 @@ Diagnose configuration and connectivity. Checks include server reachability, OID
 
 ```bash
 dbward doctor
-dbward doctor --agent agent.toml
-dbward doctor --server server.toml
 ```
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `--agent <PATH>` | | Validate agent config |
-| `--server <PATH>` | | Validate server config |
 | `--timeout <SECS>` | 5 | Network timeout per check |
+
+> **Config validation:** Use `dbward-server --config server.toml validate` and `dbward-agent --config agent.toml validate` to validate config files before starting the server or agent.
 
 ---
 
@@ -571,6 +569,10 @@ The server and agent are separate binaries with their own CLIs.
 # Start the server
 dbward-server --config server.toml --listen 0.0.0.0:3000
 
+# Validate configuration before starting
+dbward-server --config server.toml validate
+dbward-server --config server.toml validate --preflight   # also check OIDC/Slack connectivity
+
 # Reload configuration (sends SIGHUP without restarting)
 dbward-server --config server.toml reload
 dbward-server reload --pid 12345
@@ -584,6 +586,13 @@ dbward-server reload --pid 12345
 | `--listen <ADDR>` | `127.0.0.1:3000` | Listen address |
 | `--force-bootstrap` | false | Revoke existing bootstrap tokens and regenerate |
 
+**`dbward-server validate` options:**
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `--config <PATH>` | `dbward-server.toml` | Server config file to validate |
+| `--preflight` | false | Also check external connectivity (OIDC issuer, Slack API) |
+
 **`dbward-server reload` options:**
 
 > `--config` is a top-level option and must be placed before the `reload` subcommand:
@@ -596,8 +605,20 @@ dbward-server reload --pid 12345
 ### dbward-agent
 
 ```bash
+# Start the agent
 dbward-agent --config agent.toml
+
+# Validate configuration before starting
+dbward-agent --config agent.toml validate
+dbward-agent --config agent.toml validate --preflight   # also check server reachability and token
 ```
+
+**`dbward-agent validate` options:**
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `--config <PATH>` | `dbward-agent.toml` | Agent config file to validate |
+| `--preflight` | false | Also check server reachability and agent token validity |
 
 | Option | Default | Description |
 |--------|---------|-------------|

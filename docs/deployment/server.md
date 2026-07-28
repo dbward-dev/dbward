@@ -198,7 +198,7 @@ Notification policies are managed via the REST API, not TOML. See [Notification 
 After writing your configuration, validate it before starting the server:
 
 ```bash
-dbward doctor --server /path/to/server.toml
+dbward-server --config /path/to/server.toml validate
 ```
 
 This checks workflow validity, role resolution, Slack connectivity, and webhook references — catching misconfigurations before they cause runtime failures.

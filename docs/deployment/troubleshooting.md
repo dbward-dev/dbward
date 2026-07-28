@@ -10,9 +10,9 @@ description: Common deployment issues and fixes
 Before diving into individual issues, run the built-in diagnostic:
 
 ```bash
-dbward doctor                          # CLI mode — checks server connectivity + auth
-dbward doctor --server server.toml     # Server mode — checks config, workflows, Slack, roles
-dbward doctor --agent agent.toml       # Agent mode — checks config, server, DB connectivity
+dbward doctor                                    # CLI mode — checks server connectivity + auth
+dbward-server --config server.toml validate      # Server mode — checks config, workflows, Slack, roles
+dbward-agent --config agent.toml validate        # Agent mode — checks config, server, DB connectivity
 ```
 
 If doctor reports a specific failure, follow its hint. If everything passes but you still have issues, continue with the sections below.
