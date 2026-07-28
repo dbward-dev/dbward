@@ -4,7 +4,7 @@ use serde::Serialize;
 use serde_json::{Value, json};
 
 use crate::output::CliError;
-use crate::output::{CliResponse, Column, RenderPlan, StderrLine};
+use crate::output::{CliResponse, Column, OutputMode, RenderPlan, StderrLine};
 use crate::server_client::ServerClient;
 
 fn parse_subject_type(s: &str) -> Result<String, String> {
@@ -129,15 +129,34 @@ pub async fn run_token_create(
     name: Option<&str>,
     expires: Option<&str>,
     role: Option<&str>,
+    yes: bool,
+    mode: OutputMode,
 ) -> Result<CliResponse<TokenCreateOutput>, CliError> {
+    // Local validation first (before any API calls)
+    if subject.is_none() && subject_type != "user" {
+        return Err(CliError::Config(
+            "--subject is required for agent tokens".into(),
+        ));
+    }
+
+    if no_scope_ceiling && subject_type != "agent" {
+        return Err(CliError::Config(
+            "--no-scope-ceiling is only allowed for agent tokens".into(),
+        ));
+    }
+
+    let expires_at = match expires {
+        Some(s) => Some(parse_expires(s)?),
+        None => None,
+    };
+
+    // Confirmation after local validation, before API calls
+    crate::output::confirm_or_reject(mode, yes)?;
+
+    // Now resolve subject (may call /api/me)
     let resolved_subject = match subject {
         Some(s) => s.to_string(),
         None => {
-            if subject_type != "user" {
-                return Err(CliError::Config(
-                    "--subject is required for agent tokens".into(),
-                ));
-            }
             let me: Value = client.get("/api/me").await?;
             me.get("subject_id")
                 .and_then(|v| v.as_str())
@@ -149,11 +168,6 @@ pub async fn run_token_create(
     let mut warnings = Vec::new();
 
     let scope_ceiling = if no_scope_ceiling {
-        if subject_type != "agent" {
-            return Err(CliError::Config(
-                "--no-scope-ceiling is only allowed for agent tokens".into(),
-            ));
-        }
         None
     } else if !scope_roles.is_empty() {
         Some(json!({"roles": scope_roles}))
@@ -162,11 +176,6 @@ pub async fn run_token_create(
         Some(json!({"roles": [legacy_role]}))
     } else {
         None
-    };
-
-    let expires_at = match expires {
-        Some(s) => Some(parse_expires(s)?),
-        None => None,
     };
 
     let body = json!({
@@ -318,7 +327,11 @@ pub async fn run_token_list(
 pub async fn run_token_revoke(
     client: &ServerClient,
     id: &str,
+    yes: bool,
+    mode: OutputMode,
 ) -> Result<CliResponse<TokenRevokeOutput>, CliError> {
+    crate::output::confirm_or_reject(mode, yes)?;
+
     let _resp = client.revoke_token(id).await?;
 
     let output = TokenRevokeOutput {

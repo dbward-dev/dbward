@@ -2,7 +2,7 @@ use clap::Subcommand;
 use serde::Serialize;
 
 use crate::output::CliError;
-use crate::output::{CliResponse, Column, RenderPlan, StderrLine};
+use crate::output::{CliResponse, Column, OutputMode, RenderPlan, StderrLine};
 use crate::server_client::ServerClient;
 
 #[derive(Subcommand)]
@@ -138,7 +138,11 @@ pub async fn run_user_add(
     id: &str,
     role: &[String],
     group: &[String],
+    yes: bool,
+    mode: OutputMode,
 ) -> Result<CliResponse<UserAddOutput>, CliError> {
+    crate::output::confirm_or_reject(mode, yes)?;
+
     let body = serde_json::json!({
         "id": id,
         "roles": role,
@@ -277,6 +281,8 @@ pub async fn run_user_update(
     add_group: &[String],
     rm_group: &[String],
     slack_user_id: Option<&str>,
+    yes: bool,
+    mode: OutputMode,
 ) -> Result<CliResponse<UserUpdateOutput>, CliError> {
     let mut body = serde_json::Map::new();
     if !role.is_empty() {
@@ -302,6 +308,8 @@ pub async fn run_user_update(
         return Err(CliError::Config("no fields to update".into()));
     }
 
+    crate::output::confirm_or_reject(mode, yes)?;
+
     sc.patch(&format!("/api/users/{id}"), &body).await?;
 
     let output = UserUpdateOutput { id: id.to_string() };
@@ -312,7 +320,11 @@ pub async fn run_user_update(
 pub async fn run_user_suspend(
     sc: &ServerClient,
     id: &str,
+    yes: bool,
+    mode: OutputMode,
 ) -> Result<CliResponse<UserSuspendOutput>, CliError> {
+    crate::output::confirm_or_reject(mode, yes)?;
+
     let resp: serde_json::Value = sc
         .post(&format!("/api/users/{id}/suspend"), &serde_json::json!({}))
         .await?;
@@ -334,7 +346,11 @@ pub async fn run_user_suspend(
 pub async fn run_user_activate(
     sc: &ServerClient,
     id: &str,
+    yes: bool,
+    mode: OutputMode,
 ) -> Result<CliResponse<UserActivateOutput>, CliError> {
+    crate::output::confirm_or_reject(mode, yes)?;
+
     sc.post(&format!("/api/users/{id}/activate"), &serde_json::json!({}))
         .await?;
 
@@ -346,7 +362,11 @@ pub async fn run_user_activate(
 pub async fn run_user_rm(
     sc: &ServerClient,
     id: &str,
+    yes: bool,
+    mode: OutputMode,
 ) -> Result<CliResponse<UserRmOutput>, CliError> {
+    crate::output::confirm_or_reject(mode, yes)?;
+
     sc.delete(&format!("/api/users/{id}")).await?;
 
     let output = UserRmOutput { id: id.to_string() };
@@ -358,7 +378,11 @@ pub async fn run_user_rm(
 pub async fn run_user_reissue_token(
     sc: &ServerClient,
     id: &str,
+    yes: bool,
+    mode: OutputMode,
 ) -> Result<CliResponse<UserReissueTokenOutput>, CliError> {
+    crate::output::confirm_or_reject(mode, yes)?;
+
     let resp: serde_json::Value = sc
         .post(
             &format!("/api/users/{id}/reissue-initial-token"),
