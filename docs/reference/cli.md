@@ -515,13 +515,17 @@ Diagnose configuration and connectivity. Checks include server reachability, OID
 
 ```bash
 dbward doctor
+dbward doctor --agent agent.toml    # validate agent config (static checks only)
+dbward doctor --server server.toml  # validate server config (static checks only)
 ```
 
 | Option | Default | Description |
 |--------|---------|-------------|
+| `--agent <PATH>` | | Validate agent config file (static checks, no connectivity) |
+| `--server <PATH>` | | Validate server config file (static checks, no connectivity) |
 | `--timeout <SECS>` | 5 | Network timeout per check |
 
-> **Config validation:** Use `dbward-server validate --config server.toml` and `dbward-agent validate --config agent.toml` to validate config files before starting the server or agent.
+> **Connectivity checks:** `dbward doctor --server/--agent` performs static validation only. Use `dbward-server validate --config ... --preflight` or `dbward-agent validate --config ... --preflight` to also check external connectivity.
 
 ---
 

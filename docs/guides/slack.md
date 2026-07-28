@@ -236,7 +236,7 @@ A background worker checks every 60 seconds for expired requests. When a request
 | "No databases available" | User needs `request.query` or `request.dml` permission |
 | Onboarding button does nothing | Ensure `[slack.onboarding] enabled = true` |
 
-Run `dbward-server validate --config server.toml` to diagnose configuration issues.
+Run `dbward-server validate --config server.toml --preflight` to diagnose configuration and Slack API connectivity issues.
 
 ## See also
 
