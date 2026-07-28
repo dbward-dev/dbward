@@ -80,10 +80,10 @@ See [Configuration Reference: \[slack\]](../reference/configuration.md#slack) fo
 Run diagnostics:
 
 ```bash
-dbward-server --config server.toml validate --preflight
+dbward-server validate --config server.toml --preflight
 ```
 
-Checks: bot token format (`xoxb-` prefix), signing secret format, `auth.test` API call, channel existence, and bot membership. (These connectivity checks require `--preflight`; without it, only config syntax and structure are validated.)
+Checks: bot token format (`xoxb-` prefix), signing secret format, and `auth.test` API call. (Channel existence and bot membership are not verified by `--preflight`; use the smoke test below to confirm end-to-end.)
 
 > **Limitation:** Validate checks token and channel access but cannot verify that Slack has correctly registered the Request URL or slash command. Use the smoke test below to confirm end-to-end.
 
@@ -236,7 +236,7 @@ A background worker checks every 60 seconds for expired requests. When a request
 | "No databases available" | User needs `request.query` or `request.dml` permission |
 | Onboarding button does nothing | Ensure `[slack.onboarding] enabled = true` |
 
-Run `dbward-server --config server.toml validate` to diagnose configuration issues.
+Run `dbward-server validate --config server.toml` to diagnose configuration issues.
 
 ## See also
 

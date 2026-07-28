@@ -521,7 +521,7 @@ dbward doctor
 |--------|---------|-------------|
 | `--timeout <SECS>` | 5 | Network timeout per check |
 
-> **Config validation:** Use `dbward-server --config server.toml validate` and `dbward-agent --config agent.toml validate` to validate config files before starting the server or agent.
+> **Config validation:** Use `dbward-server validate --config server.toml` and `dbward-agent validate --config agent.toml` to validate config files before starting the server or agent.
 
 ---
 
@@ -570,8 +570,8 @@ The server and agent are separate binaries with their own CLIs.
 dbward-server --config server.toml --listen 0.0.0.0:3000
 
 # Validate configuration before starting
-dbward-server --config server.toml validate
-dbward-server --config server.toml validate --preflight   # also check OIDC/Slack connectivity
+dbward-server validate --config server.toml
+dbward-server validate --config server.toml --preflight   # also check OIDC/Slack connectivity
 
 # Reload configuration (sends SIGHUP without restarting)
 dbward-server --config server.toml reload
@@ -609,8 +609,8 @@ dbward-server reload --pid 12345
 dbward-agent --config agent.toml
 
 # Validate configuration before starting
-dbward-agent --config agent.toml validate
-dbward-agent --config agent.toml validate --preflight   # also check server reachability and token
+dbward-agent validate --config agent.toml
+dbward-agent validate --config agent.toml --preflight   # also check server reachability and token
 ```
 
 **`dbward-agent validate` options:**

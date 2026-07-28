@@ -198,8 +198,8 @@ Notification policies are managed via the REST API, not TOML. See [Notification 
 After writing your configuration, validate it before starting the server:
 
 ```bash
-dbward-server --config /path/to/server.toml validate
-dbward-server --config /path/to/server.toml validate --preflight  # also check Slack/OIDC connectivity
+dbward-server validate --config /path/to/server.toml
+dbward-server validate --config /path/to/server.toml --preflight  # also check Slack/OIDC connectivity
 ```
 
 This checks workflow validity, role resolution, and webhook references — catching misconfigurations before they cause runtime failures. Use `--preflight` to additionally verify Slack API connectivity and OIDC issuer reachability.

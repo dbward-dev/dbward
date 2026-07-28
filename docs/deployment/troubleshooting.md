@@ -11,10 +11,10 @@ Before diving into individual issues, run the built-in diagnostics:
 
 ```bash
 dbward doctor                                             # CLI — checks server connectivity + auth
-dbward-server --config server.toml validate               # Server — checks config, workflows, roles
-dbward-agent --config agent.toml validate                 # Agent — checks config and DB URL scheme
-dbward-server --config server.toml validate --preflight   # + Slack/OIDC connectivity
-dbward-agent --config agent.toml validate --preflight     # + server reachability and token
+dbward-server validate --config server.toml               # Server — checks config, workflows, roles
+dbward-agent validate --config agent.toml                 # Agent — checks config and DB URL scheme
+dbward-server validate --config server.toml --preflight   # + Slack/OIDC connectivity
+dbward-agent validate --config agent.toml --preflight     # + server reachability and token
 ```
 
 If a check reports a specific failure, follow its hint. If everything passes but you still have issues, continue with the sections below.
