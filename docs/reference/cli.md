@@ -511,7 +511,7 @@ dbward policy resolve app production --operation execute_dml
 
 ## dbward doctor
 
-Diagnose configuration and connectivity. In CLI mode (no flags), checks: config parse, environment variables, server URL scheme, server reachability, version compatibility, auth configuration, token validity, database registration, and workflow existence. With `--server` or `--agent`, performs static config validation only (no connectivity checks).
+Diagnose configuration and connectivity. In CLI mode (no flags), checks: config parse, environment variables, server URL scheme, server reachability, version compatibility, auth configuration, token validity (API token auth only; OIDC is skipped), database registration, and workflow existence. With `--server` or `--agent`, performs static config validation only (no connectivity checks).
 
 ```bash
 dbward doctor
@@ -597,6 +597,8 @@ dbward-server reload --pid 12345
 | `--config <PATH>` | `dbward-server.toml` | Server config file to validate |
 | `--preflight` | false | Also check external connectivity (OIDC issuer, Slack API) |
 
+**Exit codes:** `0` = valid (may have warnings), `1` = invalid config or preflight failure
+
 **`dbward-server reload` options:**
 
 > `--config` is a top-level option and must be placed before the `reload` subcommand:
@@ -617,12 +619,20 @@ dbward-agent validate --config agent.toml
 dbward-agent validate --config agent.toml --preflight   # also check server reachability and token
 ```
 
+**`dbward-agent` options:**
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `--config <PATH>` | `dbward-agent.toml` | Agent config file |
+
 **`dbward-agent validate` options:**
 
 | Option | Default | Description |
 |--------|---------|-------------|
 | `--config <PATH>` | `dbward-agent.toml` | Agent config file to validate |
 | `--preflight` | false | Also check server reachability and agent token validity |
+
+**Exit codes:** `0` = valid (may have warnings), `1` = invalid config or preflight failure
 
 ---
 
