@@ -83,9 +83,9 @@ Run diagnostics:
 dbward-server validate --config server.toml --preflight
 ```
 
-Checks: bot token format (`xoxb-` prefix), signing secret format, and `auth.test` API call. (Channel existence and bot membership are not verified by `--preflight`; use the smoke test below to confirm end-to-end.)
+Checks: bot token format (`xoxb-` prefix) and `auth.test` API call. (Channel existence, bot membership, and signing secret format are not verified; use the smoke test below to confirm end-to-end.)
 
-> **Limitation:** Validate checks token and channel access but cannot verify that Slack has correctly registered the Request URL or slash command. Use the smoke test below to confirm end-to-end.
+> **Limitation:** `--preflight` only confirms the bot token is valid via `auth.test`. It cannot verify channel access, slash command registration, or Request URL routing. Use the smoke test below to confirm end-to-end.
 
 ### 5. Smoke test
 
