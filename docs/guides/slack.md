@@ -80,12 +80,12 @@ See [Configuration Reference: \[slack\]](../reference/configuration.md#slack) fo
 Run diagnostics:
 
 ```bash
-dbward-server --config server.toml validate
+dbward-server --config server.toml validate --preflight
 ```
 
-Doctor checks: bot token format (`xoxb-` prefix), signing secret format, `auth.test` API call, channel existence, and bot membership.
+Checks: bot token format (`xoxb-` prefix), signing secret format, `auth.test` API call, channel existence, and bot membership. (These connectivity checks require `--preflight`; without it, only config syntax and structure are validated.)
 
-> **Limitation:** Doctor validates token and channel access but cannot verify that Slack has correctly registered the Request URL or slash command. Use the smoke test below to confirm end-to-end.
+> **Limitation:** Validate checks token and channel access but cannot verify that Slack has correctly registered the Request URL or slash command. Use the smoke test below to confirm end-to-end.
 
 ### 5. Smoke test
 

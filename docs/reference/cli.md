@@ -620,52 +620,6 @@ dbward-agent --config agent.toml validate --preflight   # also check server reac
 | `--config <PATH>` | `dbward-agent.toml` | Agent config file to validate |
 | `--preflight` | false | Also check server reachability and agent token validity |
 
-| Option | Default | Description |
-|--------|---------|-------------|
-| `--config <PATH>` | `dbward-agent.toml` | Agent config file |
-
-### dbward-server validate
-
-Validate server configuration without starting. Returns errors, warnings, and optionally performs external service checks.
-
-```bash
-# Static validation only (parse + semantic checks)
-dbward-server validate --config server.toml
-
-# With preflight checks (OIDC discovery, Slack connectivity)
-dbward-server validate --config server.toml --preflight
-```
-
-| Option | Default | Description |
-|--------|---------|-------------|
-| `--config <PATH>` | `dbward-server.toml` | Server config file |
-| `--preflight` | false | Also check external services (OIDC issuer, Slack) |
-
-**Exit codes:**
-- `0` — Valid (may have warnings)
-- `1` — Invalid (has errors)
-
-### dbward-agent validate
-
-Validate agent configuration without starting. Returns errors, warnings, and optionally performs connectivity checks.
-
-```bash
-# Static validation only
-dbward-agent validate --config agent.toml
-
-# With preflight checks (server health, token validation)
-dbward-agent validate --config agent.toml --preflight
-```
-
-| Option | Default | Description |
-|--------|---------|-------------|
-| `--config <PATH>` | `dbward-agent.toml` | Agent config file |
-| `--preflight` | false | Also check server connectivity and token validity |
-
-**Exit codes:**
-- `0` — Valid (may have warnings)
-- `1` — Invalid (has errors)
-
 ---
 
 ## dbward mcp

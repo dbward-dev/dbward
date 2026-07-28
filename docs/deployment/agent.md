@@ -157,9 +157,10 @@ After writing your configuration, validate it before starting the agent:
 
 ```bash
 dbward-agent --config /path/to/agent.toml validate
+dbward-agent --config /path/to/agent.toml validate --preflight  # also check server reachability and token
 ```
 
-This checks config parsing, environment variables, server reachability, token validity, and database URL scheme — catching issues before the agent attempts to connect.
+This checks config parsing, environment variables, and database URL scheme — catching issues before the agent attempts to connect. Use `--preflight` to additionally verify server reachability and agent token validity.
 
 ## Running with systemd
 

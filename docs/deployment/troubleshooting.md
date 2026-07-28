@@ -5,17 +5,19 @@ description: Common deployment issues and fixes
 
 # Deployment Troubleshooting
 
-## Start here: run `dbward doctor`
+## Start here: run diagnostics
 
-Before diving into individual issues, run the built-in diagnostic:
+Before diving into individual issues, run the built-in diagnostics:
 
 ```bash
-dbward doctor                                    # CLI mode — checks server connectivity + auth
-dbward-server --config server.toml validate      # Server mode — checks config, workflows, Slack, roles
-dbward-agent --config agent.toml validate        # Agent mode — checks config, server, DB connectivity
+dbward doctor                                             # CLI — checks server connectivity + auth
+dbward-server --config server.toml validate               # Server — checks config, workflows, roles
+dbward-agent --config agent.toml validate                 # Agent — checks config and DB URL scheme
+dbward-server --config server.toml validate --preflight   # + Slack/OIDC connectivity
+dbward-agent --config agent.toml validate --preflight     # + server reachability and token
 ```
 
-If doctor reports a specific failure, follow its hint. If everything passes but you still have issues, continue with the sections below.
+If a check reports a specific failure, follow its hint. If everything passes but you still have issues, continue with the sections below.
 
 ---
 
