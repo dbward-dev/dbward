@@ -511,7 +511,7 @@ dbward policy resolve app production --operation execute_dml
 
 ## dbward doctor
 
-Diagnose configuration and connectivity. In CLI mode (no flags), checks server reachability, token validity, agent status, and user role validation. With `--server` or `--agent`, performs static config validation only (no connectivity checks).
+Diagnose configuration and connectivity. In CLI mode (no flags), checks: config parse, environment variables, server URL scheme, server reachability, version compatibility, auth configuration, token validity, database registration, and workflow existence. With `--server` or `--agent`, performs static config validation only (no connectivity checks).
 
 ```bash
 dbward doctor
