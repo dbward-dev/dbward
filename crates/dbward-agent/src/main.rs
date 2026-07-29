@@ -14,15 +14,17 @@ struct Args {
     version: (),
 
     #[command(subcommand)]
-    command: Option<Command>,
-
-    /// Path to agent config file
-    #[arg(long, default_value = "dbward-agent.toml")]
-    config: PathBuf,
+    command: Command,
 }
 
 #[derive(Subcommand)]
 enum Command {
+    /// Start the agent
+    Start {
+        /// Path to agent config file
+        #[arg(long, default_value = "dbward-agent.toml")]
+        config: PathBuf,
+    },
     /// Validate agent configuration
     Validate {
         /// Path to agent config file
@@ -38,16 +40,20 @@ enum Command {
 async fn main() {
     let args = Args::parse();
 
-    // Handle subcommands first
-    if let Some(Command::Validate { config, preflight }) = args.command {
-        run_validate(&config, preflight).await;
-        return;
+    match args.command {
+        Command::Start { config } => {
+            run_start(&config).await;
+        }
+        Command::Validate { config, preflight } => {
+            run_validate(&config, preflight).await;
+        }
     }
+}
 
-    // Default: start agent
+async fn run_start(config_path: &PathBuf) {
     dbward_agent::init_logging();
 
-    let config = match dbward_agent::config::load_from_file(&args.config) {
+    let config = match dbward_agent::config::load_from_file(config_path) {
         Ok(c) => c,
         Err(e) => {
             eprintln!("Error loading config: {e}");

@@ -14,44 +14,40 @@ struct Cli {
     version: (),
 
     #[command(subcommand)]
-    command: Option<Command>,
-
-    /// Listen address
-    #[arg(long, default_value = "127.0.0.1:3000")]
-    listen: String,
-
-    /// Server config file path
-    #[arg(long, default_value = "dbward-server.toml")]
-    config: String,
-
-    /// Force re-creation of bootstrap tokens (revokes existing)
-    #[arg(long)]
-    force_bootstrap: bool,
-
-    /// License key (Team/Enterprise)
-    #[arg(long, env = "DBWARD_LICENSE_KEY")]
-    license_key: Option<String>,
-
-    /// Path to license key file
-    #[arg(long, env = "DBWARD_LICENSE_FILE")]
-    license_file: Option<String>,
-
-    /// Disable online license validation (offline mode).
-    /// Also enabled by env DBWARD_LICENSE_OFFLINE=true.
-    #[arg(long)]
-    license_offline: bool,
-
-    /// License validation API URL
-    #[arg(
-        long,
-        env = "DBWARD_LICENSE_URL",
-        default_value = "https://license.dbward.dev/v1/validate"
-    )]
-    license_url: String,
+    command: Command,
 }
 
 #[derive(Subcommand)]
 enum Command {
+    /// Start the server
+    Start {
+        /// Server config file path
+        #[arg(long, default_value = "dbward-server.toml")]
+        config: String,
+        /// Listen address
+        #[arg(long, default_value = "127.0.0.1:3000")]
+        listen: String,
+        /// Force re-creation of bootstrap tokens (revokes existing)
+        #[arg(long)]
+        force_bootstrap: bool,
+        /// License key (Team/Enterprise)
+        #[arg(long, env = "DBWARD_LICENSE_KEY")]
+        license_key: Option<String>,
+        /// Path to license key file
+        #[arg(long, env = "DBWARD_LICENSE_FILE")]
+        license_file: Option<String>,
+        /// Disable online license validation (offline mode).
+        /// Also enabled by env DBWARD_LICENSE_OFFLINE=true.
+        #[arg(long)]
+        license_offline: bool,
+        /// License validation API URL
+        #[arg(
+            long,
+            env = "DBWARD_LICENSE_URL",
+            default_value = "https://license.dbward.dev/v1/validate"
+        )]
+        license_url: String,
+    },
     /// Validate server configuration
     Validate {
         /// Path to server config file
@@ -63,7 +59,10 @@ enum Command {
     },
     /// Send SIGHUP to a running server to reload configuration
     Reload {
-        /// PID of the server process (reads from state_dir/server.pid if omitted)
+        /// Path to server config file (used to locate state_dir/server.pid)
+        #[arg(long, default_value = "dbward-server.toml")]
+        config: String,
+        /// PID of the server process (overrides PID file lookup)
         #[arg(long)]
         pid: Option<u32>,
     },
@@ -73,39 +72,42 @@ enum Command {
 async fn main() {
     let cli = Cli::parse();
 
-    // Handle subcommands first
     match cli.command {
-        Some(Command::Validate { config, preflight }) => {
-            run_validate(&config, preflight).await;
-            return;
-        }
-        Some(Command::Reload { pid }) => {
-            if let Err(e) = run_reload(pid, &cli.config) {
+        Command::Start {
+            config,
+            listen,
+            force_bootstrap,
+            license_key,
+            license_file,
+            license_offline,
+            license_url,
+        } => {
+            let result = dbward_server::run_from_args(
+                &listen,
+                &config,
+                force_bootstrap,
+                license_key.as_deref(),
+                license_file.as_deref(),
+                license_offline
+                    || std::env::var("DBWARD_LICENSE_OFFLINE").unwrap_or_default() == "true",
+                &license_url,
+            )
+            .await;
+
+            if let Err(e) = result {
                 eprintln!("Error: {e}");
                 std::process::exit(1);
             }
-            return;
         }
-        None => {
-            // Default: start server (continue below)
+        Command::Validate { config, preflight } => {
+            run_validate(&config, preflight).await;
         }
-    }
-
-    let result = dbward_server::run_from_args(
-        &cli.listen,
-        &cli.config,
-        cli.force_bootstrap,
-        cli.license_key.as_deref(),
-        cli.license_file.as_deref(),
-        cli.license_offline
-            || std::env::var("DBWARD_LICENSE_OFFLINE").unwrap_or_default() == "true",
-        &cli.license_url,
-    )
-    .await;
-
-    if let Err(e) = result {
-        eprintln!("Error: {e}");
-        std::process::exit(1);
+        Command::Reload { config, pid } => {
+            if let Err(e) = run_reload(pid, &config) {
+                eprintln!("Error: {e}");
+                std::process::exit(1);
+            }
+        }
     }
 }
 
@@ -337,25 +339,37 @@ mod tests {
     fn serve_mode_parses() {
         let cli = Cli::try_parse_from([
             "dbward-server",
+            "start",
             "--listen",
             "0.0.0.0:3000",
             "--config",
             "/config/server.toml",
         ])
         .unwrap();
-        assert_eq!(cli.listen, "0.0.0.0:3000");
-        assert!(!cli.force_bootstrap);
+        match cli.command {
+            Command::Start { listen, force_bootstrap, .. } => {
+                assert_eq!(listen, "0.0.0.0:3000");
+                assert!(!force_bootstrap);
+            }
+            _ => panic!("expected Start"),
+        }
     }
 
     #[test]
     fn force_bootstrap_parses() {
         let cli = Cli::try_parse_from([
             "dbward-server",
+            "start",
             "--config",
             "/config/server.toml",
             "--force-bootstrap",
         ])
         .unwrap();
-        assert!(cli.force_bootstrap);
+        match cli.command {
+            Command::Start { force_bootstrap, .. } => {
+                assert!(force_bootstrap);
+            }
+            _ => panic!("expected Start"),
+        }
     }
 }
