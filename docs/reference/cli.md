@@ -578,7 +578,7 @@ dbward-server validate --config server.toml
 dbward-server validate --config server.toml --preflight   # also check OIDC/Slack connectivity
 
 # Reload configuration (sends SIGHUP without restarting)
-dbward-server --config server.toml reload
+dbward-server reload --config server.toml
 dbward-server reload --pid 12345
 ```
 
@@ -601,11 +601,9 @@ dbward-server reload --pid 12345
 
 **`dbward-server reload` options:**
 
-> `--config` is a top-level option and must be placed before the `reload` subcommand:
-> `dbward-server --config /path/to/server.toml reload`
-
 | Option | Default | Description |
 |--------|---------|-------------|
+| `--config <PATH>` | `dbward-server.toml` | Server config file (to locate PID file) |
 | `--pid <PID>` | | PID of the server process (overrides PID file lookup) |
 
 ### dbward-agent
