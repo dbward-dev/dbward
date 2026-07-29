@@ -50,7 +50,7 @@ async fn main() {
     }
 }
 
-async fn run_start(config_path: &PathBuf) {
+async fn run_start(config_path: &std::path::Path) {
     dbward_agent::init_logging();
 
     let config = match dbward_agent::config::load_from_file(config_path) {
