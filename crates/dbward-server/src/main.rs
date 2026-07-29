@@ -347,7 +347,11 @@ mod tests {
         ])
         .unwrap();
         match cli.command {
-            Command::Start { listen, force_bootstrap, .. } => {
+            Command::Start {
+                listen,
+                force_bootstrap,
+                ..
+            } => {
                 assert_eq!(listen, "0.0.0.0:3000");
                 assert!(!force_bootstrap);
             }
@@ -366,7 +370,9 @@ mod tests {
         ])
         .unwrap();
         match cli.command {
-            Command::Start { force_bootstrap, .. } => {
+            Command::Start {
+                force_bootstrap, ..
+            } => {
                 assert!(force_bootstrap);
             }
             _ => panic!("expected Start"),
