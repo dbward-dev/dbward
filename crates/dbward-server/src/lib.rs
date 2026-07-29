@@ -955,7 +955,7 @@ fn safety_guard(
         if count > 0 {
             return Err(format!(
                 "database contains {count} {table} (source='config') but config has no [[{table}]] entries.\n\
-                 Run `dbward doctor --server <config>` to diagnose, or add [[{table}]] to your config."
+                 Run `dbward-server validate --config <config>` to diagnose, or add [[{table}]] to your config."
             )
             .into());
         }

@@ -252,3 +252,48 @@ async fn check_agent_token(
         Err(format!("HTTP {}", resp.status()))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use clap::Parser;
+
+    #[test]
+    fn start_mode_parses() {
+        let args =
+            Args::try_parse_from(["dbward-agent", "start", "--config", "/config/agent.toml"])
+                .unwrap();
+        match args.command {
+            Command::Start { config } => {
+                assert_eq!(config, std::path::PathBuf::from("/config/agent.toml"));
+            }
+            _ => panic!("expected Start"),
+        }
+    }
+
+    #[test]
+    fn validate_mode_parses() {
+        let args =
+            Args::try_parse_from(["dbward-agent", "validate", "--config", "/config/agent.toml"])
+                .unwrap();
+        match args.command {
+            Command::Validate {
+                config,
+                preflight: false,
+            } => {
+                assert_eq!(config, std::path::PathBuf::from("/config/agent.toml"));
+            }
+            _ => panic!("expected Validate"),
+        }
+    }
+
+    #[test]
+    fn bare_invocation_fails() {
+        // After removing backward compatibility, bare invocation must fail
+        let result = Args::try_parse_from(["dbward-agent"]);
+        assert!(
+            result.is_err(),
+            "bare invocation should require a subcommand"
+        );
+    }
+}

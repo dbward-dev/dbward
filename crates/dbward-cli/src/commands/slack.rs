@@ -112,7 +112,7 @@ fn run_init(
             StderrLine::Status("  7. Invite the bot to your channel:".to_string()),
             StderrLine::Status(format!("     /invite @{app_name}")),
             StderrLine::Status(String::new()),
-            StderrLine::Status("Done! Run `dbward doctor --server server.toml` to verify.".into()),
+            StderrLine::Status("Done! Run `dbward-server validate --config server.toml --preflight` to verify.".into()),
         ];
 
         RenderPlan {

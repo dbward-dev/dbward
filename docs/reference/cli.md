@@ -582,7 +582,7 @@ dbward-server reload --config server.toml
 dbward-server reload --pid 12345
 ```
 
-**`dbward-server` options:**
+**`dbward-server start` options:**
 
 | Option | Default | Description |
 |--------|---------|-------------|
@@ -617,7 +617,7 @@ dbward-agent validate --config agent.toml
 dbward-agent validate --config agent.toml --preflight   # also check server reachability and token
 ```
 
-**`dbward-agent` options:**
+**`dbward-agent start` options:**
 
 | Option | Default | Description |
 |--------|---------|-------------|
