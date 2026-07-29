@@ -34,6 +34,7 @@ spec:
           imagePullPolicy: {{ .Values.agent.image.pullPolicy }}
           command: ["dbward-agent"]
           args:
+            - start
             - --config
             - /config/agent.toml
           env:

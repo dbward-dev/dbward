@@ -175,7 +175,7 @@ Type=simple
 User=dbward
 Environment=DBWARD_AGENT_TOKEN=dbw_...
 Environment=DATABASE_URL=postgres://...
-ExecStart=/usr/local/bin/dbward-agent --config /etc/dbward/dbward-agent.toml
+ExecStart=/usr/local/bin/dbward-agent start --config /etc/dbward/dbward-agent.toml
 Restart=always
 RestartSec=5
 

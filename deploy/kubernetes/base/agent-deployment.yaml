@@ -34,6 +34,7 @@ spec:
           image: ghcr.io/dbward-dev/dbward-agent:latest  # Pin to v0.1.x in production
           command: ["dbward-agent"]
           args:
+            - start
             - --config
             - /config/agent.toml
           env:

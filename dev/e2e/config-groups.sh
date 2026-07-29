@@ -32,7 +32,7 @@ name = "app"
 environments = ["development"]
 EOF
 docker compose exec -T dbward-server sh -c 'cat > /tmp/bad.toml' < /tmp/server-bad-users.toml
-RESULT=$(docker compose exec -T dbward-server sh -c 'dbward-server --config /tmp/bad.toml --listen 127.0.0.1:9999 2>&1 || true' | head -5)
+RESULT=$(docker compose exec -T dbward-server sh -c 'dbward-server start --config /tmp/bad.toml --listen 127.0.0.1:9999 2>&1 || true' | head -5)
 echo "$RESULT" | grep -qi "users.*no longer supported\|unknown\|deprecated\|invalid" \
   && pass "8.4 [[users]] deprecated field → startup error" || fail "8.4" "no error for deprecated [[users]]: $RESULT"
 
@@ -50,7 +50,7 @@ name = "app"
 environments = ["development"]
 EOF
 docker compose exec -T dbward-server sh -c 'cat > /tmp/bad.toml' < /tmp/server-bad-rb.toml
-RESULT=$(docker compose exec -T dbward-server sh -c 'dbward-server --config /tmp/bad.toml --listen 127.0.0.1:9999 2>&1 || true' | head -5)
+RESULT=$(docker compose exec -T dbward-server sh -c 'dbward-server start --config /tmp/bad.toml --listen 127.0.0.1:9999 2>&1 || true' | head -5)
 echo "$RESULT" | grep -qi "role_bindings.*no longer\|removed\|deprecated\|invalid" \
   && pass "8.5 [[auth.role_bindings]] deprecated → startup error" || fail "8.5" "no error: $RESULT"
 
@@ -69,7 +69,7 @@ name = "app"
 environments = ["development"]
 EOF
 docker compose exec -T dbward-server sh -c 'cat > /tmp/bad.toml' < /tmp/server-bad-members.toml
-RESULT=$(docker compose exec -T dbward-server sh -c 'dbward-server --config /tmp/bad.toml --listen 127.0.0.1:9999 2>&1 || true' | head -5)
+RESULT=$(docker compose exec -T dbward-server sh -c 'dbward-server start --config /tmp/bad.toml --listen 127.0.0.1:9999 2>&1 || true' | head -5)
 echo "$RESULT" | grep -qi "members.*removed\|no longer\|deprecated\|invalid" \
   && pass "8.6 [[auth.groups]].members deprecated → startup error" || fail "8.6" "no error: $RESULT"
 
@@ -87,7 +87,7 @@ name = "app"
 environments = ["development"]
 EOF
 docker compose exec -T dbward-server sh -c 'cat > /tmp/bad.toml' < /tmp/server-bad-groles.toml
-RESULT=$(docker compose exec -T dbward-server sh -c 'dbward-server --config /tmp/bad.toml --listen 127.0.0.1:9999 2>&1 || true' | head -5)
+RESULT=$(docker compose exec -T dbward-server sh -c 'dbward-server start --config /tmp/bad.toml --listen 127.0.0.1:9999 2>&1 || true' | head -5)
 echo "$RESULT" | grep -qi "nonexistent_role_xyz\|undefined.*role\|unknown.*role\|invalid" \
   && pass "8.7 undefined role in groups.roles → startup error" || fail "8.7" "no error: $RESULT"
 
@@ -122,7 +122,7 @@ name = "app"
 environments = ["development"]
 EOF
 docker compose exec -T dbward-server sh -c 'cat > /tmp/bad.toml' < /tmp/server-bad-default.toml
-RESULT=$(docker compose exec -T dbward-server sh -c 'dbward-server --config /tmp/bad.toml --listen 127.0.0.1:9997 2>&1 || true' | head -5)
+RESULT=$(docker compose exec -T dbward-server sh -c 'dbward-server start --config /tmp/bad.toml --listen 127.0.0.1:9997 2>&1 || true' | head -5)
 echo "$RESULT" | grep -qi "nonexistent_default_role\|undefined.*role\|unknown.*role\|invalid\|default_role" \
   && pass "26.3 undefined default_role → startup error" || fail "26.3" "no error: $RESULT"
 

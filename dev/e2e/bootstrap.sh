@@ -81,7 +81,7 @@ docker compose stop dbward-server > /dev/null 2>&1
 docker compose run --rm --no-deps --entrypoint sh \
   -e DBWARD_FORCE_BOOTSTRAP=true \
   dbward-server \
-  -c 'dbward-server --listen 0.0.0.0:3000 --config /config/dbward-server.toml --force-bootstrap &
+  -c 'dbward-server start --listen 0.0.0.0:3000 --config /config/dbward-server.toml --force-bootstrap &
       SERVER_PID=$!
       for i in $(seq 1 20); do
         test -f /data/admin-token && test -f /data/agent-token && break || sleep 1

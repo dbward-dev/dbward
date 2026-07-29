@@ -485,10 +485,10 @@ dbward request resume <ID>     # Resume + wait for result
                                 # --output <path>
 dbward request result <ID>      # Retrieve execution result from server
 dbward mcp                      # MCP stdio server
-dbward-server --config server.toml        # HTTP server (auto-initializes on first run)
+dbward-server start --config server.toml  # HTTP server (auto-initializes on first run)
 dbward token create --subject <USER> --scope-roles <ROLE>
 dbward token revoke <ID>
-dbward-agent --config <PATH>   # Start agent
+dbward-agent start --config <PATH>   # Start agent
 ```
 
 ## Migration File Format (dbmate-compatible)

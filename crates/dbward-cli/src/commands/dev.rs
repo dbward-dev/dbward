@@ -59,6 +59,7 @@ mode = "always"
 
     // Spawn server (auto-initializes on first run)
     let mut server_child = ProcessCommand::new(&server_binary)
+        .arg("start")
         .arg("--listen")
         .arg(&listen)
         .arg("--config")
@@ -145,6 +146,7 @@ url = "{database_url}"
 
     // Spawn agent
     let mut agent_child = ProcessCommand::new(&agent_binary)
+        .arg("start")
         .arg("--config")
         .arg(&agent_config_path)
         .spawn()

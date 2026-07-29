@@ -196,7 +196,7 @@ Resources:
                   cat > /tmp/agent.toml << 'TOMLEOF'
                   ${ConfigContent}
                   TOMLEOF
-                  exec dbward-agent --config /tmp/agent.toml
+                  exec dbward-agent start --config /tmp/agent.toml
                 - ConfigContent: !Ref AgentConfigToml
           Secrets:
             - Name: DBWARD_AGENT_TOKEN

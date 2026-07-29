@@ -435,7 +435,7 @@ url = "${DATABASE_URL_ANALYTICS}"
 ### Server (`dbward-server.toml`)
 
 ```toml
-# Start: dbward-server --config server.toml --listen 0.0.0.0:3000
+# Start: dbward-server start --config server.toml --listen 0.0.0.0:3000
 state_dir = "/data"
 
 [auth]

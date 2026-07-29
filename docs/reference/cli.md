@@ -571,7 +571,7 @@ The server and agent are separate binaries with their own CLIs.
 
 ```bash
 # Start the server
-dbward-server --config server.toml --listen 0.0.0.0:3000
+dbward-server start --config server.toml --listen 0.0.0.0:3000
 
 # Validate configuration before starting
 dbward-server validate --config server.toml
@@ -612,7 +612,7 @@ dbward-server reload --pid 12345
 
 ```bash
 # Start the agent
-dbward-agent --config agent.toml
+dbward-agent start --config agent.toml
 
 # Validate configuration before starting
 dbward-agent validate --config agent.toml
