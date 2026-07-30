@@ -32,6 +32,7 @@ spec:
           image: ghcr.io/dbward-dev/dbward-server:latest  # Pin to v0.1.x in production
           command: ["dbward-server"]
           args:
+            - start
             - --listen
             - 0.0.0.0:3000
             - --config

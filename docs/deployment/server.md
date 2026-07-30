@@ -198,10 +198,11 @@ Notification policies are managed via the REST API, not TOML. See [Notification 
 After writing your configuration, validate it before starting the server:
 
 ```bash
-dbward doctor --server /path/to/server.toml
+dbward-server validate --config /path/to/server.toml
+dbward-server validate --config /path/to/server.toml --preflight  # also check Slack/OIDC connectivity
 ```
 
-This checks workflow validity, role resolution, Slack connectivity, and webhook references — catching misconfigurations before they cause runtime failures.
+This checks workflow validity, role resolution, and webhook references — catching misconfigurations before they cause runtime failures. Use `--preflight` to additionally verify Slack API connectivity and OIDC issuer reachability.
 
 ## Running with systemd
 
@@ -214,7 +215,7 @@ After=network.target
 [Service]
 Type=simple
 User=dbward
-ExecStart=/usr/local/bin/dbward-server \
+ExecStart=/usr/local/bin/dbward-server start \
   --config /etc/dbward/dbward-server.toml \
   --listen 0.0.0.0:3000
 Restart=always
@@ -233,6 +234,7 @@ docker run -d \
   -v dbward-data:/data \
   -v ./dbward-server.toml:/etc/dbward/dbward-server.toml:ro \
   ghcr.io/dbward-dev/dbward-server:latest \
+    start \
     --config /etc/dbward/dbward-server.toml \
     --listen 0.0.0.0:3000
 ```

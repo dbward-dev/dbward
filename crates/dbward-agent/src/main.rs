@@ -14,15 +14,17 @@ struct Args {
     version: (),
 
     #[command(subcommand)]
-    command: Option<Command>,
-
-    /// Path to agent config file
-    #[arg(long, default_value = "dbward-agent.toml")]
-    config: PathBuf,
+    command: Command,
 }
 
 #[derive(Subcommand)]
 enum Command {
+    /// Start the agent
+    Start {
+        /// Path to agent config file
+        #[arg(long, default_value = "dbward-agent.toml")]
+        config: PathBuf,
+    },
     /// Validate agent configuration
     Validate {
         /// Path to agent config file
@@ -38,16 +40,20 @@ enum Command {
 async fn main() {
     let args = Args::parse();
 
-    // Handle subcommands first
-    if let Some(Command::Validate { config, preflight }) = args.command {
-        run_validate(&config, preflight).await;
-        return;
+    match args.command {
+        Command::Start { config } => {
+            run_start(&config).await;
+        }
+        Command::Validate { config, preflight } => {
+            run_validate(&config, preflight).await;
+        }
     }
+}
 
-    // Default: start agent
+async fn run_start(config_path: &std::path::Path) {
     dbward_agent::init_logging();
 
-    let config = match dbward_agent::config::load_from_file(&args.config) {
+    let config = match dbward_agent::config::load_from_file(config_path) {
         Ok(c) => c,
         Err(e) => {
             eprintln!("Error loading config: {e}");
@@ -244,5 +250,50 @@ async fn check_agent_token(
         Err("unauthorized (invalid token)".to_string())
     } else {
         Err(format!("HTTP {}", resp.status()))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use clap::Parser;
+
+    #[test]
+    fn start_mode_parses() {
+        let args =
+            Args::try_parse_from(["dbward-agent", "start", "--config", "/config/agent.toml"])
+                .unwrap();
+        match args.command {
+            Command::Start { config } => {
+                assert_eq!(config, std::path::PathBuf::from("/config/agent.toml"));
+            }
+            _ => panic!("expected Start"),
+        }
+    }
+
+    #[test]
+    fn validate_mode_parses() {
+        let args =
+            Args::try_parse_from(["dbward-agent", "validate", "--config", "/config/agent.toml"])
+                .unwrap();
+        match args.command {
+            Command::Validate {
+                config,
+                preflight: false,
+            } => {
+                assert_eq!(config, std::path::PathBuf::from("/config/agent.toml"));
+            }
+            _ => panic!("expected Validate"),
+        }
+    }
+
+    #[test]
+    fn bare_invocation_fails() {
+        // After removing backward compatibility, bare invocation must fail
+        let result = Args::try_parse_from(["dbward-agent"]);
+        assert!(
+            result.is_err(),
+            "bare invocation should require a subcommand"
+        );
     }
 }

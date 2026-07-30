@@ -233,13 +233,13 @@ fn run_preset_small_team(
             StderrLine::Status("  dbward.toml: API token will be generated in step 1 below".into()),
             StderrLine::Status(String::new()),
             StderrLine::Status("━━ Next steps ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━".into()),
-            StderrLine::Status("  1. dbward-server --config server.toml".into()),
+            StderrLine::Status("  1. dbward-server start --config server.toml".into()),
             StderrLine::Status("     → First run auto-creates tokens in /data/".into()),
             StderrLine::Status(
                 "  2. Set CLI token in dbward.toml: token = \"$(cat /data/admin-token)\"".into(),
             ),
             StderrLine::Status(
-                "  3. DBWARD_AGENT_TOKEN=$(cat /data/agent-token) dbward-agent --config agent.toml"
+                "  3. DBWARD_AGENT_TOKEN=$(cat /data/agent-token) dbward-agent start --config agent.toml"
                     .into(),
             ),
             StderrLine::Status("  4. dbward doctor        # verify connectivity + config".into()),

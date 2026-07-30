@@ -10,4 +10,4 @@ done
 
 export DBWARD_AGENT_TOKEN="$(cat "$TOKEN_FILE")"
 echo "[agent-entrypoint] token loaded, starting agent"
-exec dbward-agent --config /config/dbward-agent.toml
+exec dbward-agent start --config /config/dbward-agent.toml

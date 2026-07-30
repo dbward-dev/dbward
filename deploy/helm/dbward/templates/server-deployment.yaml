@@ -36,6 +36,7 @@ spec:
           imagePullPolicy: {{ .Values.server.image.pullPolicy }}
           command: ["dbward-server"]
           args:
+            - start
             - --listen
             - 0.0.0.0:{{ .Values.server.port }}
             - --config

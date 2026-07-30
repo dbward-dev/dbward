@@ -80,12 +80,12 @@ See [Configuration Reference: \[slack\]](../reference/configuration.md#slack) fo
 Run diagnostics:
 
 ```bash
-dbward doctor --server server.toml
+dbward-server validate --config server.toml --preflight
 ```
 
-Doctor checks: bot token format (`xoxb-` prefix), signing secret format, `auth.test` API call, channel existence, and bot membership.
+Checks: bot token format (`xoxb-` prefix) and `auth.test` API call. (Channel existence, bot membership, and signing secret format are not verified; use the smoke test below to confirm end-to-end.)
 
-> **Limitation:** Doctor validates token and channel access but cannot verify that Slack has correctly registered the Request URL or slash command. Use the smoke test below to confirm end-to-end.
+> **Limitation:** `--preflight` only confirms the bot token is valid via `auth.test`. It cannot verify channel access, slash command registration, or Request URL routing. Use the smoke test below to confirm end-to-end.
 
 ### 5. Smoke test
 
@@ -236,7 +236,7 @@ A background worker checks every 60 seconds for expired requests. When a request
 | "No databases available" | User needs `request.query` or `request.dml` permission |
 | Onboarding button does nothing | Ensure `[slack.onboarding] enabled = true` |
 
-Run `dbward doctor --server server.toml` to diagnose configuration issues.
+Run `dbward-server validate --config server.toml --preflight` to diagnose configuration and Slack API connectivity issues.
 
 ## See also
 

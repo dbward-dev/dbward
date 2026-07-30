@@ -156,10 +156,11 @@ The agent sends periodic heartbeats during execution to extend the lease. If the
 After writing your configuration, validate it before starting the agent:
 
 ```bash
-dbward doctor --agent /path/to/agent.toml
+dbward-agent validate --config /path/to/agent.toml
+dbward-agent validate --config /path/to/agent.toml --preflight  # also check server reachability and token
 ```
 
-This checks config parsing, environment variables, server reachability, token validity, and database URL scheme — catching issues before the agent attempts to connect.
+This checks config parsing, environment variables, and database URL scheme — catching issues before the agent attempts to connect. Use `--preflight` to additionally verify server reachability and agent token validity.
 
 ## Running with systemd
 
@@ -174,7 +175,7 @@ Type=simple
 User=dbward
 Environment=DBWARD_AGENT_TOKEN=dbw_...
 Environment=DATABASE_URL=postgres://...
-ExecStart=/usr/local/bin/dbward-agent --config /etc/dbward/dbward-agent.toml
+ExecStart=/usr/local/bin/dbward-agent start --config /etc/dbward/dbward-agent.toml
 Restart=always
 RestartSec=5
 
@@ -192,7 +193,7 @@ docker run -d \
   -e DATABASE_URL=postgres://user:pass@db:5432/app \
   -v ./dbward-agent.toml:/etc/dbward/dbward-agent.toml:ro \
   ghcr.io/dbward-dev/dbward-agent:latest \
-  --config /etc/dbward/dbward-agent.toml
+  start --config /etc/dbward/dbward-agent.toml
 ```
 
 ## Startup and resilience

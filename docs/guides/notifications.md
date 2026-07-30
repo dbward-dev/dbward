@@ -145,7 +145,7 @@ Both can be enabled simultaneously.
 
 ## Troubleshooting
 
-Run `dbward doctor --server server.toml` first — it validates webhook URLs, Slack config, and connectivity.
+Run `dbward-server validate --config server.toml` first — it checks config structure and webhook references. Add `--preflight` to also check Slack API connectivity (note: webhook URL reachability is not checked).
 
 | Issue | Solution |
 |---|---|

@@ -13,7 +13,7 @@
 services:
   server:
     image: ghcr.io/dbward-dev/dbward-server:latest
-    command: ["dbward-server", "--config", "/etc/dbward/server.toml", "--listen", "0.0.0.0:3000"]
+    command: ["dbward-server", "start", "--config", "/etc/dbward/server.toml", "--listen", "0.0.0.0:3000"]
     ports:
       - "127.0.0.1:3000:3000"
     volumes:
@@ -34,7 +34,7 @@ services:
 
   agent:
     image: ghcr.io/dbward-dev/dbward-agent:latest
-    command: ["dbward-agent", "--config", "/etc/dbward/agent.toml"]
+    command: ["dbward-agent", "start", "--config", "/etc/dbward/agent.toml"]
     volumes:
       - ./agent.toml:/etc/dbward/agent.toml:ro
     environment:

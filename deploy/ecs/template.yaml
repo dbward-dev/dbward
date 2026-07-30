@@ -360,7 +360,7 @@ Resources:
                   cat >> /tmp/server.toml << 'TOMLEOF'
                   ${ResultStorageConfig}
                   TOMLEOF
-                  exec dbward-server --listen 0.0.0.0:3000 --config /tmp/server.toml
+                  exec dbward-server start --listen 0.0.0.0:3000 --config /tmp/server.toml
                 - ConfigContent: !Ref ServerConfigToml
                   ResultStorageConfig: !If
                     - UseS3Storage
