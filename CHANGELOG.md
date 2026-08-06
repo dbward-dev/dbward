@@ -1,5 +1,41 @@
 # Changelog
 
+## [0.2.1] — 2026-08-07
+
+### Breaking Changes
+
+- **`dbward-server` and `dbward-agent` now require a subcommand**: `start`, `validate`, or `reload` (server only). Bare invocation with no subcommand is no longer supported. Update systemd units, Docker commands, and scripts accordingly.
+  - Start server: `dbward-server start --config server.toml --listen 0.0.0.0:3000`
+  - Start agent: `dbward-agent start --config agent.toml`
+  - Validate config: `dbward-server validate --config server.toml`
+  - Reload config: `dbward-server reload --config server.toml`
+- **`dbward server start` and `dbward agent` CLI commands removed**: These were exec wrappers for the binaries. Use the binary directly.
+- **`admin` role is now a superuser** (`Permission::All`): Admin can now submit queries, view requests, approve, and use break-glass in addition to management operations.
+
+### Features
+
+- **`dbward-server validate`**: Validate server config before starting. `--preflight` additionally checks OIDC issuer and Slack connectivity.
+- **`dbward-server reload`**: Send SIGHUP to reload config without restarting. Uses `state_dir/server.pid` automatically.
+- **`dbward-agent validate`**: Validate agent config before starting. `--preflight` checks server reachability and token validity.
+- **Confirmation prompts**: All mutating CLI commands now prompt for confirmation (`--yes` / `DBWARD_YES=1` to skip).
+- **`dbward self-update` improvements**: Server version compatibility check before update + confirmation prompt.
+- **Ctrl-C detach**: Interrupting `execute` or `request resume` now detaches cleanly, showing request ID and cancel hint.
+- **no_agents early exit**: CLI exits immediately when all agents are offline or draining.
+- **Config validation infrastructure (REF-5)**: `dbward-config` exposes `diagnose_static()` API with 26 error types.
+- **Setup guide**: New `docs/guides/setup-guide.md` with step-by-step init → server → agent → CLI guide.
+
+### Bug Fixes
+
+- **`ResultStorageConfig` default `max_persist_bytes`**: Was `0` when `[result_storage]` section omitted, causing all result submissions to fail with 413. Fixed with explicit Default impl (10MB).
+- **AgentSubmitResult concurrent submit race (AUD-2)**: `Completing` intermediate state prevents storage key conflicts and audit mismatches.
+- **request show formatting**: Restored human-readable layout after REF-2 regression.
+
+### Documentation
+
+- Binary upgrade procedure: stop → install → start order documented, `DBWARD_VERSION` env var added.
+- `[result_storage]` added to `small-team` preset with S3 hint.
+- break-glass permissions clarified: `request.break_glass_query` (SELECT) vs `request.break_glass_dml` (writes).
+
 ## [0.2.0] — 2026-07-21
 
 ### Breaking Changes
