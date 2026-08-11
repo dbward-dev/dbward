@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.2.2] — 2026-08-11
+
+### Security Fixes
+
+- **Bootstrap token separation (SEC-11)**: Previously, bootstrap created only 2 users (admin, agent) and wrote the admin token to both `admin-token` and `requester-token` files. This was a security issue: someone expecting a requester-only token would inadvertently receive admin privileges. Bootstrap now creates 3 separate users (admin, requester, agent) with distinct tokens and permissions.
+
+### Breaking Changes
+
+- **Existing deployments require re-bootstrap**: Deployments with 2 bootstrap tokens will see "incomplete bootstrap state: 2/3 tokens found". Run with `--force-bootstrap` to regenerate all tokens.
+
 ## [0.2.1] — 2026-08-07
 
 ### Breaking Changes
