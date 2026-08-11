@@ -182,13 +182,13 @@ create_token() {
       -d "{\"id\":\"$user\",\"roles\":$roles_json,\"groups\":$groups_json}" 2>/dev/null)
     if [ "$create_status" = "201" ] || [ "$create_status" = "200" ]; then
       # Track created user for cleanup (skip bootstrap users)
-      if [ "$user" != "admin" ] && [ "$user" != "agent" ]; then
+      if [ "$user" != "admin" ] && [ "$user" != "agent" ] && [ "$user" != "requester" ]; then
         echo "$user" >> "$CREATED_USERS_FILE"
       fi
     fi
     if [ "$create_status" = "409" ]; then
-      # Protect bootstrap users: never PATCH admin or agent (they have fixed roles)
-      if [ "$user" = "admin" ] || [ "$user" = "agent" ]; then
+      # Protect bootstrap users: never PATCH admin, requester, or agent (they have fixed roles)
+      if [ "$user" = "admin" ] || [ "$user" = "agent" ] || [ "$user" = "requester" ]; then
         : # bootstrap users have fixed roles — skip PATCH, proceed to reissue-initial-token
       else
       # Check if user is deleted (soft-delete) — if so, use unique suffix

@@ -246,8 +246,9 @@ Create tokens for users and agents:
 ```bash
 # Initial tokens created automatically on first server start.
 # Read them from files:
-cat /data/admin-token    # admin token
-cat /data/agent-token    # agent token
+cat /data/admin-token      # admin token (can approve, manage users)
+cat /data/requester-token  # requester token (can submit queries)
+cat /data/agent-token      # agent token
 
 # Additional tokens via CLI (requires admin token):
 dbward token create --subject alice --scope-roles admin

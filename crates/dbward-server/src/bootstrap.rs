@@ -86,6 +86,7 @@ pub fn auto_bootstrap(
     let token_repo = state.token_repo();
     let agent_token_path = state_dir.join("agent-token");
     let admin_token_path = state_dir.join("admin-token");
+    let requester_token_path = state_dir.join("requester-token");
 
     // Count active bootstrap tokens
     let existing: Vec<_> = token_repo
@@ -109,9 +110,8 @@ pub fn auto_bootstrap(
         if count > 0 {
             eprintln!("[init] existing bootstrap tokens revoked ({count})");
         }
-    } else if count == 2 {
+    } else if count == 3 {
         // Fully bootstrapped — verify token files exist
-        let requester_token_path = state_dir.join("requester-token");
         let missing: Vec<_> = [&agent_token_path, &admin_token_path, &requester_token_path]
             .iter()
             .filter(|p| !p.exists())
@@ -151,7 +151,7 @@ pub fn auto_bootstrap(
     } else if count > 0 {
         // Partial state (1-2 tokens) — fail-closed
         return Err(format!(
-            "incomplete bootstrap state: {count}/2 tokens found.\n  \
+            "incomplete bootstrap state: {count}/3 tokens found.\n  \
              Run with --force-bootstrap to reset and regenerate tokens."
         )
         .into());
@@ -161,7 +161,8 @@ pub fn auto_bootstrap(
     let user_repo = state.user_repo();
     let now = chrono::Utc::now();
     let bootstrap_users = [
-        ("admin", vec!["admin".to_string(), "requester".to_string()]),
+        ("admin", vec!["admin".to_string()]),
+        ("requester", vec!["requester".to_string()]),
         ("agent", vec!["agent-default".to_string()]),
     ];
     for (id, roles) in &bootstrap_users {
@@ -182,21 +183,20 @@ pub fn auto_bootstrap(
         }
     }
 
-    // Create bootstrap tokens
-    let admin_token = create_bootstrap_token(state, "admin", &["admin", "requester"], false)?;
+    // Create bootstrap tokens (3 separate users with distinct permissions)
+    let admin_token = create_bootstrap_token(state, "admin", &["admin"], false)?;
+    let requester_token = create_bootstrap_token(state, "requester", &["requester"], false)?;
     let agent_token = create_bootstrap_token(state, "agent", &["agent-default"], true)?;
 
     // Write token files (0600)
     write_token_file(&admin_token_path, &admin_token)?;
+    write_token_file(&requester_token_path, &requester_token)?;
     write_token_file(&agent_token_path, &agent_token)?;
 
-    // Also write requester token for dev convenience
-    let requester_token_path = state_dir.join("requester-token");
-    write_token_file(&requester_token_path, &admin_token)?;
-
     eprintln!(
-        "[init] bootstrap tokens written to {}, {}",
+        "[init] bootstrap tokens written to {}, {}, {}",
         admin_token_path.display(),
+        requester_token_path.display(),
         agent_token_path.display()
     );
 

@@ -106,13 +106,15 @@ On first start, the server:
 1. Creates the SQLite state database in `state_dir`
 2. Generates an Ed25519 signing key pair
 3. Creates bootstrap tokens and writes them to files:
-   - `/data/admin-token` — full admin access
+   - `/data/admin-token` — admin access (can approve, manage users)
+   - `/data/requester-token` — requester access (can submit queries)
    - `/data/agent-token` — for agent authentication
 
 ```
 [INFO] Server listening on 0.0.0.0:3000
 [INFO] First run — bootstrap tokens created
 [INFO]   admin-token: /data/admin-token
+[INFO]   requester-token: /data/requester-token
 [INFO]   agent-token: /data/agent-token
 ```
 
