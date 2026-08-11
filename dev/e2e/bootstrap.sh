@@ -20,16 +20,20 @@ echo "--- 1. Bootstrap users exist ---"
 STATUS=$(api_status GET /api/users/admin "$ADMIN_TOKEN")
 [ "$STATUS" = "200" ] && pass "1a admin bootstrap user exists" || fail "1a" "got $STATUS"
 
-# Admin user has requester role bundled (admin+requester)
+# Admin user has admin role only (separate requester user created for request submission)
 ADMIN_ROLES=$(api GET /api/users/admin "$ADMIN_TOKEN" | python3 -c "import sys,json; print(','.join(sorted(json.load(sys.stdin).get('roles',[]))))")
-echo "$ADMIN_ROLES" | grep -q "admin" && echo "$ADMIN_ROLES" | grep -q "requester" && \
-  pass "1b admin user has admin+requester roles" || fail "1b" "roles=$ADMIN_ROLES"
+[ "$ADMIN_ROLES" = "admin" ] && \
+  pass "1b admin user has admin role only" || fail "1b" "roles=$ADMIN_ROLES"
+
+# Requester user exists separately
+STATUS=$(api_status GET /api/users/requester "$ADMIN_TOKEN")
+[ "$STATUS" = "200" ] && pass "1c requester bootstrap user exists" || fail "1c" "got $STATUS"
 
 STATUS=$(api_status GET /api/users/agent "$ADMIN_TOKEN")
-[ "$STATUS" = "200" ] && pass "1c agent bootstrap user exists" || fail "1c" "got $STATUS"
+[ "$STATUS" = "200" ] && pass "1d agent bootstrap user exists" || fail "1d" "got $STATUS"
 
 STATUS=$(api_status GET /api/users "$ADMIN_TOKEN")
-[ "$STATUS" = "200" ] && pass "1d admin token works" || fail "1d" "got $STATUS"
+[ "$STATUS" = "200" ] && pass "1e admin token works" || fail "1e" "got $STATUS"
 
 # ============================================================
 # 2. Bootstrap idempotency — restart doesn't duplicate

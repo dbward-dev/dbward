@@ -192,8 +192,9 @@ try:
 except:
   print('')
 " 2>/dev/null || echo "")
-[[ "$ROLES" == *"admin"* ]] && [[ "$ROLES" == *"requester"* ]] && \
-  pass "Bootstrap user has admin+requester" || fail "Bootstrap roles" "got: $ROLES"
+# Admin user has admin role only (separate requester user for request submission)
+[ "$ROLES" = "admin" ] && \
+  pass "Bootstrap admin user has admin role" || fail "Bootstrap roles" "got: $ROLES"
 
 echo ""
 echo "--- §4 Token: admin can list, revoke(any) ---"
