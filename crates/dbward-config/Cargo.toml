@@ -14,8 +14,8 @@ toml = { workspace = true }
 regex = "1"
 thiserror = { workspace = true }
 hostname = "0.4"
-dirs = "6"
-sha2 = "0.10"
+dirs = "7"
+sha2 = "0.11"
 url = "2"
 dbward-domain = { path = "../dbward-domain" }
 
